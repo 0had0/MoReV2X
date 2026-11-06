@@ -156,7 +156,9 @@ void PacketSink::StopApplication ()     // Called at time specified by Stop
     }
 }
 
-void PacketSink::HandleRead (Ptr<Socket> socket)
+// MoReV2X scenarios in scratch/ redefine this function. Weak, so that the
+// executable wins on macOS too, where this file would otherwise bind to itself.
+__attribute__ ((weak)) void PacketSink::HandleRead (Ptr<Socket> socket)
 {
   NS_LOG_FUNCTION (this << socket);
   Ptr<Packet> packet;

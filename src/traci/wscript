@@ -1,0 +1,30 @@
+## -*- Mode: python; py-indent-offset: 4; indent-tabs-mode: nil; coding: utf-8; -*-
+
+def build(bld):
+    module = bld.create_ns3_module('traci', ['core', 'network', 'mobility'])
+    module.source = [
+        'model/traci-client.cc',
+        'model/sumo-socket.cc',
+        'model/sumo-storage.cc',
+        'model/sumo-TraCIAPI.cc',
+        'helper/sumo-mobility-helper.cc',
+        ]
+
+    module_test = bld.create_ns3_module_test_library('traci')
+    module_test.source = [
+        'test/sumo-mobility-test-suite.cc',
+        ]
+
+    headers = bld(features='ns3header')
+    headers.module = 'traci'
+    headers.source = [
+        'model/traci-client.h',
+        'model/sumo-TraCIAPI.h',
+        'model/sumo-config.h',
+        'model/sumo-socket.h',
+        'model/sumo-storage.h',
+        'model/sumo-TraCIConstants.h',
+        'model/sumo-TraCIDefs.h',
+        'model/StationType.h',
+        'helper/sumo-mobility-helper.h',
+        ]

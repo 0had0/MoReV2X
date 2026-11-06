@@ -523,6 +523,7 @@ private:
   bool m_UMHvariant;
   bool m_FreqReuse;
   bool m_AdaptiveScheduling;
+  bool m_legacyEvenUeOneShot;
 
   double m_keepProbability;
   Ptr<UniformRandomVariable> m_evalKeepProb;

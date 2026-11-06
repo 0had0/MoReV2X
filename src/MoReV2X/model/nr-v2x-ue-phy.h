@@ -728,6 +728,8 @@ private:
 
   std::string m_outputPath;
   double m_savingPeriod;
+  double m_cbrMinX;
+  double m_cbrMaxX;
 
   /**
    * Summary results of measuring a specific SyncRef. Used for layer-1 filtering.

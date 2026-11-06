@@ -1004,9 +1004,9 @@ Int64x64DoubleTestCase::Check (const long double value,
       // Darwin 12.5.0 (Mac 10.8.5) g++ 4.2.1
       margin = 1.0;
     }
-  if (RUNNING_ON_VALGRIND)
+  if (RUNNING_ON_VALGRIND || (std::numeric_limits<long double>::digits == 53))
     {
-      // Valgrind uses 64-bit doubles for long doubles
+      // Valgrind uses 64-bit doubles for long doubles, and so does arm64
       // See ns-3 bug 1882
       // Need non-zero margin to ensure final tolerance is non-zero
       margin = 1.0;

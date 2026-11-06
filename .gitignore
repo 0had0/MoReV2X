@@ -30,3 +30,17 @@
 *.exe
 *.out
 *.app
+
+# MoReV2X local artefacts
+/build/
+/results/
+/.venv/
+/.local/
+/.gate-stamp
+/.lock-waf_darwin_build
+/ModeSwitch.unimo
+__pycache__/
+.ipynb_checkpoints/
+/[DU]l*Stats.txt
+/*.unimo
+/tagFile.txt
