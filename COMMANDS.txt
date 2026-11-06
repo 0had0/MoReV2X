@@ -108,6 +108,10 @@ tools/debug-check.sh            All scheduler modes with NS_ASSERT on, about 10 
 .venv/bin/python -m unittest discover -s tests -v       MoReV2X scenario tests.
 .venv/bin/python -m unittest tests.test_integration.SumoMobility -v    One test class.
 
+tools/fingerprint.sh            Hash of the Mode 2 logs of 3 fixed runs. Same output before and
+                                after a change proves default behaviour did not move. Valid on
+                                one machine and one ns-3 version only.
+
 Logs of the last gate run are in build/gate/.
 lte-x2-handover is an accepted failure, listed in tools/known-failures.txt. Anything else
 that fails stops the gate. The gate refuses to run on a tree with unstaged changes.
@@ -140,6 +144,12 @@ git fetch upstream                              See what changed upstream.
 
 To run them again from scratch, which also re-runs the simulations they plot:
 .venv/bin/jupyter nbconvert --to notebook --execute --inplace docs/notebooks/*.ipynb
+
+
+To re-run only one: same command with its file name. Results are cached in results/notebooks/,
+delete that folder to force the simulations to run again.
+
+tools/ns3_compile_trial.py is the compile-only ns-3 migration trial of notebook 06. See its header.
 
 
 10. WHEN SOMETHING BREAKS
