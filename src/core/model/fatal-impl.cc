@@ -1,4 +1,3 @@
-/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
  * Copyright (c) 2010 NICTA
  *
@@ -18,26 +17,60 @@
  * Author: Quincy Tse <quincy.tse@nicta.com.au>
  */
 #include "fatal-impl.h"
+
 #include "log.h"
 
+#include <csignal>
+#include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <list>
 
-#include <cstdlib>
-#include <cstdio>
+#ifdef __WIN32__
+struct sigaction
+{
+    void (*sa_handler)(int);
+    int sa_flags;
+    int sa_mask;
+};
 
-#include <csignal>
+int
+sigaction(int sig, struct sigaction* action, struct sigaction* old)
+{
+    if (sig == -1)
+    {
+        return 0;
+    }
+    if (old == nullptr)
+    {
+        if (signal(sig, SIG_DFL) == SIG_ERR)
+        {
+            return -1;
+        }
+    }
+    else
+    {
+        if (signal(sig, action->sa_handler) == SIG_ERR)
+        {
+            return -1;
+        }
+    }
+    return 0;
+}
+#endif
 
 /**
  * \file
  * \ingroup fatalimpl
- * \brief Implementation of RegisterStream(), UnregisterStream(), and FlushStreams(); see Implementation note!
+ * \brief ns3::FatalImpl::RegisterStream(), ns3::FatalImpl::UnregisterStream(),
+ * and ns3::FatalImpl::FlushStreams() implementations;
+ * see Implementation note!
  *
  * \note Implementation.
  *
  * The singleton pattern we use here is tricky because we have to ensure:
  *
- *   - RegisterStream() succeeds, even if called before \c main() enters and 
+ *   - RegisterStream() succeeds, even if called before \c main() enters and
  *     before any constructor run in this file.
  *
  *   - UnregisterStream() succeeds, whether or not FlushStreams() has
@@ -48,18 +81,21 @@
  * This is why we go through all the painful hoops below.
  */
 
-namespace ns3 {
+namespace ns3
+{
 
-NS_LOG_COMPONENT_DEFINE ("FatalImpl");
-  
-namespace FatalImpl {
+NS_LOG_COMPONENT_DEFINE("FatalImpl");
+
+namespace FatalImpl
+{
 
 /**
  * \ingroup fatalimpl
- * Anonymous namespace for fatal streams memory implementation
+ * Unnamed namespace for fatal streams memory implementation
  * and signal handler.
  */
-namespace {
+namespace
+{
 
 /**
  * \ingroup fatalimpl
@@ -68,11 +104,12 @@ namespace {
  *
  * \returns The address of the static pointer.
  */
-std::list<std::ostream*> **PeekStreamList (void)
+std::list<std::ostream*>**
+PeekStreamList()
 {
-  NS_LOG_FUNCTION_NOARGS ();
-  static std::list<std::ostream*> *streams = 0;
-  return &streams;
+    NS_LOG_FUNCTION_NOARGS();
+    static std::list<std::ostream*>* streams = nullptr;
+    return &streams;
 }
 
 /**
@@ -81,75 +118,52 @@ std::list<std::ostream*> **PeekStreamList (void)
  *
  * \returns The stream list.
  */
-std::list<std::ostream*> *GetStreamList (void)
+std::list<std::ostream*>*
+GetStreamList()
 {
-  NS_LOG_FUNCTION_NOARGS ();
-  std::list<std::ostream*> **pstreams = PeekStreamList ();
-  if (*pstreams == 0)
+    NS_LOG_FUNCTION_NOARGS();
+    std::list<std::ostream*>** pstreams = PeekStreamList();
+    if (*pstreams == nullptr)
     {
-      *pstreams = new std::list<std::ostream*> ();
+        *pstreams = new std::list<std::ostream*>();
     }
-  return *pstreams;
+    return *pstreams;
 }
 
-/**
- * \ingroup fatalimpl
- * \brief Destructor for the list of fatal streams.
- *
- * \todo Is this ever called?
- * Not obvious that it is.  Test with something like
- * \code
- *   main (int argc, char ** argv)
- *   {
- *     NS_FATAL_MSG ("Aborting.")
- *   }
- * \endcode
- * Then run under valgrind or the debugger.  If this isn't called,
- * try adding the call to \c sigHandler.
- */
-struct destructor
-{
-  ~destructor ()
-  {
-    NS_LOG_FUNCTION (this);
-    std::list<std::ostream*> **pstreams = PeekStreamList ();
-    delete *pstreams;
-    *pstreams = 0;
-  }
-};
-}  // anonymous namespace
+} // unnamed namespace
 
 void
-RegisterStream (std::ostream* stream)
+RegisterStream(std::ostream* stream)
 {
-  NS_LOG_FUNCTION (stream);
-  GetStreamList ()->push_back (stream);
+    NS_LOG_FUNCTION(stream);
+    GetStreamList()->push_back(stream);
 }
 
 void
-UnregisterStream (std::ostream* stream)
+UnregisterStream(std::ostream* stream)
 {
-  NS_LOG_FUNCTION (stream);
-  std::list<std::ostream*> **pl = PeekStreamList ();
-  if (*pl == 0)
+    NS_LOG_FUNCTION(stream);
+    std::list<std::ostream*>** pl = PeekStreamList();
+    if (*pl == nullptr)
     {
-      return;
+        return;
     }
-  (*pl)->remove (stream);
-  if ((*pl)->empty ())
+    (*pl)->remove(stream);
+    if ((*pl)->empty())
     {
-      delete *pl;
-      *pl = 0;
+        delete *pl;
+        *pl = nullptr;
     }
 }
 
 /**
  * \ingroup fatalimpl
- * Anonymous namespace for fatal streams signal hander.
+ * Unnamed namespace for fatal streams signal handler.
  *
  * This is private to the fatal implementation.
  */
-namespace {
+namespace
+{
 
 /**
  * \ingroup fatalimpl
@@ -158,61 +172,61 @@ namespace {
  *
  * This is private to the fatal implementation.
  *
- * \param sig The signal condition.
+ * \param [in] sig The signal condition.
  */
-void sigHandler (int sig)
+void
+sigHandler(int sig)
 {
-  NS_LOG_FUNCTION (sig);
-  FlushStreams ();
-  std::abort ();
+    NS_LOG_FUNCTION(sig);
+    FlushStreams();
+    std::abort();
 }
-}  // anonymous namespace
+} // unnamed namespace
 
-void 
-FlushStreams (void)
+void
+FlushStreams()
 {
-  NS_LOG_FUNCTION_NOARGS ();
-  std::list<std::ostream*> **pl = PeekStreamList ();
-  if (*pl == 0)
+    NS_LOG_FUNCTION_NOARGS();
+    std::list<std::ostream*>** pl = PeekStreamList();
+    if (*pl == nullptr)
     {
-      return;
+        return;
     }
 
+    /* Override default SIGSEGV handler - will flush subsequent
+     * streams even if one of the stream pointers is bad.
+     * The SIGSEGV override should only be active for the
+     * duration of this function. */
+    struct sigaction hdl;
+    hdl.sa_handler = sigHandler;
+    sigaction(SIGSEGV, &hdl, nullptr);
 
-  /* Override default SIGSEGV handler - will flush subsequent
-   * streams even if one of the stream pointers is bad.
-   * The SIGSEGV override should only be active for the
-   * duration of this function. */
-  struct sigaction hdl;
-  hdl.sa_handler=sigHandler;
-  sigaction (SIGSEGV, &hdl, 0);
+    std::list<std::ostream*>* l = *pl;
 
-  std::list<std::ostream*> *l = *pl;
-
-  /* Need to do it this way in case any of the ostream* causes SIGSEGV */
-  while (!l->empty ())
+    /* Need to do it this way in case any of the ostream* causes SIGSEGV */
+    while (!l->empty())
     {
-      std::ostream* s (l->front ());
-      l->pop_front ();
-      s->flush ();
+        std::ostream* s(l->front());
+        l->pop_front();
+        s->flush();
     }
 
-  /* Restore default SIGSEGV handler (Not that it matters anyway) */
-  hdl.sa_handler=SIG_DFL;
-  sigaction (SIGSEGV, &hdl, 0);
+    /* Restore default SIGSEGV handler (Not that it matters anyway) */
+    hdl.sa_handler = SIG_DFL;
+    sigaction(SIGSEGV, &hdl, nullptr);
 
-  /* Flush all opened FILE* */
-  std::fflush (0);
+    /* Flush all opened FILE* */
+    std::fflush(nullptr);
 
-  /* Flush stdandard streams - shouldn't be required (except for clog) */
-  std::cout.flush ();
-  std::cerr.flush ();
-  std::clog.flush ();
+    /* Flush stdandard streams - shouldn't be required (except for clog) */
+    std::cout.flush();
+    std::cerr.flush();
+    std::clog.flush();
 
-  delete l;
-  *pl = 0;
+    delete l;
+    *pl = nullptr;
 }
 
 } // namespace FatalImpl
-  
+
 } // namespace ns3

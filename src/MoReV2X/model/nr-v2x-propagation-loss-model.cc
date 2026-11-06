@@ -139,6 +139,13 @@ NrV2XPropagationLossModel::GetLoss (Ptr<MobilityModel> a, Ptr<MobilityModel> b) 
 
 
 double
+NrV2XPropagationLossModel::DoCalcRxPower (double txPowerDbm, Ptr<MobilityModel> a, Ptr<MobilityModel> b) const
+{
+  return txPowerDbm - GetLoss (a, b) - GetShadowing (a, b);
+}
+
+
+double
 NrV2XPropagationLossModel::GetShadowing (Ptr<MobilityModel> a, Ptr<MobilityModel> b) const
 {
   NS_LOG_FUNCTION(this);

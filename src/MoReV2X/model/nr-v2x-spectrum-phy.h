@@ -291,10 +291,10 @@ public:
   void SetChannel (Ptr<SpectrumChannel> c);
   void SetMobility (Ptr<MobilityModel> m);
   void SetDevice (Ptr<NetDevice> d);
-  Ptr<MobilityModel> GetMobility ();
-  Ptr<NetDevice> GetDevice ();
+  Ptr<MobilityModel> GetMobility () const override;
+  Ptr<NetDevice> GetDevice () const override;
   Ptr<const SpectrumModel> GetRxSpectrumModel () const;
-  Ptr<AntennaModel> GetRxAntenna ();
+  Ptr<Object> GetAntenna () const override;
   void StartRx (Ptr<SpectrumSignalParameters> params);
   void StartRxData (Ptr<NistLteSpectrumSignalParametersDataFrame> params);
   void StartRxCtrl (Ptr<SpectrumSignalParameters> params);

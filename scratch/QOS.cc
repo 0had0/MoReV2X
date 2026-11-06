@@ -490,7 +490,7 @@ main (int argc, char *argv[])
   Config::SetDefault ("ns3::NistLteRlcUm::MaxTxBufferSize", StringValue ("100000"));
   // A new packet of a class replaces an older one still waiting: one SDU per TB in MoReV2X
   Config::SetDefault ("ns3::NistLteRlcUm::KeepOnlyNewestSdu", BooleanValue (true));
-  Config::SetDefault ("ns3::DropTailQueue::MaxPackets", UintegerValue (10000000));
+  Config::SetDefault ("ns3::DropTailQueue<Packet>::MaxSize", QueueSizeValue (QueueSize ("10000000p")));
 
   Config::SetDefault ("ns3::NistLteRlcUm::OutputPath", StringValue (outputPath));
   Config::SetDefault ("ns3::NrV2XUeMac::OutputPath", StringValue (outputPath));
@@ -616,9 +616,8 @@ main (int argc, char *argv[])
   BuildingsHelper::Install (ues);
   if (jammerNode)
     {
-      BuildingsHelper::Install (jammerNode); // MakeMobilityModelConsistent visits every node
+      BuildingsHelper::Install (jammerNode);
     }
-  BuildingsHelper::MakeMobilityModelConsistent ();
 
   // ---------------------------------------------------------------- flows
   std::ofstream flowMap ((outputPath + "FlowMap.txt").c_str ());

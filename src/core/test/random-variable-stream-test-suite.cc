@@ -1,4 +1,3 @@
-/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
  * Copyright (c) 2009-12 University of Washington
  *
@@ -21,2845 +20,2987 @@
  *
  */
 
-
-#include <gsl/gsl_cdf.h>
-#include <gsl/gsl_histogram.h>
-#include <gsl/gsl_sf_zeta.h>
-#include <ctime>
-#include <fstream>
-#include <cmath>
-
 #include "ns3/boolean.h"
 #include "ns3/double.h"
-#include "ns3/string.h"
 #include "ns3/integer.h"
-#include "ns3/test.h"
-#include "ns3/rng-seed-manager.h"
+#include "ns3/log.h"
 #include "ns3/random-variable-stream.h"
+#include "ns3/rng-seed-manager.h"
+#include "ns3/shuffle.h"
+#include "ns3/string.h"
+#include "ns3/test.h"
+
+#include <cmath>
+#include <ctime>
+#include <fstream>
+#include <gsl/gsl_cdf.h>
+#include <gsl/gsl_histogram.h>
+#include <gsl/gsl_randist.h>
+#include <gsl/gsl_sf_zeta.h>
 
 using namespace ns3;
 
-namespace {
+NS_LOG_COMPONENT_DEFINE("RandomVariableStreamGenerators");
 
-void
-FillHistoRangeUniformly (double *array, uint32_t n, double start, double end)
+namespace ns3
 {
-  double increment = (end - start) / (n - 1.);
-  double d = start;
 
-  for (uint32_t i = 0; i < n; ++i)
-    {
-      array[i] = d;
-      d += increment;
-    }
-}
-
-} // anonymous namespace
-
-// ===========================================================================
-// Test case for uniform distribution random variable stream generator
-// ===========================================================================
-class RandomVariableStreamUniformTestCase : public TestCase
+namespace test
 {
-public:
-  static const uint32_t N_RUNS = 5;
-  static const uint32_t N_BINS = 50;
-  static const uint32_t N_MEASUREMENTS = 1000000;
 
-  RandomVariableStreamUniformTestCase ();
-  virtual ~RandomVariableStreamUniformTestCase ();
-
-  double ChiSquaredTest (Ptr<UniformRandomVariable> u);
-
-private:
-  virtual void DoRun (void);
-};
-
-RandomVariableStreamUniformTestCase::RandomVariableStreamUniformTestCase ()
-  : TestCase ("Uniform Random Variable Stream Generator")
+namespace RandomVariable
 {
-}
 
-RandomVariableStreamUniformTestCase::~RandomVariableStreamUniformTestCase ()
+/**
+ * \file
+ * \ingroup rng-tests
+ * Random number generator streams tests.
+ */
+
+/**
+ * \ingroup rng-tests
+ * Base class for RandomVariableStream test suites.
+ */
+class TestCaseBase : public TestCase
 {
-}
+  public:
+    /** Number of bins for sampling the distributions. */
+    static const uint32_t N_BINS{50};
+    /** Number of samples to draw when populating the distributions. */
+    static const uint32_t N_MEASUREMENTS{1000000};
+    /** Number of retry attempts to pass a chi-square test. */
+    static const uint32_t N_RUNS{5};
 
-double
-RandomVariableStreamUniformTestCase::ChiSquaredTest (Ptr<UniformRandomVariable> u)
-{
-  gsl_histogram * h = gsl_histogram_alloc (N_BINS);
-
-  // Note that this assumes that the range for u is [0,1], which is
-  // the default range for this distribution.
-  gsl_histogram_set_ranges_uniform (h, 0., 1.);
-
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
+    /**
+     * Constructor
+     * \param [in] name The test case name.
+     */
+    TestCaseBase(std::string name)
+        : TestCase(name)
     {
-      gsl_histogram_increment (h, u->GetValue ());
     }
 
-  double tmp[N_BINS];
-
-  double expected = ((double)N_MEASUREMENTS / (double)N_BINS);
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
+    /**
+     * Configure a GSL histogram with uniform bins, with optional
+     * under/over-flow bins.
+     * \param [in,out] h The GSL histogram to configure.
+     * \param [in] start The minimum value of the lowest bin.
+     * \param [in] end The maximum value of the last bin.
+     * \param [in] underflow If \c true the lowest bin should contain the underflow,
+     * \param [in] overflow If \c true the highest bin should contain the overflow.
+     * \returns A vector of the bin edges, including the top of the highest bin.
+     * This vector has one more entry than the number of bins in the histogram.
+     */
+    std::vector<double> UniformHistogramBins(gsl_histogram* h,
+                                             double start,
+                                             double end,
+                                             bool underflow = true,
+                                             bool overflow = true) const
     {
-      tmp[i] = gsl_histogram_get (h, i);
-      tmp[i] -= expected;
-      tmp[i] *= tmp[i];
-      tmp[i] /= expected;
-    }
+        NS_LOG_FUNCTION(this << h << start << end);
+        std::size_t nBins = gsl_histogram_bins(h);
+        double increment = (end - start) / (nBins - 1.);
+        double d = start;
 
-  gsl_histogram_free (h);
+        std::vector<double> range(nBins + 1);
 
-  double chiSquared = 0;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      chiSquared += tmp[i];
-    }
-
-  return chiSquared;
-}
-
-void
-RandomVariableStreamUniformTestCase::DoRun (void)
-{
-  SeedManager::SetSeed (time (0));
-
-  double sum = 0.;
-  double maxStatistic = gsl_cdf_chisq_Qinv (0.05, N_BINS);
-
-  for (uint32_t i = 0; i < N_RUNS; ++i)
-    {
-      Ptr<UniformRandomVariable> u = CreateObject<UniformRandomVariable> ();
-      double result = ChiSquaredTest (u);
-      sum += result;
-    }
-
-  sum /= (double)N_RUNS;
-
-  NS_TEST_ASSERT_MSG_LT (sum, maxStatistic, "Chi-squared statistic out of range");
-
-  double min = 0.0;
-  double max = 10.0;
-  double value;
-
-  // Create the RNG with the specified range.
-  Ptr<UniformRandomVariable> x = CreateObject<UniformRandomVariable> ();
-
-  x->SetAttribute ("Min", DoubleValue (min));
-  x->SetAttribute ("Max", DoubleValue (max));
- 
-  // Test that values are always within the range:
-  //
-  //     [min, max)
-  //
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      value = x->GetValue ();
-      NS_TEST_ASSERT_MSG_EQ ((value >= min), true, "Value less than minimum.");
-      NS_TEST_ASSERT_MSG_LT (value, max, "Value greater than or equal to maximum.");
-    }
-
-  // Boundary checking on GetInteger; should be [min,max]; from bug 1964
-  static const uint32_t UNIFORM_INTEGER_MIN = 0;
-  static const uint32_t UNIFORM_INTEGER_MAX = 4294967295U;
-  // [0,0] should return 0
-  uint32_t intValue;
-  intValue = x->GetInteger (UNIFORM_INTEGER_MIN, UNIFORM_INTEGER_MIN);
-  NS_TEST_ASSERT_MSG_EQ (intValue, UNIFORM_INTEGER_MIN, "Uniform RV GetInteger boundary testing");
-  // [UNIFORM_INTEGER_MAX, UNIFORM_INTEGER_MAX] should return UNIFORM_INTEGER_MAX
-  intValue = x->GetInteger (UNIFORM_INTEGER_MAX, UNIFORM_INTEGER_MAX);
-  NS_TEST_ASSERT_MSG_EQ (intValue, UNIFORM_INTEGER_MAX, "Uniform RV GetInteger boundary testing");
-  // [0,1] should return mix of 0 or 1
-  intValue = 0;
-  for (int i = 0; i < 20; i++)
-    {
-      intValue += x->GetInteger (UNIFORM_INTEGER_MIN, UNIFORM_INTEGER_MIN + 1);
-    }
-  NS_TEST_ASSERT_MSG_GT (intValue, 0, "Uniform RV GetInteger boundary testing");
-  NS_TEST_ASSERT_MSG_LT (intValue, 20, "Uniform RV GetInteger boundary testing");
-  // [MAX-1,MAX] should return mix of MAX-1 or MAX
-  uint32_t count = 0;
-  for (int i = 0; i < 20; i++)
-    {
-      intValue = x->GetInteger (UNIFORM_INTEGER_MAX - 1, UNIFORM_INTEGER_MAX);
-      if (intValue == UNIFORM_INTEGER_MAX)
+        for (auto& r : range)
         {
-          count++;
+            r = d;
+            d += increment;
+        }
+        if (underflow)
+        {
+            range[0] = -std::numeric_limits<double>::max();
+        }
+        if (overflow)
+        {
+            range[nBins] = std::numeric_limits<double>::max();
+        }
+
+        gsl_histogram_set_ranges(h, range.data(), nBins + 1);
+        return range;
+    }
+
+    /**
+     * Compute the average of a random variable.
+     * \param [in] rng The random variable to sample.
+     * \returns The average of \c N_MEASUREMENTS samples.
+     */
+    double Average(Ptr<RandomVariableStream> rng) const
+    {
+        NS_LOG_FUNCTION(this << rng);
+        double sum = 0.0;
+        for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
+        {
+            double value = rng->GetValue();
+            sum += value;
+        }
+        double valueMean = sum / N_MEASUREMENTS;
+        return valueMean;
+    }
+
+    /** A factory base class to create new instances of a random variable. */
+    class RngGeneratorBase
+    {
+      public:
+        /**
+         * Create a new instance of a random variable stream
+         * \returns The new random variable stream instance.
+         */
+        virtual Ptr<RandomVariableStream> Create() const = 0;
+    };
+
+    /**
+     * Factory class to create new instances of a particular random variable stream.
+     *
+     * \tparam RNG The type of random variable generator to create.
+     */
+    template <typename RNG>
+    class RngGenerator : public RngGeneratorBase
+    {
+      public:
+        /**
+         * Constructor.
+         * \param [in] anti Create antithetic streams if \c true.
+         */
+        RngGenerator(bool anti = false)
+            : m_anti(anti)
+        {
+        }
+
+        // Inherited
+        Ptr<RandomVariableStream> Create() const override
+        {
+            auto rng = CreateObject<RNG>();
+            rng->SetAttribute("Antithetic", BooleanValue(m_anti));
+            return rng;
+        }
+
+      private:
+        /** Whether to create antithetic random variable streams. */
+        bool m_anti;
+    };
+
+    /**
+     * Compute the chi squared value of a sampled distribution
+     * compared to the expected distribution.
+     *
+     * This function captures the actual computation of the chi square,
+     * given an expected distribution.
+     *
+     * The random variable is sampled \c N_MEASUREMENTS times, filling
+     * a histogram. The chi square value is formed by comparing to the
+     * expected distribution.
+     * \param [in,out] h The histogram, which defines the binning for sampling.
+     * \param [in] expected The expected distribution.
+     * \param [in] rng The random variable to sample.
+     * \returns The chi square value.
+     */
+    double ChiSquared(gsl_histogram* h,
+                      const std::vector<double>& expected,
+                      Ptr<RandomVariableStream> rng) const
+    {
+        NS_LOG_FUNCTION(this << h << expected.size() << rng);
+        NS_ASSERT_MSG(gsl_histogram_bins(h) == expected.size(),
+                      "Histogram and expected vector have different sizes.");
+
+        // Sample the rng into the histogram
+        for (std::size_t i = 0; i < N_MEASUREMENTS; ++i)
+        {
+            double value = rng->GetValue();
+            gsl_histogram_increment(h, value);
+        }
+
+        // Compute the chi square value
+        double chiSquared = 0;
+        std::size_t nBins = gsl_histogram_bins(h);
+        for (std::size_t i = 0; i < nBins; ++i)
+        {
+            double hbin = gsl_histogram_get(h, i);
+            double tmp = hbin - expected[i];
+            tmp *= tmp;
+            tmp /= expected[i];
+            chiSquared += tmp;
+        }
+
+        return chiSquared;
+    }
+
+    /**
+     * Compute the chi square value from a random variable.
+     *
+     * This function sets up the binning and expected distribution
+     * needed to actually compute the chi squared value, which
+     * should be done by a call to ChiSquared.
+     *
+     * This is the point of customization expected to be implemented
+     * in derived classes with the appropriate histogram binning and
+     * expected distribution.  For example
+     *
+     *    SomeRngTestCase::ChiSquaredTest (Ptr<RandomVariableStream> rng) const
+     *    {
+     *      gsl_histogram * h = gsl_histogram_alloc (N_BINS);
+     *      auto range = UniformHistogramBins (h, -4., 4.);
+     *      std::vector<double> expected (N_BINS);
+     *      // Populated expected
+     *      for (std::size_t i = 0; i < N_BINS; ++i)
+     *        {
+     *          expected[i] = ...;
+     *          expected[i] *= N_MEASUREMENTS;
+     *        }
+     *      double chiSquared = ChiSquared (h, expected, rng);
+     *      gsl_histogram_free (h);
+     *      return chiSquared;
+     *    }
+     *
+     * \param [in] rng The random number generator to test.
+     * \returns The chi squared value.
+     */
+    virtual double ChiSquaredTest(Ptr<RandomVariableStream> rng) const
+    {
+        return 0;
+    }
+
+    /**
+     * Average the chi squared value over some number of runs,
+     * each run with a new instance of the random number generator.
+     * \param [in] generator The factory to create instances of the
+     *             random number generator.
+     * \param [in] nRuns The number of runs to average over.
+     * \returns The average chi square over the number of runs.
+     */
+    double ChiSquaredsAverage(const RngGeneratorBase* generator, std::size_t nRuns) const
+    {
+        NS_LOG_FUNCTION(this << generator << nRuns);
+
+        double sum = 0.;
+        for (std::size_t i = 0; i < nRuns; ++i)
+        {
+            auto rng = generator->Create();
+            double result = ChiSquaredTest(rng);
+            sum += result;
+        }
+        sum /= (double)nRuns;
+        return sum;
+    }
+
+    /**
+     * Set the seed used for this test suite.
+     *
+     * This test suite is designed to be run with both deterministic and
+     * random seed and run number values.  Deterministic values can be used
+     * for basic regression testing; random values can be used to more
+     * exhaustively test the generated streams, with the side effect of
+     * occasional test failures.
+     *
+     * By default, this test suite will use the default values of RngSeed = 1
+     * and RngRun = 1.  Users can configure any other seed and run number
+     * in the usual way, but the special value of RngRun = 0 results in
+     * selecting a RngSeed value that corresponds to the seconds since epoch
+     * (\c time (0) from \c ctime).  Note: this is not a recommended practice for
+     * seeding normal simulations, as described in the ns-3 manual, but
+     * allows the test to be exposed to a wider range of seeds.
+     *
+     * In either case, the values produced will be checked with a chi-squared
+     * test.
+     *
+     * For example, this command will cause this test suite to use the
+     * deterministic value of seed=3 and default run number=1 every time:
+     *   NS_GLOBAL_VALUE="RngSeed=3" ./test.py -s random-variable-stream-generators
+     * or equivalently (to see log output):
+     *   NS_LOG="RandomVariableStreamGenerators" NS_GLOBAL_VALUE="RngSeed=3" ./ns3 run "test-runner
+     * --suite=random-variable-stream-generators"
+     *
+     * Conversely, this command will cause this test suite to use a seed
+     * based on time-of-day, and run number=0:
+     *   NS_GLOBAL_VALUE="RngRun=0" ./test.py -s random-variable-stream-generators
+     */
+    void SetTestSuiteSeed()
+    {
+        if (!m_seedSet)
+        {
+            uint32_t seed;
+            if (RngSeedManager::GetRun() == 0)
+            {
+                seed = static_cast<uint32_t>(time(nullptr));
+                m_seedSet = true;
+                NS_LOG_DEBUG(
+                    "Special run number value of zero; seeding with time of day: " << seed);
+            }
+            else
+            {
+                seed = RngSeedManager::GetSeed();
+                m_seedSet = true;
+                NS_LOG_DEBUG("Using the values seed: " << seed
+                                                       << " and run: " << RngSeedManager::GetRun());
+            }
+            SeedManager::SetSeed(seed);
         }
     }
-  NS_TEST_ASSERT_MSG_GT (count, 0, "Uniform RV GetInteger boundary testing");
-  NS_TEST_ASSERT_MSG_LT (count, 20, "Uniform RV GetInteger boundary testing");
-  // multiple [0,UNIFORM_INTEGER_MAX] should return non-zero
-  intValue = x->GetInteger (UNIFORM_INTEGER_MIN, UNIFORM_INTEGER_MAX);
-  uint32_t intValue2 = x->GetInteger (UNIFORM_INTEGER_MIN, UNIFORM_INTEGER_MAX);
-  NS_TEST_ASSERT_MSG_GT (intValue + intValue2, 0, "Uniform RV GetInteger boundary testing");
 
-}
+  private:
+    /** \c true if we've already set the seed the correctly. */
+    bool m_seedSet = false;
 
-// ===========================================================================
-// Test case for antithetic uniform distribution random variable stream generator
-// ===========================================================================
-class RandomVariableStreamUniformAntitheticTestCase : public TestCase
+}; // class TestCaseBase
+
+/**
+ * \ingroup rng-tests
+ * Test case for uniform distribution random variable stream generator.
+ */
+class UniformTestCase : public TestCaseBase
 {
-public:
-  static const uint32_t N_RUNS = 5;
-  static const uint32_t N_BINS = 50;
-  static const uint32_t N_MEASUREMENTS = 1000000;
+  public:
+    // Constructor
+    UniformTestCase();
 
-  RandomVariableStreamUniformAntitheticTestCase ();
-  virtual ~RandomVariableStreamUniformAntitheticTestCase ();
+    // Inherited
+    double ChiSquaredTest(Ptr<RandomVariableStream> rng) const override;
 
-  double ChiSquaredTest (Ptr<UniformRandomVariable> u);
-
-private:
-  virtual void DoRun (void);
+  private:
+    // Inherited
+    void DoRun() override;
 };
 
-RandomVariableStreamUniformAntitheticTestCase::RandomVariableStreamUniformAntitheticTestCase ()
-  : TestCase ("Antithetic Uniform Random Variable Stream Generator")
-{
-}
-
-RandomVariableStreamUniformAntitheticTestCase::~RandomVariableStreamUniformAntitheticTestCase ()
+UniformTestCase::UniformTestCase()
+    : TestCaseBase("Uniform Random Variable Stream Generator")
 {
 }
 
 double
-RandomVariableStreamUniformAntitheticTestCase::ChiSquaredTest (Ptr<UniformRandomVariable> u)
+UniformTestCase::ChiSquaredTest(Ptr<RandomVariableStream> rng) const
 {
-  gsl_histogram * h = gsl_histogram_alloc (N_BINS);
+    gsl_histogram* h = gsl_histogram_alloc(N_BINS);
 
-  // Note that this assumes that the range for u is [0,1], which is
-  // the default range for this distribution.
-  gsl_histogram_set_ranges_uniform (h, 0., 1.);
+    // Note that this assumes that the range for u is [0,1], which is
+    // the default range for this distribution.
+    gsl_histogram_set_ranges_uniform(h, 0., 1.);
 
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      gsl_histogram_increment (h, u->GetValue ());
-    }
+    std::vector<double> expected(N_BINS, ((double)N_MEASUREMENTS / (double)N_BINS));
 
-  double tmp[N_BINS];
-
-  double expected = ((double)N_MEASUREMENTS / (double)N_BINS);
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      tmp[i] = gsl_histogram_get (h, i);
-      tmp[i] -= expected;
-      tmp[i] *= tmp[i];
-      tmp[i] /= expected;
-    }
-
-  gsl_histogram_free (h);
-
-  double chiSquared = 0;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      chiSquared += tmp[i];
-    }
-
-  return chiSquared;
+    double chiSquared = ChiSquared(h, expected, rng);
+    gsl_histogram_free(h);
+    return chiSquared;
 }
 
 void
-RandomVariableStreamUniformAntitheticTestCase::DoRun (void)
+UniformTestCase::DoRun()
 {
-  SeedManager::SetSeed (time (0));
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
 
-  double sum = 0.;
-  double maxStatistic = gsl_cdf_chisq_Qinv (0.05, N_BINS);
+    double confidence = 0.99;
+    double maxStatistic = gsl_cdf_chisq_Pinv(confidence, (N_BINS - 1));
+    NS_LOG_DEBUG("Chi square required at " << confidence << " confidence for " << N_BINS
+                                           << " bins is " << maxStatistic);
 
-  for (uint32_t i = 0; i < N_RUNS; ++i)
+    double result = maxStatistic;
+    // If chi-squared test fails, re-try it up to N_RUNS times
+    for (uint32_t i = 0; i < N_RUNS; ++i)
     {
-      Ptr<UniformRandomVariable> u = CreateObject<UniformRandomVariable> ();
-
-      // Make this generate antithetic values.
-      u->SetAttribute ("Antithetic", BooleanValue (true));
-
-      double result = ChiSquaredTest (u);
-      sum += result;
+        Ptr<UniformRandomVariable> rng = CreateObject<UniformRandomVariable>();
+        result = ChiSquaredTest(rng);
+        NS_LOG_DEBUG("Chi square result is " << result);
+        if (result < maxStatistic)
+        {
+            break;
+        }
     }
 
-  sum /= (double)N_RUNS;
+    NS_TEST_ASSERT_MSG_LT(result, maxStatistic, "Chi-squared statistic out of range");
 
-  NS_TEST_ASSERT_MSG_LT (sum, maxStatistic, "Chi-squared statistic out of range");
+    double min = 0.0;
+    double max = 10.0;
+    double value;
 
-  double min = 0.0;
-  double max = 10.0;
-  double value;
+    // Create the RNG with the specified range.
+    Ptr<UniformRandomVariable> x = CreateObject<UniformRandomVariable>();
 
-  // Create the RNG with the specified range.
-  Ptr<UniformRandomVariable> x = CreateObject<UniformRandomVariable> ();
+    x->SetAttribute("Min", DoubleValue(min));
+    x->SetAttribute("Max", DoubleValue(max));
 
-  // Make this generate antithetic values.
-  x->SetAttribute ("Antithetic", BooleanValue (true));
-
-  x->SetAttribute ("Min", DoubleValue (min));
-  x->SetAttribute ("Max", DoubleValue (max));
- 
-  // Test that values are always within the range:
-  //
-  //     [min, max)
-  //
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
+    // Test that values are always within the range:
+    //
+    //     [min, max)
+    //
+    for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
     {
-      value = x->GetValue ();
-      NS_TEST_ASSERT_MSG_EQ ((value >= min), true, "Value less than minimum.");
-      NS_TEST_ASSERT_MSG_LT (value, max, "Value greater than or equal to maximum.");
+        value = x->GetValue();
+        NS_TEST_ASSERT_MSG_EQ((value >= min), true, "Value less than minimum.");
+        NS_TEST_ASSERT_MSG_LT(value, max, "Value greater than or equal to maximum.");
     }
 
-
-}
-
-// ===========================================================================
-// Test case for constant random variable stream generator
-// ===========================================================================
-class RandomVariableStreamConstantTestCase : public TestCase
-{
-public:
-  static const uint32_t N_MEASUREMENTS = 1000000;
-  static const double TOLERANCE;
-
-  RandomVariableStreamConstantTestCase ();
-  virtual ~RandomVariableStreamConstantTestCase ();
-
-private:
-  virtual void DoRun (void);
-};
-
-const double RandomVariableStreamConstantTestCase::TOLERANCE = 1e-8;
-
-RandomVariableStreamConstantTestCase::RandomVariableStreamConstantTestCase ()
-  : TestCase ("Constant Random Variable Stream Generator")
-{
-}
-
-RandomVariableStreamConstantTestCase::~RandomVariableStreamConstantTestCase ()
-{
-}
-
-void
-RandomVariableStreamConstantTestCase::DoRun (void)
-{
-  SeedManager::SetSeed (time (0));
-
-  Ptr<ConstantRandomVariable> c = CreateObject<ConstantRandomVariable> ();
-
-  double constant;
-
-  // Test that the constant value can be changed using its attribute.
-  constant = 10.0;
-  c->SetAttribute ("Constant", DoubleValue (constant));
-  NS_TEST_ASSERT_MSG_EQ_TOL (c->GetValue (), constant, TOLERANCE, "Constant value changed");
-  c->SetAttribute ("Constant", DoubleValue (20.0));
-  NS_TEST_ASSERT_MSG_NE (c->GetValue (), constant, "Constant value not changed");
-
-  // Test that the constant value does not change.
-  constant = c->GetValue ();
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
+    // Boundary checking on GetInteger; should be [min,max]; from bug 1964
+    static const uint32_t UNIFORM_INTEGER_MIN{0};
+    static const uint32_t UNIFORM_INTEGER_MAX{4294967295U};
+    // [0,0] should return 0
+    uint32_t intValue;
+    intValue = x->GetInteger(UNIFORM_INTEGER_MIN, UNIFORM_INTEGER_MIN);
+    NS_TEST_ASSERT_MSG_EQ(intValue, UNIFORM_INTEGER_MIN, "Uniform RV GetInteger boundary testing");
+    // [UNIFORM_INTEGER_MAX, UNIFORM_INTEGER_MAX] should return UNIFORM_INTEGER_MAX
+    intValue = x->GetInteger(UNIFORM_INTEGER_MAX, UNIFORM_INTEGER_MAX);
+    NS_TEST_ASSERT_MSG_EQ(intValue, UNIFORM_INTEGER_MAX, "Uniform RV GetInteger boundary testing");
+    // [0,1] should return mix of 0 or 1
+    intValue = 0;
+    for (int i = 0; i < 20; i++)
     {
-      NS_TEST_ASSERT_MSG_EQ_TOL (c->GetValue (), constant, TOLERANCE, "Constant value changed in loop");
+        intValue += x->GetInteger(UNIFORM_INTEGER_MIN, UNIFORM_INTEGER_MIN + 1);
     }
+    NS_TEST_ASSERT_MSG_GT(intValue, 0, "Uniform RV GetInteger boundary testing");
+    NS_TEST_ASSERT_MSG_LT(intValue, 20, "Uniform RV GetInteger boundary testing");
+    // [MAX-1,MAX] should return mix of MAX-1 or MAX
+    uint32_t count = 0;
+    for (int i = 0; i < 20; i++)
+    {
+        intValue = x->GetInteger(UNIFORM_INTEGER_MAX - 1, UNIFORM_INTEGER_MAX);
+        if (intValue == UNIFORM_INTEGER_MAX)
+        {
+            count++;
+        }
+    }
+    NS_TEST_ASSERT_MSG_GT(count, 0, "Uniform RV GetInteger boundary testing");
+    NS_TEST_ASSERT_MSG_LT(count, 20, "Uniform RV GetInteger boundary testing");
+    // multiple [0,UNIFORM_INTEGER_MAX] should return non-zero
+    intValue = x->GetInteger(UNIFORM_INTEGER_MIN, UNIFORM_INTEGER_MAX);
+    uint32_t intValue2 = x->GetInteger(UNIFORM_INTEGER_MIN, UNIFORM_INTEGER_MAX);
+    NS_TEST_ASSERT_MSG_GT(intValue + intValue2, 0, "Uniform RV GetInteger boundary testing");
 }
 
-// ===========================================================================
-// Test case for sequential random variable stream generator
-// ===========================================================================
-class RandomVariableStreamSequentialTestCase : public TestCase
+/**
+ * \ingroup rng-tests
+ * Test case for antithetic uniform distribution random variable stream generator
+ */
+class UniformAntitheticTestCase : public TestCaseBase
 {
-public:
-  static const double TOLERANCE;
+  public:
+    // Constructor
+    UniformAntitheticTestCase();
 
-  RandomVariableStreamSequentialTestCase ();
-  virtual ~RandomVariableStreamSequentialTestCase ();
+    // Inherited
+    double ChiSquaredTest(Ptr<RandomVariableStream> rng) const override;
 
-private:
-  virtual void DoRun (void);
+  private:
+    // Inherited
+    void DoRun() override;
 };
 
-const double RandomVariableStreamSequentialTestCase::TOLERANCE = 1e-8;
-
-RandomVariableStreamSequentialTestCase::RandomVariableStreamSequentialTestCase ()
-  : TestCase ("Sequential Random Variable Stream Generator")
-{
-}
-
-RandomVariableStreamSequentialTestCase::~RandomVariableStreamSequentialTestCase ()
-{
-}
-
-void
-RandomVariableStreamSequentialTestCase::DoRun (void)
-{
-  SeedManager::SetSeed (time (0));
-
-  Ptr<SequentialRandomVariable> s = CreateObject<SequentialRandomVariable> ();
-
-  // The following four attributes should give the sequence
-  //
-  //    4, 4, 7, 7, 10, 10
-  //
-  s->SetAttribute ("Min", DoubleValue (4));
-  s->SetAttribute ("Max", DoubleValue (11));
-  s->SetAttribute ("Increment", StringValue("ns3::UniformRandomVariable[Min=3.0|Max=3.0]"));
-  s->SetAttribute ("Consecutive", IntegerValue (2));
-
-  double value;
-
-  // Test that the sequencet is correct.
-  value = s->GetValue (); 
-  NS_TEST_ASSERT_MSG_EQ_TOL (value, 4, TOLERANCE, "Sequence value 1 wrong."); 
-  value = s->GetValue (); 
-  NS_TEST_ASSERT_MSG_EQ_TOL (value, 4, TOLERANCE, "Sequence value 2 wrong."); 
-  value = s->GetValue (); 
-  NS_TEST_ASSERT_MSG_EQ_TOL (value, 7, TOLERANCE, "Sequence value 3 wrong."); 
-  value = s->GetValue (); 
-  NS_TEST_ASSERT_MSG_EQ_TOL (value, 7, TOLERANCE, "Sequence value 4 wrong."); 
-  value = s->GetValue (); 
-  NS_TEST_ASSERT_MSG_EQ_TOL (value, 10, TOLERANCE, "Sequence value 5 wrong."); 
-  value = s->GetValue (); 
-  NS_TEST_ASSERT_MSG_EQ_TOL (value, 10, TOLERANCE, "Sequence value 6 wrong."); 
-
-}
-
-// ===========================================================================
-// Test case for normal distribution random variable stream generator
-// ===========================================================================
-class RandomVariableStreamNormalTestCase : public TestCase
-{
-public:
-  static const uint32_t N_RUNS = 5;
-  static const uint32_t N_BINS = 50;
-  static const uint32_t N_MEASUREMENTS = 1000000;
-
-  RandomVariableStreamNormalTestCase ();
-  virtual ~RandomVariableStreamNormalTestCase ();
-
-  double ChiSquaredTest (Ptr<NormalRandomVariable> n);
-
-private:
-  virtual void DoRun (void);
-};
-
-RandomVariableStreamNormalTestCase::RandomVariableStreamNormalTestCase ()
-  : TestCase ("Normal Random Variable Stream Generator")
-{
-}
-
-RandomVariableStreamNormalTestCase::~RandomVariableStreamNormalTestCase ()
+UniformAntitheticTestCase::UniformAntitheticTestCase()
+    : TestCaseBase("Antithetic Uniform Random Variable Stream Generator")
 {
 }
 
 double
-RandomVariableStreamNormalTestCase::ChiSquaredTest (Ptr<NormalRandomVariable> n)
+UniformAntitheticTestCase::ChiSquaredTest(Ptr<RandomVariableStream> rng) const
 {
-  gsl_histogram * h = gsl_histogram_alloc (N_BINS);
+    gsl_histogram* h = gsl_histogram_alloc(N_BINS);
 
-  double range[N_BINS + 1];
-  FillHistoRangeUniformly (range, N_BINS + 1, -4., 4.);
-  range[0] = -std::numeric_limits<double>::max ();
-  range[N_BINS] = std::numeric_limits<double>::max ();
+    // Note that this assumes that the range for u is [0,1], which is
+    // the default range for this distribution.
+    gsl_histogram_set_ranges_uniform(h, 0., 1.);
 
-  gsl_histogram_set_ranges (h, range, N_BINS + 1);
+    std::vector<double> expected(N_BINS, ((double)N_MEASUREMENTS / (double)N_BINS));
 
-  double expected[N_BINS];
-
-  // Note that this assumes that n has mean equal to zero and standard
-  // deviation equal to one, which are their default values for this
-  // distribution.
-  double sigma = 1.;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      expected[i] = gsl_cdf_gaussian_P (range[i + 1], sigma) - gsl_cdf_gaussian_P (range[i], sigma);
-      expected[i] *= N_MEASUREMENTS;
-    }
-
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      gsl_histogram_increment (h, n->GetValue ());
-    }
-
-  double tmp[N_BINS];
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      tmp[i] = gsl_histogram_get (h, i);
-      tmp[i] -= expected[i];
-      tmp[i] *= tmp[i];
-      tmp[i] /= expected[i];
-    }
-
-  gsl_histogram_free (h);
-
-  double chiSquared = 0;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      chiSquared += tmp[i];
-    }
-
-  return chiSquared;
+    double chiSquared = ChiSquared(h, expected, rng);
+    gsl_histogram_free(h);
+    return chiSquared;
 }
 
 void
-RandomVariableStreamNormalTestCase::DoRun (void)
+UniformAntitheticTestCase::DoRun()
 {
-  SeedManager::SetSeed (time (0));
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
 
-  double sum = 0.;
-  double maxStatistic = gsl_cdf_chisq_Qinv (0.05, N_BINS);
+    auto generator = RngGenerator<UniformRandomVariable>(true);
+    double sum = ChiSquaredsAverage(&generator, N_RUNS);
+    double maxStatistic = gsl_cdf_chisq_Qinv(0.05, N_BINS);
+    NS_TEST_ASSERT_MSG_LT(sum, maxStatistic, "Chi-squared statistic out of range");
 
-  for (uint32_t i = 0; i < N_RUNS; ++i)
+    double min = 0.0;
+    double max = 10.0;
+    double value;
+
+    // Create the RNG with the specified range.
+    Ptr<UniformRandomVariable> x = CreateObject<UniformRandomVariable>();
+
+    // Make this generate antithetic values.
+    x->SetAttribute("Antithetic", BooleanValue(true));
+
+    x->SetAttribute("Min", DoubleValue(min));
+    x->SetAttribute("Max", DoubleValue(max));
+
+    // Test that values are always within the range:
+    //
+    //     [min, max)
+    //
+    for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
     {
-      Ptr<NormalRandomVariable> n = CreateObject<NormalRandomVariable> ();
-      double result = ChiSquaredTest (n);
-      sum += result;
+        value = x->GetValue();
+        NS_TEST_ASSERT_MSG_EQ((value >= min), true, "Value less than minimum.");
+        NS_TEST_ASSERT_MSG_LT(value, max, "Value greater than or equal to maximum.");
     }
-
-  sum /= (double)N_RUNS;
-
-  NS_TEST_ASSERT_MSG_LT (sum, maxStatistic, "Chi-squared statistic out of range");
-
-  double mean = 5.0;
-  double variance = 2.0;
-  double value;
-
-  // Create the RNG with the specified range.
-  Ptr<NormalRandomVariable> x = CreateObject<NormalRandomVariable> ();
-  x->SetAttribute ("Mean", DoubleValue (mean));
-  x->SetAttribute ("Variance", DoubleValue (variance));
-
-  // Calculate the mean of these values.
-  sum = 0.0;
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      value = x->GetValue ();
-      sum += value;
-    }
-  double valueMean = sum / N_MEASUREMENTS;
-
-  // The expected value for the mean of the values returned by a
-  // normally distributed random variable is equal to mean.
-  double expectedMean = mean;
-
-  // Test that values have approximately the right mean value.
-  double TOLERANCE = expectedMean * 1e-2;
-  NS_TEST_ASSERT_MSG_EQ_TOL (valueMean, expectedMean, TOLERANCE, "Wrong mean value."); 
 }
 
-// ===========================================================================
-// Test case for antithetic normal distribution random variable stream generator
-// ===========================================================================
-class RandomVariableStreamNormalAntitheticTestCase : public TestCase
+/**
+ * \ingroup rng-tests
+ * Test case for constant random variable stream generator
+ */
+class ConstantTestCase : public TestCaseBase
 {
-public:
-  static const uint32_t N_RUNS = 5;
-  static const uint32_t N_BINS = 50;
-  static const uint32_t N_MEASUREMENTS = 1000000;
+  public:
+    // Constructor
+    ConstantTestCase();
 
-  RandomVariableStreamNormalAntitheticTestCase ();
-  virtual ~RandomVariableStreamNormalAntitheticTestCase ();
+  private:
+    // Inherited
+    void DoRun() override;
 
-  double ChiSquaredTest (Ptr<NormalRandomVariable> n);
-
-private:
-  virtual void DoRun (void);
+    /** Tolerance for testing rng values against expectation. */
+    static constexpr double TOLERANCE{1e-8};
 };
 
-RandomVariableStreamNormalAntitheticTestCase::RandomVariableStreamNormalAntitheticTestCase ()
-  : TestCase ("Antithetic Normal Random Variable Stream Generator")
+ConstantTestCase::ConstantTestCase()
+    : TestCaseBase("Constant Random Variable Stream Generator")
 {
 }
 
-RandomVariableStreamNormalAntitheticTestCase::~RandomVariableStreamNormalAntitheticTestCase ()
+void
+ConstantTestCase::DoRun()
+{
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
+
+    Ptr<ConstantRandomVariable> c = CreateObject<ConstantRandomVariable>();
+
+    double constant;
+
+    // Test that the constant value can be changed using its attribute.
+    constant = 10.0;
+    c->SetAttribute("Constant", DoubleValue(constant));
+    NS_TEST_ASSERT_MSG_EQ_TOL(c->GetValue(), constant, TOLERANCE, "Constant value changed");
+    c->SetAttribute("Constant", DoubleValue(20.0));
+    NS_TEST_ASSERT_MSG_NE(c->GetValue(), constant, "Constant value not changed");
+
+    // Test that the constant value does not change.
+    constant = c->GetValue();
+    for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
+    {
+        NS_TEST_ASSERT_MSG_EQ_TOL(c->GetValue(),
+                                  constant,
+                                  TOLERANCE,
+                                  "Constant value changed in loop");
+    }
+}
+
+/**
+ * \ingroup rng-tests
+ * Test case for sequential random variable stream generator
+ */
+class SequentialTestCase : public TestCaseBase
+{
+  public:
+    // Constructor
+    SequentialTestCase();
+
+  private:
+    // Inherited
+    void DoRun() override;
+
+    /** Tolerance for testing rng values against expectation. */
+    static constexpr double TOLERANCE{1e-8};
+};
+
+SequentialTestCase::SequentialTestCase()
+    : TestCaseBase("Sequential Random Variable Stream Generator")
+{
+}
+
+void
+SequentialTestCase::DoRun()
+{
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
+
+    Ptr<SequentialRandomVariable> s = CreateObject<SequentialRandomVariable>();
+
+    // The following four attributes should give the sequence
+    //
+    //    4, 4, 7, 7, 10, 10
+    //
+    s->SetAttribute("Min", DoubleValue(4));
+    s->SetAttribute("Max", DoubleValue(11));
+    s->SetAttribute("Increment", StringValue("ns3::UniformRandomVariable[Min=3.0|Max=3.0]"));
+    s->SetAttribute("Consecutive", IntegerValue(2));
+
+    double value;
+
+    // Test that the sequencet is correct.
+    value = s->GetValue();
+    NS_TEST_ASSERT_MSG_EQ_TOL(value, 4, TOLERANCE, "Sequence value 1 wrong.");
+    value = s->GetValue();
+    NS_TEST_ASSERT_MSG_EQ_TOL(value, 4, TOLERANCE, "Sequence value 2 wrong.");
+    value = s->GetValue();
+    NS_TEST_ASSERT_MSG_EQ_TOL(value, 7, TOLERANCE, "Sequence value 3 wrong.");
+    value = s->GetValue();
+    NS_TEST_ASSERT_MSG_EQ_TOL(value, 7, TOLERANCE, "Sequence value 4 wrong.");
+    value = s->GetValue();
+    NS_TEST_ASSERT_MSG_EQ_TOL(value, 10, TOLERANCE, "Sequence value 5 wrong.");
+    value = s->GetValue();
+    NS_TEST_ASSERT_MSG_EQ_TOL(value, 10, TOLERANCE, "Sequence value 6 wrong.");
+}
+
+/**
+ * \ingroup rng-tests
+ * Test case for normal distribution random variable stream generator
+ */
+class NormalTestCase : public TestCaseBase
+{
+  public:
+    // Constructor
+    NormalTestCase();
+
+    // Inherited
+    double ChiSquaredTest(Ptr<RandomVariableStream> rng) const override;
+
+  private:
+    // Inherited
+    void DoRun() override;
+
+    /** Tolerance for testing rng values against expectation, in rms. */
+    static constexpr double TOLERANCE{5};
+};
+
+NormalTestCase::NormalTestCase()
+    : TestCaseBase("Normal Random Variable Stream Generator")
 {
 }
 
 double
-RandomVariableStreamNormalAntitheticTestCase::ChiSquaredTest (Ptr<NormalRandomVariable> n)
+NormalTestCase::ChiSquaredTest(Ptr<RandomVariableStream> rng) const
 {
-  gsl_histogram * h = gsl_histogram_alloc (N_BINS);
+    gsl_histogram* h = gsl_histogram_alloc(N_BINS);
+    auto range = UniformHistogramBins(h, -4., 4.);
 
-  double range[N_BINS + 1];
-  FillHistoRangeUniformly (range, N_BINS + 1, -4., 4.);
-  range[0] = -std::numeric_limits<double>::max ();
-  range[N_BINS] = std::numeric_limits<double>::max ();
+    std::vector<double> expected(N_BINS);
 
-  gsl_histogram_set_ranges (h, range, N_BINS + 1);
+    // Note that this assumes that n has mean equal to zero and standard
+    // deviation equal to one, which are their default values for this
+    // distribution.
+    double sigma = 1.;
 
-  double expected[N_BINS];
-
-  // Note that this assumes that n has mean equal to zero and standard
-  // deviation equal to one, which are their default values for this
-  // distribution.
-  double sigma = 1.;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
+    for (std::size_t i = 0; i < N_BINS; ++i)
     {
-      expected[i] = gsl_cdf_gaussian_P (range[i + 1], sigma) - gsl_cdf_gaussian_P (range[i], sigma);
-      expected[i] *= N_MEASUREMENTS;
+        expected[i] = gsl_cdf_gaussian_P(range[i + 1], sigma) - gsl_cdf_gaussian_P(range[i], sigma);
+        expected[i] *= N_MEASUREMENTS;
     }
 
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      gsl_histogram_increment (h, n->GetValue ());
-    }
-
-  double tmp[N_BINS];
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      tmp[i] = gsl_histogram_get (h, i);
-      tmp[i] -= expected[i];
-      tmp[i] *= tmp[i];
-      tmp[i] /= expected[i];
-    }
-
-  gsl_histogram_free (h);
-
-  double chiSquared = 0;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      chiSquared += tmp[i];
-    }
-
-  return chiSquared;
+    double chiSquared = ChiSquared(h, expected, rng);
+    gsl_histogram_free(h);
+    return chiSquared;
 }
 
 void
-RandomVariableStreamNormalAntitheticTestCase::DoRun (void)
+NormalTestCase::DoRun()
 {
-  SeedManager::SetSeed (time (0));
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
 
-  double sum = 0.;
-  double maxStatistic = gsl_cdf_chisq_Qinv (0.05, N_BINS);
+    auto generator = RngGenerator<NormalRandomVariable>();
+    auto rng = generator.Create();
 
-  for (uint32_t i = 0; i < N_RUNS; ++i)
-    {
-      Ptr<NormalRandomVariable> n = CreateObject<NormalRandomVariable> ();
+    double sum = ChiSquaredsAverage(&generator, N_RUNS);
+    double maxStatistic = gsl_cdf_chisq_Qinv(0.05, N_BINS);
+    NS_TEST_ASSERT_MSG_LT(sum, maxStatistic, "Chi-squared statistic out of range");
 
-      // Make this generate antithetic values.
-      n->SetAttribute ("Antithetic", BooleanValue (true));
+    double mean = 5.0;
+    double variance = 2.0;
 
-      double result = ChiSquaredTest (n);
-      sum += result;
-    }
+    // Create the RNG with the specified range.
+    Ptr<NormalRandomVariable> x = CreateObject<NormalRandomVariable>();
+    x->SetAttribute("Mean", DoubleValue(mean));
+    x->SetAttribute("Variance", DoubleValue(variance));
 
-  sum /= (double)N_RUNS;
+    // Calculate the mean of these values.
+    double valueMean = Average(x);
 
-  NS_TEST_ASSERT_MSG_LT (sum, maxStatistic, "Chi-squared statistic out of range");
+    // The expected value for the mean of the values returned by a
+    // normally distributed random variable is equal to mean.
+    double expectedMean = mean;
+    double expectedRms = mean / std::sqrt(variance * N_MEASUREMENTS);
 
-  double mean = 5.0;
-  double variance = 2.0;
-  double value;
-
-  // Create the RNG with the specified range.
-  Ptr<NormalRandomVariable> x = CreateObject<NormalRandomVariable> ();
-  x->SetAttribute ("Mean", DoubleValue (mean));
-  x->SetAttribute ("Variance", DoubleValue (variance));
-
-  // Make this generate antithetic values.
-  x->SetAttribute ("Antithetic", BooleanValue (true));
-
-  // Calculate the mean of these values.
-  sum = 0.0;
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      value = x->GetValue ();
-      sum += value;
-    }
-  double valueMean = sum / N_MEASUREMENTS;
-
-  // The expected value for the mean of the values returned by a
-  // normally distributed random variable is equal to mean.
-  double expectedMean = mean;
-
-  // Test that values have approximately the right mean value.
-  double TOLERANCE = expectedMean * 1e-2;
-  NS_TEST_ASSERT_MSG_EQ_TOL (valueMean, expectedMean, TOLERANCE, "Wrong mean value."); 
+    // Test that values have approximately the right mean value.
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedRms * TOLERANCE,
+                              "Wrong mean value.");
 }
 
-// ===========================================================================
-// Test case for exponential distribution random variable stream generator
-// ===========================================================================
-class RandomVariableStreamExponentialTestCase : public TestCase
+/**
+ * \ingroup rng-tests
+ * Test case for antithetic normal distribution random variable stream generator
+ */
+class NormalAntitheticTestCase : public TestCaseBase
 {
-public:
-  static const uint32_t N_RUNS = 5;
-  static const uint32_t N_BINS = 50;
-  static const uint32_t N_MEASUREMENTS = 1000000;
+  public:
+    // Constructor
+    NormalAntitheticTestCase();
 
-  RandomVariableStreamExponentialTestCase ();
-  virtual ~RandomVariableStreamExponentialTestCase ();
+    // Inherited
+    double ChiSquaredTest(Ptr<RandomVariableStream> rng) const override;
 
-  double ChiSquaredTest (Ptr<ExponentialRandomVariable> e);
+  private:
+    // Inherited
+    void DoRun() override;
 
-private:
-  virtual void DoRun (void);
+    /** Tolerance for testing rng values against expectation, in rms. */
+    static constexpr double TOLERANCE{5};
 };
 
-RandomVariableStreamExponentialTestCase::RandomVariableStreamExponentialTestCase ()
-  : TestCase ("Exponential Random Variable Stream Generator")
-{
-}
-
-RandomVariableStreamExponentialTestCase::~RandomVariableStreamExponentialTestCase ()
+NormalAntitheticTestCase::NormalAntitheticTestCase()
+    : TestCaseBase("Antithetic Normal Random Variable Stream Generator")
 {
 }
 
 double
-RandomVariableStreamExponentialTestCase::ChiSquaredTest (Ptr<ExponentialRandomVariable> e)
+NormalAntitheticTestCase::ChiSquaredTest(Ptr<RandomVariableStream> rng) const
 {
-  gsl_histogram * h = gsl_histogram_alloc (N_BINS);
+    gsl_histogram* h = gsl_histogram_alloc(N_BINS);
+    auto range = UniformHistogramBins(h, -4, 4);
 
-  double range[N_BINS + 1];
-  FillHistoRangeUniformly (range, N_BINS + 1, 0., 10.);
-  range[N_BINS] = std::numeric_limits<double>::max ();
+    std::vector<double> expected(N_BINS);
 
-  gsl_histogram_set_ranges (h, range, N_BINS + 1);
+    // Note that this assumes that n has mean equal to zero and standard
+    // deviation equal to one, which are their default values for this
+    // distribution.
+    double sigma = 1.;
 
-  double expected[N_BINS];
-
-  // Note that this assumes that e has mean equal to one, which is the
-  // default value for this distribution.
-  double mu = 1.;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
+    for (std::size_t i = 0; i < N_BINS; ++i)
     {
-      expected[i] = gsl_cdf_exponential_P (range[i + 1], mu) - gsl_cdf_exponential_P (range[i], mu);
-      expected[i] *= N_MEASUREMENTS;
+        expected[i] = gsl_cdf_gaussian_P(range[i + 1], sigma) - gsl_cdf_gaussian_P(range[i], sigma);
+        expected[i] *= N_MEASUREMENTS;
     }
 
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      gsl_histogram_increment (h, e->GetValue ());
-    }
+    double chiSquared = ChiSquared(h, expected, rng);
 
-  double tmp[N_BINS];
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      tmp[i] = gsl_histogram_get (h, i);
-      tmp[i] -= expected[i];
-      tmp[i] *= tmp[i];
-      tmp[i] /= expected[i];
-    }
-
-  gsl_histogram_free (h);
-
-  double chiSquared = 0;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      chiSquared += tmp[i];
-    }
-
-  return chiSquared;
+    gsl_histogram_free(h);
+    return chiSquared;
 }
 
 void
-RandomVariableStreamExponentialTestCase::DoRun (void)
+NormalAntitheticTestCase::DoRun()
 {
-  SeedManager::SetSeed (time (0));
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
 
-  double sum = 0.;
-  double maxStatistic = gsl_cdf_chisq_Qinv (0.05, N_BINS);
+    auto generator = RngGenerator<NormalRandomVariable>(true);
+    double sum = ChiSquaredsAverage(&generator, N_RUNS);
+    double maxStatistic = gsl_cdf_chisq_Qinv(0.05, N_BINS);
+    NS_TEST_ASSERT_MSG_LT(sum, maxStatistic, "Chi-squared statistic out of range");
 
-  for (uint32_t i = 0; i < N_RUNS; ++i)
-    {
-      Ptr<ExponentialRandomVariable> e = CreateObject<ExponentialRandomVariable> ();
-      double result = ChiSquaredTest (e);
-      sum += result;
-    }
+    double mean = 5.0;
+    double variance = 2.0;
 
-  sum /= (double)N_RUNS;
+    // Create the RNG with the specified range.
+    Ptr<NormalRandomVariable> x = CreateObject<NormalRandomVariable>();
+    x->SetAttribute("Mean", DoubleValue(mean));
+    x->SetAttribute("Variance", DoubleValue(variance));
 
-  NS_TEST_ASSERT_MSG_LT (sum, maxStatistic, "Chi-squared statistic out of range");
+    // Make this generate antithetic values.
+    x->SetAttribute("Antithetic", BooleanValue(true));
 
-  double mean = 3.14;
-  double bound = 0.0;
-  double value;
+    // Calculate the mean of these values.
+    double valueMean = Average(x);
 
-  // Create the RNG with the specified range.
-  Ptr<ExponentialRandomVariable> x = CreateObject<ExponentialRandomVariable> ();
-  x->SetAttribute ("Mean", DoubleValue (mean));
-  x->SetAttribute ("Bound", DoubleValue (bound));
+    // The expected value for the mean of the values returned by a
+    // normally distributed random variable is equal to mean.
+    double expectedMean = mean;
+    double expectedRms = mean / std::sqrt(variance * N_MEASUREMENTS);
 
-  // Calculate the mean of these values.
-  sum = 0.0;
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      value = x->GetValue ();
-      sum += value;
-    }
-  double valueMean = sum / N_MEASUREMENTS;
-
-  // Test that values have approximately the right mean value.
-  double TOLERANCE = mean * 1e-2;
-  NS_TEST_ASSERT_MSG_EQ_TOL (valueMean, mean, TOLERANCE, "Wrong mean value."); 
+    // Test that values have approximately the right mean value.
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedRms * TOLERANCE,
+                              "Wrong mean value.");
 }
 
-// ===========================================================================
-// Test case for antithetic exponential distribution random variable stream generator
-// ===========================================================================
-class RandomVariableStreamExponentialAntitheticTestCase : public TestCase
+/**
+ * \ingroup rng-tests
+ * Test case for exponential distribution random variable stream generator
+ */
+class ExponentialTestCase : public TestCaseBase
 {
-public:
-  static const uint32_t N_RUNS = 5;
-  static const uint32_t N_BINS = 50;
-  static const uint32_t N_MEASUREMENTS = 1000000;
+  public:
+    // Constructor
+    ExponentialTestCase();
 
-  RandomVariableStreamExponentialAntitheticTestCase ();
-  virtual ~RandomVariableStreamExponentialAntitheticTestCase ();
+    // Inherited
+    double ChiSquaredTest(Ptr<RandomVariableStream> rng) const override;
 
-  double ChiSquaredTest (Ptr<ExponentialRandomVariable> e);
+  private:
+    // Inherited
+    void DoRun() override;
 
-private:
-  virtual void DoRun (void);
+    /** Tolerance for testing rng values against expectation, in rms. */
+    static constexpr double TOLERANCE{5};
 };
 
-RandomVariableStreamExponentialAntitheticTestCase::RandomVariableStreamExponentialAntitheticTestCase ()
-  : TestCase ("Antithetic Exponential Random Variable Stream Generator")
-{
-}
-
-RandomVariableStreamExponentialAntitheticTestCase::~RandomVariableStreamExponentialAntitheticTestCase ()
+ExponentialTestCase::ExponentialTestCase()
+    : TestCaseBase("Exponential Random Variable Stream Generator")
 {
 }
 
 double
-RandomVariableStreamExponentialAntitheticTestCase::ChiSquaredTest (Ptr<ExponentialRandomVariable> e)
+ExponentialTestCase::ChiSquaredTest(Ptr<RandomVariableStream> rng) const
 {
-  gsl_histogram * h = gsl_histogram_alloc (N_BINS);
+    gsl_histogram* h = gsl_histogram_alloc(N_BINS);
+    auto range = UniformHistogramBins(h, 0, 10, false);
 
-  double range[N_BINS + 1];
-  FillHistoRangeUniformly (range, N_BINS + 1, 0., 10.);
-  range[N_BINS] = std::numeric_limits<double>::max ();
+    std::vector<double> expected(N_BINS);
 
-  gsl_histogram_set_ranges (h, range, N_BINS + 1);
+    // Note that this assumes that e has mean equal to one, which is the
+    // default value for this distribution.
+    double mu = 1.;
 
-  double expected[N_BINS];
-
-  // Note that this assumes that e has mean equal to one, which is the
-  // default value for this distribution.
-  double mu = 1.;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
+    for (std::size_t i = 0; i < N_BINS; ++i)
     {
-      expected[i] = gsl_cdf_exponential_P (range[i + 1], mu) - gsl_cdf_exponential_P (range[i], mu);
-      expected[i] *= N_MEASUREMENTS;
+        expected[i] = gsl_cdf_exponential_P(range[i + 1], mu) - gsl_cdf_exponential_P(range[i], mu);
+        expected[i] *= N_MEASUREMENTS;
     }
 
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      gsl_histogram_increment (h, e->GetValue ());
-    }
+    double chiSquared = ChiSquared(h, expected, rng);
 
-  double tmp[N_BINS];
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      tmp[i] = gsl_histogram_get (h, i);
-      tmp[i] -= expected[i];
-      tmp[i] *= tmp[i];
-      tmp[i] /= expected[i];
-    }
-
-  gsl_histogram_free (h);
-
-  double chiSquared = 0;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      chiSquared += tmp[i];
-    }
-
-  return chiSquared;
+    gsl_histogram_free(h);
+    return chiSquared;
 }
 
 void
-RandomVariableStreamExponentialAntitheticTestCase::DoRun (void)
+ExponentialTestCase::DoRun()
 {
-  SeedManager::SetSeed (time (0));
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
 
-  double sum = 0.;
-  double maxStatistic = gsl_cdf_chisq_Qinv (0.05, N_BINS);
+    auto generator = RngGenerator<ExponentialRandomVariable>();
+    double sum = ChiSquaredsAverage(&generator, N_RUNS);
+    double maxStatistic = gsl_cdf_chisq_Qinv(0.05, N_BINS);
+    NS_TEST_ASSERT_MSG_LT(sum, maxStatistic, "Chi-squared statistic out of range");
 
-  for (uint32_t i = 0; i < N_RUNS; ++i)
-    {
-      Ptr<ExponentialRandomVariable> e = CreateObject<ExponentialRandomVariable> ();
+    double mean = 3.14;
+    double bound = 0.0;
 
-      // Make this generate antithetic values.
-      e->SetAttribute ("Antithetic", BooleanValue (true));
+    // Create the RNG with the specified range.
+    Ptr<ExponentialRandomVariable> x = CreateObject<ExponentialRandomVariable>();
+    x->SetAttribute("Mean", DoubleValue(mean));
+    x->SetAttribute("Bound", DoubleValue(bound));
 
-      double result = ChiSquaredTest (e);
-      sum += result;
-    }
+    // Calculate the mean of these values.
+    double valueMean = Average(x);
+    double expectedMean = mean;
+    double expectedRms = std::sqrt(mean / N_MEASUREMENTS);
 
-  sum /= (double)N_RUNS;
-
-  NS_TEST_ASSERT_MSG_LT (sum, maxStatistic, "Chi-squared statistic out of range");
-
-  double mean = 3.14;
-  double bound = 0.0;
-  double value;
-
-  // Create the RNG with the specified range.
-  Ptr<ExponentialRandomVariable> x = CreateObject<ExponentialRandomVariable> ();
-  x->SetAttribute ("Mean", DoubleValue (mean));
-  x->SetAttribute ("Bound", DoubleValue (bound));
-
-  // Make this generate antithetic values.
-  x->SetAttribute ("Antithetic", BooleanValue (true));
-
-  // Calculate the mean of these values.
-  sum = 0.0;
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      value = x->GetValue ();
-      sum += value;
-    }
-  double valueMean = sum / N_MEASUREMENTS;
-
-  // Test that values have approximately the right mean value.
-  double TOLERANCE = mean * 1e-2;
-  NS_TEST_ASSERT_MSG_EQ_TOL (valueMean, mean, TOLERANCE, "Wrong mean value."); 
+    // Test that values have approximately the right mean value.
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedRms * TOLERANCE,
+                              "Wrong mean value.");
 }
 
-// ===========================================================================
-// Test case for Pareto distribution random variable stream generator
-// ===========================================================================
-class RandomVariableStreamParetoTestCase : public TestCase
+/**
+ * \ingroup rng-tests
+ * Test case for antithetic exponential distribution random variable stream generator
+ */
+class ExponentialAntitheticTestCase : public TestCaseBase
 {
-public:
-  static const uint32_t N_RUNS = 5;
-  static const uint32_t N_BINS = 50;
-  static const uint32_t N_MEASUREMENTS = 1000000;
+  public:
+    // Constructor
+    ExponentialAntitheticTestCase();
 
-  RandomVariableStreamParetoTestCase ();
-  virtual ~RandomVariableStreamParetoTestCase ();
+    // Inherited
+    double ChiSquaredTest(Ptr<RandomVariableStream> rng) const override;
 
-  double ChiSquaredTest (Ptr<ParetoRandomVariable> p);
+  private:
+    // Inherited
+    void DoRun() override;
 
-private:
-  virtual void DoRun (void);
+    /** Tolerance for testing rng values against expectation, in rms. */
+    static constexpr double TOLERANCE{5};
 };
 
-RandomVariableStreamParetoTestCase::RandomVariableStreamParetoTestCase ()
-  : TestCase ("Pareto Random Variable Stream Generator")
-{
-}
-
-RandomVariableStreamParetoTestCase::~RandomVariableStreamParetoTestCase ()
+ExponentialAntitheticTestCase::ExponentialAntitheticTestCase()
+    : TestCaseBase("Antithetic Exponential Random Variable Stream Generator")
 {
 }
 
 double
-RandomVariableStreamParetoTestCase::ChiSquaredTest (Ptr<ParetoRandomVariable> p)
+ExponentialAntitheticTestCase::ChiSquaredTest(Ptr<RandomVariableStream> rng) const
 {
-  gsl_histogram * h = gsl_histogram_alloc (N_BINS);
+    gsl_histogram* h = gsl_histogram_alloc(N_BINS);
+    auto range = UniformHistogramBins(h, 0, 10, false);
 
-  double range[N_BINS + 1];
-  FillHistoRangeUniformly (range, N_BINS + 1, 1., 10.);
-  range[N_BINS] = std::numeric_limits<double>::max ();
+    std::vector<double> expected(N_BINS);
 
-  gsl_histogram_set_ranges (h, range, N_BINS + 1);
+    // Note that this assumes that e has mean equal to one, which is the
+    // default value for this distribution.
+    double mu = 1.;
 
-  double expected[N_BINS];
-
-  // Note that this assumes that p has mean equal to 1 and shape equal
-  // to 2, which are their default values for this distribution.
-  double mean = 1.0;
-  double shape = 2.0;
-  double scale = mean * (shape - 1.0) / shape;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
+    for (std::size_t i = 0; i < N_BINS; ++i)
     {
-      expected[i] = gsl_cdf_pareto_P (range[i + 1], shape, scale) - gsl_cdf_pareto_P (range[i], shape, scale);
-      expected[i] *= N_MEASUREMENTS;
+        expected[i] = gsl_cdf_exponential_P(range[i + 1], mu) - gsl_cdf_exponential_P(range[i], mu);
+        expected[i] *= N_MEASUREMENTS;
     }
 
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      gsl_histogram_increment (h, p->GetValue ());
-    }
+    double chiSquared = ChiSquared(h, expected, rng);
 
-  double tmp[N_BINS];
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      tmp[i] = gsl_histogram_get (h, i);
-      tmp[i] -= expected[i];
-      tmp[i] *= tmp[i];
-      tmp[i] /= expected[i];
-    }
-
-  gsl_histogram_free (h);
-
-  double chiSquared = 0;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      chiSquared += tmp[i];
-    }
-
-  return chiSquared;
+    gsl_histogram_free(h);
+    return chiSquared;
 }
 
 void
-RandomVariableStreamParetoTestCase::DoRun (void)
+ExponentialAntitheticTestCase::DoRun()
 {
-  SeedManager::SetSeed (time (0));
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
 
-  double sum = 0.;
-  double maxStatistic = gsl_cdf_chisq_Qinv (0.05, N_BINS);
+    auto generator = RngGenerator<ExponentialRandomVariable>(true);
+    double sum = ChiSquaredsAverage(&generator, N_RUNS);
+    double maxStatistic = gsl_cdf_chisq_Qinv(0.05, N_BINS);
+    NS_TEST_ASSERT_MSG_LT(sum, maxStatistic, "Chi-squared statistic out of range");
 
-  for (uint32_t i = 0; i < N_RUNS; ++i)
-    {
-      Ptr<ParetoRandomVariable> e = CreateObject<ParetoRandomVariable> ();
-      double result = ChiSquaredTest (e);
-      sum += result;
-    }
+    double mean = 3.14;
+    double bound = 0.0;
 
-  sum /= (double)N_RUNS;
+    // Create the RNG with the specified range.
+    Ptr<ExponentialRandomVariable> x = CreateObject<ExponentialRandomVariable>();
+    x->SetAttribute("Mean", DoubleValue(mean));
+    x->SetAttribute("Bound", DoubleValue(bound));
 
-  NS_TEST_ASSERT_MSG_LT (sum, maxStatistic, "Chi-squared statistic out of range");
+    // Make this generate antithetic values.
+    x->SetAttribute("Antithetic", BooleanValue(true));
 
-  double mean = 5.0;
-  double shape = 2.0;
-  double scale = mean * (shape - 1.0) / shape;
-  double value;
+    // Calculate the mean of these values.
+    double valueMean = Average(x);
+    double expectedMean = mean;
+    double expectedRms = std::sqrt(mean / N_MEASUREMENTS);
 
-  // Create the RNG with the specified range.
-  Ptr<ParetoRandomVariable> x = CreateObject<ParetoRandomVariable> ();
-  x->SetAttribute ("Mean", DoubleValue (mean));
-  x->SetAttribute ("Shape", DoubleValue (shape));
-
-  // Calculate the mean of these values.
-  sum = 0.0;
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      value = x->GetValue ();
-      sum += value;
-    }
-  double valueMean = sum / N_MEASUREMENTS;
-
-  // The expected value for the mean is given by
-  //
-  //                   shape * scale
-  //     E[value]  =  ---------------  ,
-  //                     shape - 1
-  // 
-  // where
-  // 
-  //     scale  =  mean * (shape - 1.0) / shape .
-  double expectedMean = (shape * scale) / (shape - 1.0);
-
-  // Test that values have approximately the right mean value.
-  double TOLERANCE = expectedMean * 1e-2;
-  NS_TEST_ASSERT_MSG_EQ_TOL (valueMean, expectedMean, TOLERANCE, "Wrong mean value."); 
+    // Test that values have approximately the right mean value.
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedRms * TOLERANCE,
+                              "Wrong mean value.");
 }
 
-// ===========================================================================
-// Test case for antithetic Pareto distribution random variable stream generator
-// ===========================================================================
-class RandomVariableStreamParetoAntitheticTestCase : public TestCase
+/**
+ * \ingroup rng-tests
+ * Test case for Pareto distribution random variable stream generator
+ */
+class ParetoTestCase : public TestCaseBase
 {
-public:
-  static const uint32_t N_RUNS = 5;
-  static const uint32_t N_BINS = 50;
-  static const uint32_t N_MEASUREMENTS = 1000000;
+  public:
+    // Constructor
+    ParetoTestCase();
 
-  RandomVariableStreamParetoAntitheticTestCase ();
-  virtual ~RandomVariableStreamParetoAntitheticTestCase ();
+    // Inherited
+    double ChiSquaredTest(Ptr<RandomVariableStream> rng) const override;
 
-  double ChiSquaredTest (Ptr<ParetoRandomVariable> p);
+  private:
+    // Inherited
+    void DoRun() override;
 
-private:
-  virtual void DoRun (void);
+    /**
+     * Tolerance for testing rng values against expectation,
+     * as a fraction of mean value.
+     */
+    static constexpr double TOLERANCE{1e-2};
 };
 
-RandomVariableStreamParetoAntitheticTestCase::RandomVariableStreamParetoAntitheticTestCase ()
-  : TestCase ("Antithetic Pareto Random Variable Stream Generator")
-{
-}
-
-RandomVariableStreamParetoAntitheticTestCase::~RandomVariableStreamParetoAntitheticTestCase ()
+ParetoTestCase::ParetoTestCase()
+    : TestCaseBase("Pareto Random Variable Stream Generator")
 {
 }
 
 double
-RandomVariableStreamParetoAntitheticTestCase::ChiSquaredTest (Ptr<ParetoRandomVariable> p)
+ParetoTestCase::ChiSquaredTest(Ptr<RandomVariableStream> rng) const
 {
-  gsl_histogram * h = gsl_histogram_alloc (N_BINS);
+    gsl_histogram* h = gsl_histogram_alloc(N_BINS);
+    auto range = UniformHistogramBins(h, 1, 10, false);
 
-  double range[N_BINS + 1];
-  FillHistoRangeUniformly (range, N_BINS + 1, 1., 10.);
-  range[N_BINS] = std::numeric_limits<double>::max ();
+    std::vector<double> expected(N_BINS);
 
-  gsl_histogram_set_ranges (h, range, N_BINS + 1);
+    double shape = 2.0;
+    double scale = 1.0;
 
-  double expected[N_BINS];
-
-  // Note that this assumes that p has mean equal to 1 and shape equal
-  // to 2, which are their default values for this distribution.
-  double mean = 1.0;
-  double shape = 2.0;
-  double scale = mean * (shape - 1.0) / shape;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
+    for (std::size_t i = 0; i < N_BINS; ++i)
     {
-      expected[i] = gsl_cdf_pareto_P (range[i + 1], shape, scale) - gsl_cdf_pareto_P (range[i], shape, scale);
-      expected[i] *= N_MEASUREMENTS;
+        expected[i] =
+            gsl_cdf_pareto_P(range[i + 1], shape, scale) - gsl_cdf_pareto_P(range[i], shape, scale);
+        expected[i] *= N_MEASUREMENTS;
     }
 
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      gsl_histogram_increment (h, p->GetValue ());
-    }
+    double chiSquared = ChiSquared(h, expected, rng);
 
-  double tmp[N_BINS];
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      tmp[i] = gsl_histogram_get (h, i);
-      tmp[i] -= expected[i];
-      tmp[i] *= tmp[i];
-      tmp[i] /= expected[i];
-    }
-
-  gsl_histogram_free (h);
-
-  double chiSquared = 0;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      chiSquared += tmp[i];
-    }
-
-  return chiSquared;
+    gsl_histogram_free(h);
+    return chiSquared;
 }
 
 void
-RandomVariableStreamParetoAntitheticTestCase::DoRun (void)
+ParetoTestCase::DoRun()
 {
-  SeedManager::SetSeed (time (0));
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
 
-  double sum = 0.;
-  double maxStatistic = gsl_cdf_chisq_Qinv (0.05, N_BINS);
+    auto generator = RngGenerator<ParetoRandomVariable>();
+    double sum = ChiSquaredsAverage(&generator, N_RUNS);
+    double maxStatistic = gsl_cdf_chisq_Qinv(0.05, N_BINS);
+    NS_TEST_ASSERT_MSG_LT(sum, maxStatistic, "Chi-squared statistic out of range");
 
-  for (uint32_t i = 0; i < N_RUNS; ++i)
-    {
-      Ptr<ParetoRandomVariable> e = CreateObject<ParetoRandomVariable> ();
+    double shape = 2.0;
+    double scale = 1.0;
 
-      // Make this generate antithetic values.
-      e->SetAttribute ("Antithetic", BooleanValue (true));
+    // Create the RNG with the specified range.
+    Ptr<ParetoRandomVariable> x = CreateObject<ParetoRandomVariable>();
+    x->SetAttribute("Shape", DoubleValue(shape));
+    x->SetAttribute("Scale", DoubleValue(scale));
 
-      double result = ChiSquaredTest (e);
-      sum += result;
-    }
+    // Calculate the mean of these values.
+    double valueMean = Average(x);
 
-  sum /= (double)N_RUNS;
+    // The expected value for the mean is given by
+    //
+    //                   shape * scale
+    //     E[value]  =  ---------------  ,
+    //                     shape - 1
+    //
+    // where
+    //
+    //     scale  =  mean * (shape - 1.0) / shape .
+    double expectedMean = (shape * scale) / (shape - 1.0);
 
-  NS_TEST_ASSERT_MSG_LT (sum, maxStatistic, "Chi-squared statistic out of range");
-
-  double mean = 5.0;
-  double shape = 2.0;
-  double scale = mean * (shape - 1.0) / shape;
-  double value;
-
-  // Create the RNG with the specified range.
-  Ptr<ParetoRandomVariable> x = CreateObject<ParetoRandomVariable> ();
-  x->SetAttribute ("Mean", DoubleValue (mean));
-  x->SetAttribute ("Shape", DoubleValue (shape));
-
-  // Make this generate antithetic values.
-  x->SetAttribute ("Antithetic", BooleanValue (true));
-
-  // Calculate the mean of these values.
-  sum = 0.0;
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      value = x->GetValue ();
-      sum += value;
-    }
-  double valueMean = sum / N_MEASUREMENTS;
-
-  // The expected value for the mean is given by
-  //
-  //                   shape * scale
-  //     E[value]  =  ---------------  ,
-  //                     shape - 1
-  // 
-  // where
-  // 
-  //     scale  =  mean * (shape - 1.0) / shape .
-  //
-  double expectedMean = (shape * scale) / (shape - 1.0);
-
-  // Test that values have approximately the right mean value.
-  double TOLERANCE = expectedMean * 1e-2;
-  NS_TEST_ASSERT_MSG_EQ_TOL (valueMean, expectedMean, TOLERANCE, "Wrong mean value."); 
+    // Test that values have approximately the right mean value.
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedMean * TOLERANCE,
+                              "Wrong mean value.");
 }
 
-// ===========================================================================
-// Test case for Weibull distribution random variable stream generator
-// ===========================================================================
-class RandomVariableStreamWeibullTestCase : public TestCase
+/**
+ * \ingroup rng-tests
+ * Test case for antithetic Pareto distribution random variable stream generator
+ */
+class ParetoAntitheticTestCase : public TestCaseBase
 {
-public:
-  static const uint32_t N_RUNS = 5;
-  static const uint32_t N_BINS = 50;
-  static const uint32_t N_MEASUREMENTS = 1000000;
+  public:
+    // Constructor
+    ParetoAntitheticTestCase();
 
-  RandomVariableStreamWeibullTestCase ();
-  virtual ~RandomVariableStreamWeibullTestCase ();
+    // Inherited
+    double ChiSquaredTest(Ptr<RandomVariableStream> rng) const override;
 
-  double ChiSquaredTest (Ptr<WeibullRandomVariable> p);
+  private:
+    // Inherited
+    void DoRun() override;
 
-private:
-  virtual void DoRun (void);
+    /**
+     * Tolerance for testing rng values against expectation,
+     * as a fraction of mean value.
+     */
+    static constexpr double TOLERANCE{1e-2};
 };
 
-RandomVariableStreamWeibullTestCase::RandomVariableStreamWeibullTestCase ()
-  : TestCase ("Weibull Random Variable Stream Generator")
-{
-}
-
-RandomVariableStreamWeibullTestCase::~RandomVariableStreamWeibullTestCase ()
+ParetoAntitheticTestCase::ParetoAntitheticTestCase()
+    : TestCaseBase("Antithetic Pareto Random Variable Stream Generator")
 {
 }
 
 double
-RandomVariableStreamWeibullTestCase::ChiSquaredTest (Ptr<WeibullRandomVariable> p)
+ParetoAntitheticTestCase::ChiSquaredTest(Ptr<RandomVariableStream> rng) const
 {
-  gsl_histogram * h = gsl_histogram_alloc (N_BINS);
+    gsl_histogram* h = gsl_histogram_alloc(N_BINS);
+    auto range = UniformHistogramBins(h, 1, 10, false);
 
-  double range[N_BINS + 1];
-  FillHistoRangeUniformly (range, N_BINS + 1, 1., 10.);
-  range[N_BINS] = std::numeric_limits<double>::max ();
+    std::vector<double> expected(N_BINS);
 
-  gsl_histogram_set_ranges (h, range, N_BINS + 1);
+    double shape = 2.0;
+    double scale = 1.0;
 
-  double expected[N_BINS];
-
-  // Note that this assumes that p has shape equal to one and scale
-  // equal to one, which are their default values for this
-  // distribution.
-  double a = 1.0;
-  double b = 1.0;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
+    for (std::size_t i = 0; i < N_BINS; ++i)
     {
-      expected[i] = gsl_cdf_weibull_P (range[i + 1], a, b) - gsl_cdf_weibull_P (range[i], a, b);
-      expected[i] *= N_MEASUREMENTS;
+        expected[i] =
+            gsl_cdf_pareto_P(range[i + 1], shape, scale) - gsl_cdf_pareto_P(range[i], shape, scale);
+        expected[i] *= N_MEASUREMENTS;
     }
 
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      gsl_histogram_increment (h, p->GetValue ());
-    }
+    double chiSquared = ChiSquared(h, expected, rng);
 
-  double tmp[N_BINS];
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      tmp[i] = gsl_histogram_get (h, i);
-      tmp[i] -= expected[i];
-      tmp[i] *= tmp[i];
-      tmp[i] /= expected[i];
-    }
-
-  gsl_histogram_free (h);
-
-  double chiSquared = 0;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      chiSquared += tmp[i];
-    }
-
-  return chiSquared;
+    gsl_histogram_free(h);
+    return chiSquared;
 }
 
 void
-RandomVariableStreamWeibullTestCase::DoRun (void)
+ParetoAntitheticTestCase::DoRun()
 {
-  SeedManager::SetSeed (time (0));
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
 
-  double sum = 0.;
-  double maxStatistic = gsl_cdf_chisq_Qinv (0.05, N_BINS);
+    auto generator = RngGenerator<ParetoRandomVariable>(true);
+    double sum = ChiSquaredsAverage(&generator, N_RUNS);
+    double maxStatistic = gsl_cdf_chisq_Qinv(0.05, N_BINS);
+    NS_TEST_ASSERT_MSG_LT(sum, maxStatistic, "Chi-squared statistic out of range");
 
-  for (uint32_t i = 0; i < N_RUNS; ++i)
-    {
-      Ptr<WeibullRandomVariable> e = CreateObject<WeibullRandomVariable> ();
-      double result = ChiSquaredTest (e);
-      sum += result;
-    }
+    double shape = 2.0;
+    double scale = 1.0;
 
-  sum /= (double)N_RUNS;
+    // Create the RNG with the specified range.
+    Ptr<ParetoRandomVariable> x = CreateObject<ParetoRandomVariable>();
+    x->SetAttribute("Shape", DoubleValue(shape));
+    x->SetAttribute("Scale", DoubleValue(scale));
 
-  NS_TEST_ASSERT_MSG_LT (sum, maxStatistic, "Chi-squared statistic out of range");
+    // Make this generate antithetic values.
+    x->SetAttribute("Antithetic", BooleanValue(true));
 
-  double scale = 5.0;
-  double shape = 1.0;
-  double value;
+    // Calculate the mean of these values.
+    double valueMean = Average(x);
 
-  // Create the RNG with the specified range.
-  Ptr<WeibullRandomVariable> x = CreateObject<WeibullRandomVariable> ();
-  x->SetAttribute ("Scale", DoubleValue (scale));
-  x->SetAttribute ("Shape", DoubleValue (shape));
+    // The expected value for the mean is given by
+    //
+    //                   shape * scale
+    //     E[value]  =  ---------------  ,
+    //                     shape - 1
+    //
+    // where
+    //
+    //     scale  =  mean * (shape - 1.0) / shape .
+    //
+    double expectedMean = (shape * scale) / (shape - 1.0);
 
-  // Calculate the mean of these values.
-  sum = 0.0;
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      value = x->GetValue ();
-      sum += value;
-    }
-  double valueMean = sum / N_MEASUREMENTS;
-
-  // The expected value for the mean of the values returned by a
-  // Weibull distributed random variable is
-  //
-  //     E[value]  =  scale * Gamma(1 + 1 / shape)  ,
-  //               
-  // where Gamma() is the Gamma function.  Note that 
-  //               
-  //     Gamma(n)  =  (n - 1)!
-  //               
-  // if n is a positive integer.
-  //
-  // For this test,
-  //
-  //     Gamma(1 + 1 / shape)  =  Gamma(1 + 1 / 1)
-  //                           =  Gamma(2)
-  //                           =  (2 - 1)!
-  //                           =  1
-  //
-  // which means
-  //
-  //     E[value]  =  scale  .
-  //               
-  double expectedMean = scale;
-
-  // Test that values have approximately the right mean value.
-  double TOLERANCE = expectedMean * 1e-2;
-  NS_TEST_ASSERT_MSG_EQ_TOL (valueMean, expectedMean, TOLERANCE, "Wrong mean value."); 
+    // Test that values have approximately the right mean value.
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedMean * TOLERANCE,
+                              "Wrong mean value.");
 }
 
-// ===========================================================================
-// Test case for antithetic Weibull distribution random variable stream generator
-// ===========================================================================
-class RandomVariableStreamWeibullAntitheticTestCase : public TestCase
+/**
+ * \ingroup rng-tests
+ * Test case for Weibull distribution random variable stream generator
+ */
+class WeibullTestCase : public TestCaseBase
 {
-public:
-  static const uint32_t N_RUNS = 5;
-  static const uint32_t N_BINS = 50;
-  static const uint32_t N_MEASUREMENTS = 1000000;
+  public:
+    // Constructor
+    WeibullTestCase();
 
-  RandomVariableStreamWeibullAntitheticTestCase ();
-  virtual ~RandomVariableStreamWeibullAntitheticTestCase ();
+    // Inherited
+    double ChiSquaredTest(Ptr<RandomVariableStream> rng) const override;
 
-  double ChiSquaredTest (Ptr<WeibullRandomVariable> p);
+  private:
+    // Inherited
+    void DoRun() override;
 
-private:
-  virtual void DoRun (void);
+    /**
+     * Tolerance for testing rng values against expectation,
+     * as a fraction of mean value.
+     */
+    static constexpr double TOLERANCE{1e-2};
 };
 
-RandomVariableStreamWeibullAntitheticTestCase::RandomVariableStreamWeibullAntitheticTestCase ()
-  : TestCase ("Antithetic Weibull Random Variable Stream Generator")
-{
-}
-
-RandomVariableStreamWeibullAntitheticTestCase::~RandomVariableStreamWeibullAntitheticTestCase ()
+WeibullTestCase::WeibullTestCase()
+    : TestCaseBase("Weibull Random Variable Stream Generator")
 {
 }
 
 double
-RandomVariableStreamWeibullAntitheticTestCase::ChiSquaredTest (Ptr<WeibullRandomVariable> p)
+WeibullTestCase::ChiSquaredTest(Ptr<RandomVariableStream> rng) const
 {
-  gsl_histogram * h = gsl_histogram_alloc (N_BINS);
+    gsl_histogram* h = gsl_histogram_alloc(N_BINS);
+    auto range = UniformHistogramBins(h, 1, 10, false);
 
-  double range[N_BINS + 1];
-  FillHistoRangeUniformly (range, N_BINS + 1, 1., 10.);
-  range[N_BINS] = std::numeric_limits<double>::max ();
+    std::vector<double> expected(N_BINS);
 
-  gsl_histogram_set_ranges (h, range, N_BINS + 1);
+    // Note that this assumes that p has shape equal to one and scale
+    // equal to one, which are their default values for this
+    // distribution.
+    double a = 1.0;
+    double b = 1.0;
 
-  double expected[N_BINS];
-
-  // Note that this assumes that p has shape equal to one and scale
-  // equal to one, which are their default values for this
-  // distribution.
-  double a = 1.0;
-  double b = 1.0;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
+    for (std::size_t i = 0; i < N_BINS; ++i)
     {
-      expected[i] = gsl_cdf_weibull_P (range[i + 1], a, b) - gsl_cdf_weibull_P (range[i], a, b);
-      expected[i] *= N_MEASUREMENTS;
+        expected[i] = gsl_cdf_weibull_P(range[i + 1], a, b) - gsl_cdf_weibull_P(range[i], a, b);
+        expected[i] *= N_MEASUREMENTS;
+        NS_LOG_INFO("weibull: " << expected[i]);
     }
 
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      gsl_histogram_increment (h, p->GetValue ());
-    }
+    double chiSquared = ChiSquared(h, expected, rng);
 
-  double tmp[N_BINS];
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      tmp[i] = gsl_histogram_get (h, i);
-      tmp[i] -= expected[i];
-      tmp[i] *= tmp[i];
-      tmp[i] /= expected[i];
-    }
-
-  gsl_histogram_free (h);
-
-  double chiSquared = 0;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      chiSquared += tmp[i];
-    }
-
-  return chiSquared;
+    gsl_histogram_free(h);
+    return chiSquared;
 }
 
 void
-RandomVariableStreamWeibullAntitheticTestCase::DoRun (void)
+WeibullTestCase::DoRun()
 {
-  SeedManager::SetSeed (time (0));
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
 
-  double sum = 0.;
-  double maxStatistic = gsl_cdf_chisq_Qinv (0.05, N_BINS);
+    auto generator = RngGenerator<WeibullRandomVariable>();
+    double sum = ChiSquaredsAverage(&generator, N_RUNS);
+    double maxStatistic = gsl_cdf_chisq_Qinv(0.05, N_BINS);
+    NS_TEST_ASSERT_MSG_LT(sum, maxStatistic, "Chi-squared statistic out of range");
 
-  for (uint32_t i = 0; i < N_RUNS; ++i)
-    {
-      Ptr<WeibullRandomVariable> e = CreateObject<WeibullRandomVariable> ();
+    double scale = 5.0;
+    double shape = 1.0;
 
-      // Make this generate antithetic values.
-      e->SetAttribute ("Antithetic", BooleanValue (true));
+    // Create the RNG with the specified range.
+    Ptr<WeibullRandomVariable> x = CreateObject<WeibullRandomVariable>();
+    x->SetAttribute("Scale", DoubleValue(scale));
+    x->SetAttribute("Shape", DoubleValue(shape));
 
-      double result = ChiSquaredTest (e);
-      sum += result;
-    }
+    // Calculate the mean of these values.
+    double valueMean = Average(x);
 
-  sum /= (double)N_RUNS;
+    // The expected value for the mean of the values returned by a
+    // Weibull distributed random variable is
+    //
+    //     E[value]  =  scale * Gamma(1 + 1 / shape)  ,
+    //
+    // where Gamma() is the Gamma function.  Note that
+    //
+    //     Gamma(n)  =  (n - 1)!
+    //
+    // if n is a positive integer.
+    //
+    // For this test,
+    //
+    //     Gamma(1 + 1 / shape)  =  Gamma(1 + 1 / 1)
+    //                           =  Gamma(2)
+    //                           =  (2 - 1)!
+    //                           =  1
+    //
+    // which means
+    //
+    //     E[value]  =  scale  .
+    //
+    double expectedMean = scale;
 
-  NS_TEST_ASSERT_MSG_LT (sum, maxStatistic, "Chi-squared statistic out of range");
-
-  double scale = 5.0;
-  double shape = 1.0;
-  double value;
-
-  // Create the RNG with the specified range.
-  Ptr<WeibullRandomVariable> x = CreateObject<WeibullRandomVariable> ();
-  x->SetAttribute ("Scale", DoubleValue (scale));
-  x->SetAttribute ("Shape", DoubleValue (shape));
-
-  // Make this generate antithetic values.
-  x->SetAttribute ("Antithetic", BooleanValue (true));
-
-  // Calculate the mean of these values.
-  sum = 0.0;
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      value = x->GetValue ();
-      sum += value;
-    }
-  double valueMean = sum / N_MEASUREMENTS;
-
-  // The expected value for the mean of the values returned by a
-  // Weibull distributed random variable is
-  //
-  //     E[value]  =  scale * Gamma(1 + 1 / shape)  ,
-  //               
-  // where Gamma() is the Gamma function.  Note that 
-  //               
-  //     Gamma(n)  =  (n - 1)!
-  //               
-  // if n is a positive integer.
-  //
-  // For this test,
-  //
-  //     Gamma(1 + 1 / shape)  =  Gamma(1 + 1 / 1)
-  //                           =  Gamma(2)
-  //                           =  (2 - 1)!
-  //                           =  1
-  //
-  // which means
-  //
-  //     E[value]  =  scale  .
-  //               
-  double expectedMean = scale;
-
-  // Test that values have approximately the right mean value.
-  double TOLERANCE = expectedMean * 1e-2;
-  NS_TEST_ASSERT_MSG_EQ_TOL (valueMean, expectedMean, TOLERANCE, "Wrong mean value."); 
+    // Test that values have approximately the right mean value.
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedMean * TOLERANCE,
+                              "Wrong mean value.");
 }
 
-// ===========================================================================
-// Test case for log-normal distribution random variable stream generator
-// ===========================================================================
-class RandomVariableStreamLogNormalTestCase : public TestCase
+/**
+ * \ingroup rng-tests
+ * Test case for antithetic Weibull distribution random variable stream generator
+ */
+class WeibullAntitheticTestCase : public TestCaseBase
 {
-public:
-  static const uint32_t N_RUNS = 5;
-  static const uint32_t N_BINS = 50;
-  static const uint32_t N_MEASUREMENTS = 1000000;
+  public:
+    // Constructor
+    WeibullAntitheticTestCase();
 
-  RandomVariableStreamLogNormalTestCase ();
-  virtual ~RandomVariableStreamLogNormalTestCase ();
+    // Inherited
+    double ChiSquaredTest(Ptr<RandomVariableStream> rng) const override;
 
-  double ChiSquaredTest (Ptr<LogNormalRandomVariable> n);
+  private:
+    // Inherited
+    void DoRun() override;
 
-private:
-  virtual void DoRun (void);
+    /**
+     * Tolerance for testing rng values against expectation,
+     * as a fraction of mean value.
+     */
+    static constexpr double TOLERANCE{1e-2};
 };
 
-RandomVariableStreamLogNormalTestCase::RandomVariableStreamLogNormalTestCase ()
-  : TestCase ("Log-Normal Random Variable Stream Generator")
-{
-}
-
-RandomVariableStreamLogNormalTestCase::~RandomVariableStreamLogNormalTestCase ()
+WeibullAntitheticTestCase::WeibullAntitheticTestCase()
+    : TestCaseBase("Antithetic Weibull Random Variable Stream Generator")
 {
 }
 
 double
-RandomVariableStreamLogNormalTestCase::ChiSquaredTest (Ptr<LogNormalRandomVariable> n)
+WeibullAntitheticTestCase::ChiSquaredTest(Ptr<RandomVariableStream> rng) const
 {
-  gsl_histogram * h = gsl_histogram_alloc (N_BINS);
+    gsl_histogram* h = gsl_histogram_alloc(N_BINS);
+    auto range = UniformHistogramBins(h, 1, 10, false);
 
-  double range[N_BINS + 1];
-  FillHistoRangeUniformly (range, N_BINS + 1, 0., 10.);
-  range[N_BINS] = std::numeric_limits<double>::max ();
+    std::vector<double> expected(N_BINS);
 
-  gsl_histogram_set_ranges (h, range, N_BINS + 1);
+    // Note that this assumes that p has shape equal to one and scale
+    // equal to one, which are their default values for this
+    // distribution.
+    double a = 1.0;
+    double b = 1.0;
 
-  double expected[N_BINS];
-
-  // Note that this assumes that n has mu equal to zero and sigma
-  // equal to one, which are their default values for this
-  // distribution.
-  double mu = 0.0;
-  double sigma = 1.0;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
+    for (std::size_t i = 0; i < N_BINS; ++i)
     {
-      expected[i] = gsl_cdf_lognormal_P (range[i + 1], mu, sigma) - gsl_cdf_lognormal_P (range[i], mu, sigma);
-      expected[i] *= N_MEASUREMENTS;
+        expected[i] = gsl_cdf_weibull_P(range[i + 1], a, b) - gsl_cdf_weibull_P(range[i], a, b);
+        expected[i] *= N_MEASUREMENTS;
     }
 
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      gsl_histogram_increment (h, n->GetValue ());
-    }
+    double chiSquared = ChiSquared(h, expected, rng);
 
-  double tmp[N_BINS];
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      tmp[i] = gsl_histogram_get (h, i);
-      tmp[i] -= expected[i];
-      tmp[i] *= tmp[i];
-      tmp[i] /= expected[i];
-    }
-
-  gsl_histogram_free (h);
-
-  double chiSquared = 0;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      chiSquared += tmp[i];
-    }
-
-  return chiSquared;
+    gsl_histogram_free(h);
+    return chiSquared;
 }
 
 void
-RandomVariableStreamLogNormalTestCase::DoRun (void)
+WeibullAntitheticTestCase::DoRun()
 {
-  SeedManager::SetSeed (time (0));
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
 
-  double sum = 0.;
-  double maxStatistic = gsl_cdf_chisq_Qinv (0.05, N_BINS);
+    auto generator = RngGenerator<WeibullRandomVariable>(true);
+    double sum = ChiSquaredsAverage(&generator, N_RUNS);
+    double maxStatistic = gsl_cdf_chisq_Qinv(0.05, N_BINS);
+    NS_TEST_ASSERT_MSG_LT(sum, maxStatistic, "Chi-squared statistic out of range");
 
-  for (uint32_t i = 0; i < N_RUNS; ++i)
-    {
-      Ptr<LogNormalRandomVariable> n = CreateObject<LogNormalRandomVariable> ();
-      double result = ChiSquaredTest (n);
-      sum += result;
-    }
+    double scale = 5.0;
+    double shape = 1.0;
 
-  sum /= (double)N_RUNS;
+    // Create the RNG with the specified range.
+    Ptr<WeibullRandomVariable> x = CreateObject<WeibullRandomVariable>();
+    x->SetAttribute("Scale", DoubleValue(scale));
+    x->SetAttribute("Shape", DoubleValue(shape));
 
-  NS_TEST_ASSERT_MSG_LT (sum, maxStatistic, "Chi-squared statistic out of range");
+    // Make this generate antithetic values.
+    x->SetAttribute("Antithetic", BooleanValue(true));
 
-  double mu = 5.0;
-  double sigma = 2.0;
-  double value;
+    // Calculate the mean of these values.
+    double valueMean = Average(x);
 
-  // Create the RNG with the specified range.
-  Ptr<LogNormalRandomVariable> x = CreateObject<LogNormalRandomVariable> ();
-  x->SetAttribute ("Mu", DoubleValue (mu));
-  x->SetAttribute ("Sigma", DoubleValue (sigma));
+    // The expected value for the mean of the values returned by a
+    // Weibull distributed random variable is
+    //
+    //     E[value]  =  scale * Gamma(1 + 1 / shape)  ,
+    //
+    // where Gamma() is the Gamma function.  Note that
+    //
+    //     Gamma(n)  =  (n - 1)!
+    //
+    // if n is a positive integer.
+    //
+    // For this test,
+    //
+    //     Gamma(1 + 1 / shape)  =  Gamma(1 + 1 / 1)
+    //                           =  Gamma(2)
+    //                           =  (2 - 1)!
+    //                           =  1
+    //
+    // which means
+    //
+    //     E[value]  =  scale  .
+    //
+    double expectedMean = scale;
 
-  // Calculate the mean of these values.
-  sum = 0.0;
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      value = x->GetValue ();
-      sum += value;
-    }
-  double valueMean = sum / N_MEASUREMENTS;
-
-  // The expected value for the mean of the values returned by a
-  // log-normally distributed random variable is equal to 
-  //
-  //                             2
-  //                   mu + sigma  / 2
-  //     E[value]  =  e                 .
-  //
-  double expectedMean = std::exp(mu + sigma * sigma / 2.0);
-
-  // Test that values have approximately the right mean value.
-  //
-  /// \todo This test fails sometimes if the required tolerance is less
-  /// than 3%, which may be because there is a bug in the
-  /// implementation or that the mean of this distribution is more
-  /// senstive to its parameters than the others are.
-  double TOLERANCE = expectedMean * 3e-2;
-  NS_TEST_ASSERT_MSG_EQ_TOL (valueMean, expectedMean, TOLERANCE, "Wrong mean value."); 
+    // Test that values have approximately the right mean value.
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedMean * TOLERANCE,
+                              "Wrong mean value.");
 }
 
-// ===========================================================================
-// Test case for antithetic log-normal distribution random variable stream generator
-// ===========================================================================
-class RandomVariableStreamLogNormalAntitheticTestCase : public TestCase
+/**
+ * \ingroup rng-tests
+ * Test case for log-normal distribution random variable stream generator
+ */
+class LogNormalTestCase : public TestCaseBase
 {
-public:
-  static const uint32_t N_RUNS = 5;
-  static const uint32_t N_BINS = 50;
-  static const uint32_t N_MEASUREMENTS = 1000000;
+  public:
+    // Constructor
+    LogNormalTestCase();
 
-  RandomVariableStreamLogNormalAntitheticTestCase ();
-  virtual ~RandomVariableStreamLogNormalAntitheticTestCase ();
+    // Inherited
+    double ChiSquaredTest(Ptr<RandomVariableStream> rng) const override;
 
-  double ChiSquaredTest (Ptr<LogNormalRandomVariable> n);
+  private:
+    // Inherited
+    void DoRun() override;
 
-private:
-  virtual void DoRun (void);
+    /**
+     * Tolerance for testing rng values against expectation,
+     * as a fraction of mean value.
+     */
+    static constexpr double TOLERANCE{3e-2};
 };
 
-RandomVariableStreamLogNormalAntitheticTestCase::RandomVariableStreamLogNormalAntitheticTestCase ()
-  : TestCase ("Antithetic Log-Normal Random Variable Stream Generator")
-{
-}
-
-RandomVariableStreamLogNormalAntitheticTestCase::~RandomVariableStreamLogNormalAntitheticTestCase ()
+LogNormalTestCase::LogNormalTestCase()
+    : TestCaseBase("Log-Normal Random Variable Stream Generator")
 {
 }
 
 double
-RandomVariableStreamLogNormalAntitheticTestCase::ChiSquaredTest (Ptr<LogNormalRandomVariable> n)
+LogNormalTestCase::ChiSquaredTest(Ptr<RandomVariableStream> rng) const
 {
-  gsl_histogram * h = gsl_histogram_alloc (N_BINS);
+    gsl_histogram* h = gsl_histogram_alloc(N_BINS);
+    auto range = UniformHistogramBins(h, 0, 10, false);
 
-  double range[N_BINS + 1];
-  FillHistoRangeUniformly (range, N_BINS + 1, 0., 10.);
-  range[N_BINS] = std::numeric_limits<double>::max ();
+    std::vector<double> expected(N_BINS);
 
-  gsl_histogram_set_ranges (h, range, N_BINS + 1);
+    // Note that this assumes that n has mu equal to zero and sigma
+    // equal to one, which are their default values for this
+    // distribution.
+    double mu = 0.0;
+    double sigma = 1.0;
 
-  double expected[N_BINS];
-
-  // Note that this assumes that n has mu equal to zero and sigma
-  // equal to one, which are their default values for this
-  // distribution.
-  double mu = 0.0;
-  double sigma = 1.0;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
+    for (std::size_t i = 0; i < N_BINS; ++i)
     {
-      expected[i] = gsl_cdf_lognormal_P (range[i + 1], mu, sigma) - gsl_cdf_lognormal_P (range[i], mu, sigma);
-      expected[i] *= N_MEASUREMENTS;
+        expected[i] =
+            gsl_cdf_lognormal_P(range[i + 1], mu, sigma) - gsl_cdf_lognormal_P(range[i], mu, sigma);
+        expected[i] *= N_MEASUREMENTS;
     }
 
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      gsl_histogram_increment (h, n->GetValue ());
-    }
+    double chiSquared = ChiSquared(h, expected, rng);
 
-  double tmp[N_BINS];
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      tmp[i] = gsl_histogram_get (h, i);
-      tmp[i] -= expected[i];
-      tmp[i] *= tmp[i];
-      tmp[i] /= expected[i];
-    }
-
-  gsl_histogram_free (h);
-
-  double chiSquared = 0;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      chiSquared += tmp[i];
-    }
-
-  return chiSquared;
+    gsl_histogram_free(h);
+    return chiSquared;
 }
 
 void
-RandomVariableStreamLogNormalAntitheticTestCase::DoRun (void)
+LogNormalTestCase::DoRun()
 {
-  SeedManager::SetSeed (time (0));
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
 
-  double sum = 0.;
-  double maxStatistic = gsl_cdf_chisq_Qinv (0.05, N_BINS);
+    auto generator = RngGenerator<LogNormalRandomVariable>();
+    double sum = ChiSquaredsAverage(&generator, N_RUNS);
+    double maxStatistic = gsl_cdf_chisq_Qinv(0.05, N_BINS);
 
-  for (uint32_t i = 0; i < N_RUNS; ++i)
-    {
-      Ptr<LogNormalRandomVariable> n = CreateObject<LogNormalRandomVariable> ();
+    NS_TEST_ASSERT_MSG_LT(sum, maxStatistic, "Chi-squared statistic out of range");
 
-      // Make this generate antithetic values.
-      n->SetAttribute ("Antithetic", BooleanValue (true));
+    double mu = 5.0;
+    double sigma = 2.0;
 
-      double result = ChiSquaredTest (n);
-      sum += result;
-    }
+    // Create the RNG with the specified range.
+    Ptr<LogNormalRandomVariable> x = CreateObject<LogNormalRandomVariable>();
+    x->SetAttribute("Mu", DoubleValue(mu));
+    x->SetAttribute("Sigma", DoubleValue(sigma));
 
-  sum /= (double)N_RUNS;
+    // Calculate the mean of these values.
+    double valueMean = Average(x);
 
-  NS_TEST_ASSERT_MSG_LT (sum, maxStatistic, "Chi-squared statistic out of range");
+    // The expected value for the mean of the values returned by a
+    // log-normally distributed random variable is equal to
+    //
+    //                             2
+    //                   mu + sigma  / 2
+    //     E[value]  =  e                 .
+    //
+    double expectedMean = std::exp(mu + sigma * sigma / 2.0);
 
-  double mu = 5.0;
-  double sigma = 2.0;
-  double value;
-
-  // Create the RNG with the specified range.
-  Ptr<LogNormalRandomVariable> x = CreateObject<LogNormalRandomVariable> ();
-  x->SetAttribute ("Mu", DoubleValue (mu));
-  x->SetAttribute ("Sigma", DoubleValue (sigma));
-
-  // Make this generate antithetic values.
-  x->SetAttribute ("Antithetic", BooleanValue (true));
-
-  // Calculate the mean of these values.
-  sum = 0.0;
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      value = x->GetValue ();
-      sum += value;
-    }
-  double valueMean = sum / N_MEASUREMENTS;
-
-  // The expected value for the mean of the values returned by a
-  // log-normally distributed random variable is equal to 
-  //
-  //                             2
-  //                   mu + sigma  / 2
-  //     E[value]  =  e                 .
-  //
-  double expectedMean = std::exp(mu + sigma * sigma / 2.0);
-
-  // Test that values have approximately the right mean value.
-  //
-  /// \todo This test fails sometimes if the required tolerance is less
-  /// than 3%, which may be because there is a bug in the
-  /// implementation or that the mean of this distribution is more
-  /// senstive to its parameters than the others are.
-  double TOLERANCE = expectedMean * 3e-2;
-  NS_TEST_ASSERT_MSG_EQ_TOL (valueMean, expectedMean, TOLERANCE, "Wrong mean value."); 
+    // Test that values have approximately the right mean value.
+    //
+    /**
+     * \todo This test fails sometimes if the required tolerance is less
+     * than 3%, which may be because there is a bug in the
+     * implementation or that the mean of this distribution is more
+     * sensitive to its parameters than the others are.
+     */
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedMean * TOLERANCE,
+                              "Wrong mean value.");
 }
 
-// ===========================================================================
-// Test case for gamma distribution random variable stream generator
-// ===========================================================================
-class RandomVariableStreamGammaTestCase : public TestCase
+/**
+ * \ingroup rng-tests
+ * Test case for antithetic log-normal distribution random variable stream generator
+ */
+class LogNormalAntitheticTestCase : public TestCaseBase
 {
-public:
-  static const uint32_t N_RUNS = 5;
-  static const uint32_t N_BINS = 50;
-  static const uint32_t N_MEASUREMENTS = 1000000;
+  public:
+    // Constructor
+    LogNormalAntitheticTestCase();
 
-  RandomVariableStreamGammaTestCase ();
-  virtual ~RandomVariableStreamGammaTestCase ();
+    // Inherited
+    double ChiSquaredTest(Ptr<RandomVariableStream> rng) const override;
 
-  double ChiSquaredTest (Ptr<GammaRandomVariable> n);
+  private:
+    // Inherited
+    void DoRun() override;
 
-private:
-  virtual void DoRun (void);
+    /**
+     * Tolerance for testing rng values against expectation,
+     * as a fraction of mean value.
+     */
+    static constexpr double TOLERANCE{3e-2};
 };
 
-RandomVariableStreamGammaTestCase::RandomVariableStreamGammaTestCase ()
-  : TestCase ("Gamma Random Variable Stream Generator")
-{
-}
-
-RandomVariableStreamGammaTestCase::~RandomVariableStreamGammaTestCase ()
+LogNormalAntitheticTestCase::LogNormalAntitheticTestCase()
+    : TestCaseBase("Antithetic Log-Normal Random Variable Stream Generator")
 {
 }
 
 double
-RandomVariableStreamGammaTestCase::ChiSquaredTest (Ptr<GammaRandomVariable> n)
+LogNormalAntitheticTestCase::ChiSquaredTest(Ptr<RandomVariableStream> rng) const
 {
-  gsl_histogram * h = gsl_histogram_alloc (N_BINS);
+    gsl_histogram* h = gsl_histogram_alloc(N_BINS);
+    auto range = UniformHistogramBins(h, 0, 10, false);
 
-  double range[N_BINS + 1];
-  FillHistoRangeUniformly (range, N_BINS + 1, 0., 10.);
-  range[N_BINS] = std::numeric_limits<double>::max ();
+    std::vector<double> expected(N_BINS);
 
-  gsl_histogram_set_ranges (h, range, N_BINS + 1);
+    // Note that this assumes that n has mu equal to zero and sigma
+    // equal to one, which are their default values for this
+    // distribution.
+    double mu = 0.0;
+    double sigma = 1.0;
 
-  double expected[N_BINS];
-
-  // Note that this assumes that n has alpha equal to one and beta
-  // equal to one, which are their default values for this
-  // distribution.
-  double alpha = 1.0;
-  double beta = 1.0;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
+    for (std::size_t i = 0; i < N_BINS; ++i)
     {
-      expected[i] = gsl_cdf_gamma_P (range[i + 1], alpha, beta) - gsl_cdf_gamma_P (range[i], alpha, beta);
-      expected[i] *= N_MEASUREMENTS;
+        expected[i] =
+            gsl_cdf_lognormal_P(range[i + 1], mu, sigma) - gsl_cdf_lognormal_P(range[i], mu, sigma);
+        expected[i] *= N_MEASUREMENTS;
     }
 
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      gsl_histogram_increment (h, n->GetValue ());
-    }
+    double chiSquared = ChiSquared(h, expected, rng);
 
-  double tmp[N_BINS];
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      tmp[i] = gsl_histogram_get (h, i);
-      tmp[i] -= expected[i];
-      tmp[i] *= tmp[i];
-      tmp[i] /= expected[i];
-    }
-
-  gsl_histogram_free (h);
-
-  double chiSquared = 0;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      chiSquared += tmp[i];
-    }
-
-  return chiSquared;
+    gsl_histogram_free(h);
+    return chiSquared;
 }
 
 void
-RandomVariableStreamGammaTestCase::DoRun (void)
+LogNormalAntitheticTestCase::DoRun()
 {
-  SeedManager::SetSeed (time (0));
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
 
-  double sum = 0.;
-  double maxStatistic = gsl_cdf_chisq_Qinv (0.05, N_BINS);
+    auto generator = RngGenerator<LogNormalRandomVariable>(true);
+    double sum = ChiSquaredsAverage(&generator, N_RUNS);
+    double maxStatistic = gsl_cdf_chisq_Qinv(0.05, N_BINS);
+    NS_TEST_ASSERT_MSG_LT(sum, maxStatistic, "Chi-squared statistic out of range");
 
-  for (uint32_t i = 0; i < N_RUNS; ++i)
-    {
-      Ptr<GammaRandomVariable> n = CreateObject<GammaRandomVariable> ();
-      double result = ChiSquaredTest (n);
-      sum += result;
-    }
+    double mu = 5.0;
+    double sigma = 2.0;
 
-  sum /= (double)N_RUNS;
+    // Create the RNG with the specified range.
+    Ptr<LogNormalRandomVariable> x = CreateObject<LogNormalRandomVariable>();
+    x->SetAttribute("Mu", DoubleValue(mu));
+    x->SetAttribute("Sigma", DoubleValue(sigma));
 
-  NS_TEST_ASSERT_MSG_LT (sum, maxStatistic, "Chi-squared statistic out of range");
+    // Make this generate antithetic values.
+    x->SetAttribute("Antithetic", BooleanValue(true));
 
-  double alpha = 5.0;
-  double beta = 2.0;
-  double value;
+    // Calculate the mean of these values.
+    double valueMean = Average(x);
 
-  // Create the RNG with the specified range.
-  Ptr<GammaRandomVariable> x = CreateObject<GammaRandomVariable> ();
-  x->SetAttribute ("Alpha", DoubleValue (alpha));
-  x->SetAttribute ("Beta", DoubleValue (beta));
+    // The expected value for the mean of the values returned by a
+    // log-normally distributed random variable is equal to
+    //
+    //                             2
+    //                   mu + sigma  / 2
+    //     E[value]  =  e                 .
+    //
+    double expectedMean = std::exp(mu + sigma * sigma / 2.0);
 
-  // Calculate the mean of these values.
-  sum = 0.0;
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      value = x->GetValue ();
-      sum += value;
-    }
-  double valueMean = sum / N_MEASUREMENTS;
-
-  // The expected value for the mean of the values returned by a
-  // gammaly distributed random variable is equal to 
-  //
-  //     E[value]  =  alpha * beta  .
-  //
-  double expectedMean = alpha * beta;
-
-  // Test that values have approximately the right mean value.
-  double TOLERANCE = expectedMean * 1e-2;
-  NS_TEST_ASSERT_MSG_EQ_TOL (valueMean, expectedMean, TOLERANCE, "Wrong mean value."); 
+    // Test that values have approximately the right mean value.
+    //
+    /**
+     * \todo This test fails sometimes if the required tolerance is less
+     * than 3%, which may be because there is a bug in the
+     * implementation or that the mean of this distribution is more
+     * sensitive to its parameters than the others are.
+     */
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedMean * TOLERANCE,
+                              "Wrong mean value.");
 }
 
-// ===========================================================================
-// Test case for antithetic gamma distribution random variable stream generator
-// ===========================================================================
-class RandomVariableStreamGammaAntitheticTestCase : public TestCase
+/**
+ * \ingroup rng-tests
+ * Test case for gamma distribution random variable stream generator
+ */
+class GammaTestCase : public TestCaseBase
 {
-public:
-  static const uint32_t N_RUNS = 5;
-  static const uint32_t N_BINS = 50;
-  static const uint32_t N_MEASUREMENTS = 1000000;
+  public:
+    // Constructor
+    GammaTestCase();
 
-  RandomVariableStreamGammaAntitheticTestCase ();
-  virtual ~RandomVariableStreamGammaAntitheticTestCase ();
+    // Inherited
+    double ChiSquaredTest(Ptr<RandomVariableStream> rng) const override;
 
-  double ChiSquaredTest (Ptr<GammaRandomVariable> n);
+  private:
+    // Inherited
+    void DoRun() override;
 
-private:
-  virtual void DoRun (void);
+    /**
+     * Tolerance for testing rng values against expectation,
+     * as a fraction of mean value.
+     */
+    static constexpr double TOLERANCE{1e-2};
 };
 
-RandomVariableStreamGammaAntitheticTestCase::RandomVariableStreamGammaAntitheticTestCase ()
-  : TestCase ("Antithetic Gamma Random Variable Stream Generator")
-{
-}
-
-RandomVariableStreamGammaAntitheticTestCase::~RandomVariableStreamGammaAntitheticTestCase ()
+GammaTestCase::GammaTestCase()
+    : TestCaseBase("Gamma Random Variable Stream Generator")
 {
 }
 
 double
-RandomVariableStreamGammaAntitheticTestCase::ChiSquaredTest (Ptr<GammaRandomVariable> n)
+GammaTestCase::ChiSquaredTest(Ptr<RandomVariableStream> rng) const
 {
-  gsl_histogram * h = gsl_histogram_alloc (N_BINS);
+    gsl_histogram* h = gsl_histogram_alloc(N_BINS);
+    auto range = UniformHistogramBins(h, 0, 10, false);
 
-  double range[N_BINS + 1];
-  FillHistoRangeUniformly (range, N_BINS + 1, 0., 10.);
-  range[N_BINS] = std::numeric_limits<double>::max ();
+    std::vector<double> expected(N_BINS);
 
-  gsl_histogram_set_ranges (h, range, N_BINS + 1);
+    // Note that this assumes that n has alpha equal to one and beta
+    // equal to one, which are their default values for this
+    // distribution.
+    double alpha = 1.0;
+    double beta = 1.0;
 
-  double expected[N_BINS];
-
-  // Note that this assumes that n has alpha equal to one and beta
-  // equal to one, which are their default values for this
-  // distribution.
-  double alpha = 1.0;
-  double beta = 1.0;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
+    for (std::size_t i = 0; i < N_BINS; ++i)
     {
-      expected[i] = gsl_cdf_gamma_P (range[i + 1], alpha, beta) - gsl_cdf_gamma_P (range[i], alpha, beta);
-      expected[i] *= N_MEASUREMENTS;
+        expected[i] =
+            gsl_cdf_gamma_P(range[i + 1], alpha, beta) - gsl_cdf_gamma_P(range[i], alpha, beta);
+        expected[i] *= N_MEASUREMENTS;
     }
 
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      gsl_histogram_increment (h, n->GetValue ());
-    }
+    double chiSquared = ChiSquared(h, expected, rng);
 
-  double tmp[N_BINS];
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      tmp[i] = gsl_histogram_get (h, i);
-      tmp[i] -= expected[i];
-      tmp[i] *= tmp[i];
-      tmp[i] /= expected[i];
-    }
-
-  gsl_histogram_free (h);
-
-  double chiSquared = 0;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      chiSquared += tmp[i];
-    }
-
-  return chiSquared;
+    gsl_histogram_free(h);
+    return chiSquared;
 }
 
 void
-RandomVariableStreamGammaAntitheticTestCase::DoRun (void)
+GammaTestCase::DoRun()
 {
-  SeedManager::SetSeed (time (0));
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
 
-  double sum = 0.;
-  double maxStatistic = gsl_cdf_chisq_Qinv (0.05, N_BINS);
+    auto generator = RngGenerator<GammaRandomVariable>();
+    double sum = ChiSquaredsAverage(&generator, N_RUNS);
+    double maxStatistic = gsl_cdf_chisq_Qinv(0.05, N_BINS);
+    NS_TEST_ASSERT_MSG_LT(sum, maxStatistic, "Chi-squared statistic out of range");
 
-  for (uint32_t i = 0; i < N_RUNS; ++i)
-    {
-      Ptr<GammaRandomVariable> n = CreateObject<GammaRandomVariable> ();
+    double alpha = 5.0;
+    double beta = 2.0;
 
-      // Make this generate antithetic values.
-      n->SetAttribute ("Antithetic", BooleanValue (true));
+    // Create the RNG with the specified range.
+    Ptr<GammaRandomVariable> x = CreateObject<GammaRandomVariable>();
+    x->SetAttribute("Alpha", DoubleValue(alpha));
+    x->SetAttribute("Beta", DoubleValue(beta));
 
-      double result = ChiSquaredTest (n);
-      sum += result;
-    }
+    // Calculate the mean of these values.
+    double valueMean = Average(x);
 
-  sum /= (double)N_RUNS;
+    // The expected value for the mean of the values returned by a
+    // gammaly distributed random variable is equal to
+    //
+    //     E[value]  =  alpha * beta  .
+    //
+    double expectedMean = alpha * beta;
 
-  NS_TEST_ASSERT_MSG_LT (sum, maxStatistic, "Chi-squared statistic out of range");
-
-  double alpha = 5.0;
-  double beta = 2.0;
-  double value;
-
-  // Create the RNG with the specified range.
-  Ptr<GammaRandomVariable> x = CreateObject<GammaRandomVariable> ();
-
-  // Make this generate antithetic values.
-  x->SetAttribute ("Antithetic", BooleanValue (true));
-
-  x->SetAttribute ("Alpha", DoubleValue (alpha));
-  x->SetAttribute ("Beta", DoubleValue (beta));
-
-  // Calculate the mean of these values.
-  sum = 0.0;
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      value = x->GetValue ();
-      sum += value;
-    }
-  double valueMean = sum / N_MEASUREMENTS;
-
-  // The expected value for the mean of the values returned by a
-  // gammaly distributed random variable is equal to 
-  //
-  //     E[value]  =  alpha * beta  .
-  //
-  double expectedMean = alpha * beta;
-
-  // Test that values have approximately the right mean value.
-  double TOLERANCE = expectedMean * 1e-2;
-  NS_TEST_ASSERT_MSG_EQ_TOL (valueMean, expectedMean, TOLERANCE, "Wrong mean value."); 
+    // Test that values have approximately the right mean value.
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedMean * TOLERANCE,
+                              "Wrong mean value.");
 }
 
-// ===========================================================================
-// Test case for Erlang distribution random variable stream generator
-// ===========================================================================
-class RandomVariableStreamErlangTestCase : public TestCase
+/**
+ * \ingroup rng-tests
+ * Test case for antithetic gamma distribution random variable stream generator
+ */
+class GammaAntitheticTestCase : public TestCaseBase
 {
-public:
-  static const uint32_t N_RUNS = 5;
-  static const uint32_t N_BINS = 50;
-  static const uint32_t N_MEASUREMENTS = 1000000;
+  public:
+    // Constructor
+    GammaAntitheticTestCase();
 
-  RandomVariableStreamErlangTestCase ();
-  virtual ~RandomVariableStreamErlangTestCase ();
+    // Inherited
+    double ChiSquaredTest(Ptr<RandomVariableStream> rng) const override;
 
-  double ChiSquaredTest (Ptr<ErlangRandomVariable> n);
+  private:
+    // Inherited
+    void DoRun() override;
 
-private:
-  virtual void DoRun (void);
+    /**
+     * Tolerance for testing rng values against expectation,
+     * as a fraction of mean value.
+     */
+    static constexpr double TOLERANCE{1e-2};
 };
 
-RandomVariableStreamErlangTestCase::RandomVariableStreamErlangTestCase ()
-  : TestCase ("Erlang Random Variable Stream Generator")
-{
-}
-
-RandomVariableStreamErlangTestCase::~RandomVariableStreamErlangTestCase ()
+GammaAntitheticTestCase::GammaAntitheticTestCase()
+    : TestCaseBase("Antithetic Gamma Random Variable Stream Generator")
 {
 }
 
 double
-RandomVariableStreamErlangTestCase::ChiSquaredTest (Ptr<ErlangRandomVariable> n)
+GammaAntitheticTestCase::ChiSquaredTest(Ptr<RandomVariableStream> rng) const
 {
-  gsl_histogram * h = gsl_histogram_alloc (N_BINS);
+    gsl_histogram* h = gsl_histogram_alloc(N_BINS);
+    auto range = UniformHistogramBins(h, 0, 10, false);
 
-  double range[N_BINS + 1];
-  FillHistoRangeUniformly (range, N_BINS + 1, 0., 10.);
-  range[N_BINS] = std::numeric_limits<double>::max ();
+    std::vector<double> expected(N_BINS);
 
-  gsl_histogram_set_ranges (h, range, N_BINS + 1);
+    // Note that this assumes that n has alpha equal to one and beta
+    // equal to one, which are their default values for this
+    // distribution.
+    double alpha = 1.0;
+    double beta = 1.0;
 
-  double expected[N_BINS];
-
-  // Note that this assumes that n has k equal to one and lambda
-  // equal to one, which are their default values for this
-  // distribution.
-  uint32_t k = 1;
-  double lambda = 1.0;
-
-  // Note that Erlang distribution is equal to the gamma distribution
-  // when k is an iteger, which is why the gamma distribution's cdf
-  // function can be used here.
-  for (uint32_t i = 0; i < N_BINS; ++i)
+    for (std::size_t i = 0; i < N_BINS; ++i)
     {
-      expected[i] = gsl_cdf_gamma_P (range[i + 1], k, lambda) - gsl_cdf_gamma_P (range[i], k, lambda);
-      expected[i] *= N_MEASUREMENTS;
+        expected[i] =
+            gsl_cdf_gamma_P(range[i + 1], alpha, beta) - gsl_cdf_gamma_P(range[i], alpha, beta);
+        expected[i] *= N_MEASUREMENTS;
     }
 
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      gsl_histogram_increment (h, n->GetValue ());
-    }
+    double chiSquared = ChiSquared(h, expected, rng);
 
-  double tmp[N_BINS];
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      tmp[i] = gsl_histogram_get (h, i);
-      tmp[i] -= expected[i];
-      tmp[i] *= tmp[i];
-      tmp[i] /= expected[i];
-    }
-
-  gsl_histogram_free (h);
-
-  double chiSquared = 0;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      chiSquared += tmp[i];
-    }
-
-  return chiSquared;
+    gsl_histogram_free(h);
+    return chiSquared;
 }
 
 void
-RandomVariableStreamErlangTestCase::DoRun (void)
+GammaAntitheticTestCase::DoRun()
 {
-  SeedManager::SetSeed (time (0));
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
 
-  double sum = 0.;
-  double maxStatistic = gsl_cdf_chisq_Qinv (0.05, N_BINS);
+    auto generator = RngGenerator<GammaRandomVariable>(true);
+    double sum = ChiSquaredsAverage(&generator, N_RUNS);
+    double maxStatistic = gsl_cdf_chisq_Qinv(0.05, N_BINS);
+    NS_TEST_ASSERT_MSG_LT(sum, maxStatistic, "Chi-squared statistic out of range");
 
-  for (uint32_t i = 0; i < N_RUNS; ++i)
-    {
-      Ptr<ErlangRandomVariable> n = CreateObject<ErlangRandomVariable> ();
-      double result = ChiSquaredTest (n);
-      sum += result;
-    }
+    double alpha = 5.0;
+    double beta = 2.0;
 
-  sum /= (double)N_RUNS;
+    // Create the RNG with the specified range.
+    Ptr<GammaRandomVariable> x = CreateObject<GammaRandomVariable>();
 
-  NS_TEST_ASSERT_MSG_LT (sum, maxStatistic, "Chi-squared statistic out of range");
+    // Make this generate antithetic values.
+    x->SetAttribute("Antithetic", BooleanValue(true));
 
-  uint32_t k = 5;
-  double lambda = 2.0;
-  double value;
+    x->SetAttribute("Alpha", DoubleValue(alpha));
+    x->SetAttribute("Beta", DoubleValue(beta));
 
-  // Create the RNG with the specified range.
-  Ptr<ErlangRandomVariable> x = CreateObject<ErlangRandomVariable> ();
-  x->SetAttribute ("K", IntegerValue (k));
-  x->SetAttribute ("Lambda", DoubleValue (lambda));
+    // Calculate the mean of these values.
+    double valueMean = Average(x);
 
-  // Calculate the mean of these values.
-  sum = 0.0;
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      value = x->GetValue ();
-      sum += value;
-    }
-  double valueMean = sum / N_MEASUREMENTS;
+    // The expected value for the mean of the values returned by a
+    // gammaly distributed random variable is equal to
+    //
+    //     E[value]  =  alpha * beta  .
+    //
+    double expectedMean = alpha * beta;
 
-  // The expected value for the mean of the values returned by a
-  // Erlangly distributed random variable is equal to 
-  //
-  //     E[value]  =  k * lambda  .
-  //
-  double expectedMean = k * lambda;
-
-  // Test that values have approximately the right mean value.
-  double TOLERANCE = expectedMean * 1e-2;
-  NS_TEST_ASSERT_MSG_EQ_TOL (valueMean, expectedMean, TOLERANCE, "Wrong mean value."); 
+    // Test that values have approximately the right mean value.
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedMean * TOLERANCE,
+                              "Wrong mean value.");
 }
 
-// ===========================================================================
-// Test case for antithetic Erlang distribution random variable stream generator
-// ===========================================================================
-class RandomVariableStreamErlangAntitheticTestCase : public TestCase
+/**
+ * \ingroup rng-tests
+ * Test case for Erlang distribution random variable stream generator
+ */
+class ErlangTestCase : public TestCaseBase
 {
-public:
-  static const uint32_t N_RUNS = 5;
-  static const uint32_t N_BINS = 50;
-  static const uint32_t N_MEASUREMENTS = 1000000;
+  public:
+    // Constructor
+    ErlangTestCase();
 
-  RandomVariableStreamErlangAntitheticTestCase ();
-  virtual ~RandomVariableStreamErlangAntitheticTestCase ();
+    // Inherited
+    double ChiSquaredTest(Ptr<RandomVariableStream> rng) const override;
 
-  double ChiSquaredTest (Ptr<ErlangRandomVariable> n);
+  private:
+    // Inherited
+    void DoRun() override;
 
-private:
-  virtual void DoRun (void);
+    /**
+     * Tolerance for testing rng values against expectation,
+     * as a fraction of mean value.
+     */
+    static constexpr double TOLERANCE{1e-2};
 };
 
-RandomVariableStreamErlangAntitheticTestCase::RandomVariableStreamErlangAntitheticTestCase ()
-  : TestCase ("Antithetic Erlang Random Variable Stream Generator")
-{
-}
-
-RandomVariableStreamErlangAntitheticTestCase::~RandomVariableStreamErlangAntitheticTestCase ()
+ErlangTestCase::ErlangTestCase()
+    : TestCaseBase("Erlang Random Variable Stream Generator")
 {
 }
 
 double
-RandomVariableStreamErlangAntitheticTestCase::ChiSquaredTest (Ptr<ErlangRandomVariable> n)
+ErlangTestCase::ChiSquaredTest(Ptr<RandomVariableStream> rng) const
 {
-  gsl_histogram * h = gsl_histogram_alloc (N_BINS);
+    gsl_histogram* h = gsl_histogram_alloc(N_BINS);
+    auto range = UniformHistogramBins(h, 0, 10, false);
 
-  double range[N_BINS + 1];
-  FillHistoRangeUniformly (range, N_BINS + 1, 0., 10.);
-  range[N_BINS] = std::numeric_limits<double>::max ();
+    std::vector<double> expected(N_BINS);
 
-  gsl_histogram_set_ranges (h, range, N_BINS + 1);
+    // Note that this assumes that n has k equal to one and lambda
+    // equal to one, which are their default values for this
+    // distribution.
+    uint32_t k = 1;
+    double lambda = 1.0;
 
-  double expected[N_BINS];
-
-  // Note that this assumes that n has k equal to one and lambda
-  // equal to one, which are their default values for this
-  // distribution.
-  uint32_t k = 1;
-  double lambda = 1.0;
-
-  // Note that Erlang distribution is equal to the gamma distribution
-  // when k is an iteger, which is why the gamma distribution's cdf
-  // function can be used here.
-  for (uint32_t i = 0; i < N_BINS; ++i)
+    // Note that Erlang distribution is equal to the gamma distribution
+    // when k is an integer, which is why the gamma distribution's cdf
+    // function can be used here.
+    for (std::size_t i = 0; i < N_BINS; ++i)
     {
-      expected[i] = gsl_cdf_gamma_P (range[i + 1], k, lambda) - gsl_cdf_gamma_P (range[i], k, lambda);
-      expected[i] *= N_MEASUREMENTS;
+        expected[i] =
+            gsl_cdf_gamma_P(range[i + 1], k, lambda) - gsl_cdf_gamma_P(range[i], k, lambda);
+        expected[i] *= N_MEASUREMENTS;
     }
 
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      gsl_histogram_increment (h, n->GetValue ());
-    }
+    double chiSquared = ChiSquared(h, expected, rng);
 
-  double tmp[N_BINS];
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      tmp[i] = gsl_histogram_get (h, i);
-      tmp[i] -= expected[i];
-      tmp[i] *= tmp[i];
-      tmp[i] /= expected[i];
-    }
-
-  gsl_histogram_free (h);
-
-  double chiSquared = 0;
-
-  for (uint32_t i = 0; i < N_BINS; ++i)
-    {
-      chiSquared += tmp[i];
-    }
-
-  return chiSquared;
+    gsl_histogram_free(h);
+    return chiSquared;
 }
 
 void
-RandomVariableStreamErlangAntitheticTestCase::DoRun (void)
+ErlangTestCase::DoRun()
 {
-  SeedManager::SetSeed (time (0));
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
 
-  double sum = 0.;
-  double maxStatistic = gsl_cdf_chisq_Qinv (0.05, N_BINS);
+    auto generator = RngGenerator<ErlangRandomVariable>();
+    double sum = ChiSquaredsAverage(&generator, N_RUNS);
+    double maxStatistic = gsl_cdf_chisq_Qinv(0.05, N_BINS);
+    NS_TEST_ASSERT_MSG_LT(sum, maxStatistic, "Chi-squared statistic out of range");
 
-  for (uint32_t i = 0; i < N_RUNS; ++i)
-    {
-      Ptr<ErlangRandomVariable> n = CreateObject<ErlangRandomVariable> ();
+    uint32_t k = 5;
+    double lambda = 2.0;
 
-      // Make this generate antithetic values.
-      n->SetAttribute ("Antithetic", BooleanValue (true));
+    // Create the RNG with the specified range.
+    Ptr<ErlangRandomVariable> x = CreateObject<ErlangRandomVariable>();
+    x->SetAttribute("K", IntegerValue(k));
+    x->SetAttribute("Lambda", DoubleValue(lambda));
 
-      double result = ChiSquaredTest (n);
-      sum += result;
-    }
+    // Calculate the mean of these values.
+    double valueMean = Average(x);
 
-  sum /= (double)N_RUNS;
+    // The expected value for the mean of the values returned by a
+    // Erlangly distributed random variable is equal to
+    //
+    //     E[value]  =  k * lambda  .
+    //
+    double expectedMean = k * lambda;
 
-  NS_TEST_ASSERT_MSG_LT (sum, maxStatistic, "Chi-squared statistic out of range");
-
-  uint32_t k = 5;
-  double lambda = 2.0;
-  double value;
-
-  // Create the RNG with the specified range.
-  Ptr<ErlangRandomVariable> x = CreateObject<ErlangRandomVariable> ();
-
-  // Make this generate antithetic values.
-  x->SetAttribute ("Antithetic", BooleanValue (true));
-
-  x->SetAttribute ("K", IntegerValue (k));
-  x->SetAttribute ("Lambda", DoubleValue (lambda));
-
-  // Calculate the mean of these values.
-  sum = 0.0;
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      value = x->GetValue ();
-      sum += value;
-    }
-  double valueMean = sum / N_MEASUREMENTS;
-
-  // The expected value for the mean of the values returned by a
-  // Erlangly distributed random variable is equal to 
-  //
-  //     E[value]  =  k * lambda  .
-  //
-  double expectedMean = k * lambda;
-
-  // Test that values have approximately the right mean value.
-  double TOLERANCE = expectedMean * 1e-2;
-  NS_TEST_ASSERT_MSG_EQ_TOL (valueMean, expectedMean, TOLERANCE, "Wrong mean value."); 
+    // Test that values have approximately the right mean value.
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedMean * TOLERANCE,
+                              "Wrong mean value.");
 }
 
-// ===========================================================================
-// Test case for Zipf distribution random variable stream generator
-// ===========================================================================
-class RandomVariableStreamZipfTestCase : public TestCase
+/**
+ * \ingroup rng-tests
+ * Test case for antithetic Erlang distribution random variable stream generator
+ */
+class ErlangAntitheticTestCase : public TestCaseBase
 {
-public:
-  static const uint32_t N_MEASUREMENTS = 1000000;
+  public:
+    // Constructor
+    ErlangAntitheticTestCase();
 
-  RandomVariableStreamZipfTestCase ();
-  virtual ~RandomVariableStreamZipfTestCase ();
+    // Inherited
+    double ChiSquaredTest(Ptr<RandomVariableStream> rng) const override;
 
-private:
-  virtual void DoRun (void);
+  private:
+    // Inherited
+    void DoRun() override;
+
+    /**
+     * Tolerance for testing rng values against expectation,
+     * as a fraction of mean value.
+     */
+    static constexpr double TOLERANCE{1e-2};
 };
 
-RandomVariableStreamZipfTestCase::RandomVariableStreamZipfTestCase ()
-  : TestCase ("Zipf Random Variable Stream Generator")
+ErlangAntitheticTestCase::ErlangAntitheticTestCase()
+    : TestCaseBase("Antithetic Erlang Random Variable Stream Generator")
 {
 }
 
-RandomVariableStreamZipfTestCase::~RandomVariableStreamZipfTestCase ()
+double
+ErlangAntitheticTestCase::ChiSquaredTest(Ptr<RandomVariableStream> rng) const
 {
+    gsl_histogram* h = gsl_histogram_alloc(N_BINS);
+    auto range = UniformHistogramBins(h, 0, 10, false);
+
+    std::vector<double> expected(N_BINS);
+
+    // Note that this assumes that n has k equal to one and lambda
+    // equal to one, which are their default values for this
+    // distribution.
+    uint32_t k = 1;
+    double lambda = 1.0;
+
+    // Note that Erlang distribution is equal to the gamma distribution
+    // when k is an integer, which is why the gamma distribution's cdf
+    // function can be used here.
+    for (std::size_t i = 0; i < N_BINS; ++i)
+    {
+        expected[i] =
+            gsl_cdf_gamma_P(range[i + 1], k, lambda) - gsl_cdf_gamma_P(range[i], k, lambda);
+        expected[i] *= N_MEASUREMENTS;
+    }
+
+    double chiSquared = ChiSquared(h, expected, rng);
+
+    gsl_histogram_free(h);
+    return chiSquared;
 }
 
 void
-RandomVariableStreamZipfTestCase::DoRun (void)
+ErlangAntitheticTestCase::DoRun()
 {
-  SeedManager::SetSeed (time (0));
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
 
-  uint32_t n = 1;
-  double alpha = 2.0;
-  double value;
+    auto generator = RngGenerator<ErlangRandomVariable>(true);
+    double sum = ChiSquaredsAverage(&generator, N_RUNS);
+    double maxStatistic = gsl_cdf_chisq_Qinv(0.05, N_BINS);
+    NS_TEST_ASSERT_MSG_LT(sum, maxStatistic, "Chi-squared statistic out of range");
 
-  // Create the RNG with the specified range.
-  Ptr<ZipfRandomVariable> x = CreateObject<ZipfRandomVariable> ();
-  x->SetAttribute ("N", IntegerValue (n));
-  x->SetAttribute ("Alpha", DoubleValue (alpha));
+    uint32_t k = 5;
+    double lambda = 2.0;
 
-  // Calculate the mean of these values.
-  double sum = 0.0;
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      value = x->GetValue ();
-      sum += value;
-    }
-  double valueMean = sum / N_MEASUREMENTS;
+    // Create the RNG with the specified range.
+    Ptr<ErlangRandomVariable> x = CreateObject<ErlangRandomVariable>();
 
-  // The expected value for the mean of the values returned by a
-  // Zipfly distributed random variable is equal to 
-  //
-  //                   H
-  //                    N, alpha - 1
-  //     E[value]  =  ---------------
-  //                     H
-  //                      N, alpha
-  //                          
-  // where
-  //
-  //                    N   
-  //                   ---    
-  //                   \     -alpha
-  //     H          =  /    m        .
-  //      N, alpha     ---
-  //                   m=1    
-  //                 
-  // For this test,
-  //
-  //                      -(alpha - 1)
-  //                     1
-  //     E[value]  =  ---------------
-  //                      -alpha
-  //                     1
-  //
-  //               =  1  .
-  //               
-  double expectedMean = 1.0;
+    // Make this generate antithetic values.
+    x->SetAttribute("Antithetic", BooleanValue(true));
 
-  // Test that values have approximately the right mean value.
-  double TOLERANCE = expectedMean * 1e-2;
-  NS_TEST_ASSERT_MSG_EQ_TOL (valueMean, expectedMean, TOLERANCE, "Wrong mean value."); 
+    x->SetAttribute("K", IntegerValue(k));
+    x->SetAttribute("Lambda", DoubleValue(lambda));
+
+    // Calculate the mean of these values.
+    double valueMean = Average(x);
+
+    // The expected value for the mean of the values returned by a
+    // Erlangly distributed random variable is equal to
+    //
+    //     E[value]  =  k * lambda  .
+    //
+    double expectedMean = k * lambda;
+
+    // Test that values have approximately the right mean value.
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedMean * TOLERANCE,
+                              "Wrong mean value.");
 }
 
-// ===========================================================================
-// Test case for antithetic Zipf distribution random variable stream generator
-// ===========================================================================
-class RandomVariableStreamZipfAntitheticTestCase : public TestCase
+/**
+ * \ingroup rng-tests
+ * Test case for Zipf distribution random variable stream generator
+ */
+class ZipfTestCase : public TestCaseBase
 {
-public:
-  static const uint32_t N_MEASUREMENTS = 1000000;
+  public:
+    // Constructor
+    ZipfTestCase();
 
-  RandomVariableStreamZipfAntitheticTestCase ();
-  virtual ~RandomVariableStreamZipfAntitheticTestCase ();
+  private:
+    // Inherited
+    void DoRun() override;
 
-private:
-  virtual void DoRun (void);
+    /**
+     * Tolerance for testing rng values against expectation,
+     * as a fraction of mean value.
+     */
+    static constexpr double TOLERANCE{1e-2};
 };
 
-RandomVariableStreamZipfAntitheticTestCase::RandomVariableStreamZipfAntitheticTestCase ()
-  : TestCase ("Antithetic Zipf Random Variable Stream Generator")
-{
-}
-
-RandomVariableStreamZipfAntitheticTestCase::~RandomVariableStreamZipfAntitheticTestCase ()
+ZipfTestCase::ZipfTestCase()
+    : TestCaseBase("Zipf Random Variable Stream Generator")
 {
 }
 
 void
-RandomVariableStreamZipfAntitheticTestCase::DoRun (void)
+ZipfTestCase::DoRun()
 {
-  SeedManager::SetSeed (time (0));
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
 
-  uint32_t n = 1;
-  double alpha = 2.0;
-  double value;
+    uint32_t n = 1;
+    double alpha = 2.0;
 
-  // Create the RNG with the specified range.
-  Ptr<ZipfRandomVariable> x = CreateObject<ZipfRandomVariable> ();
-  x->SetAttribute ("N", IntegerValue (n));
-  x->SetAttribute ("Alpha", DoubleValue (alpha));
+    // Create the RNG with the specified range.
+    Ptr<ZipfRandomVariable> x = CreateObject<ZipfRandomVariable>();
+    x->SetAttribute("N", IntegerValue(n));
+    x->SetAttribute("Alpha", DoubleValue(alpha));
 
-  // Make this generate antithetic values.
-  x->SetAttribute ("Antithetic", BooleanValue (true));
+    // Calculate the mean of these values.
+    double valueMean = Average(x);
 
-  // Calculate the mean of these values.
-  double sum = 0.0;
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      value = x->GetValue ();
-      sum += value;
-    }
-  double valueMean = sum / N_MEASUREMENTS;
+    // The expected value for the mean of the values returned by a
+    // Zipfly distributed random variable is equal to
+    //
+    //                   H
+    //                    N, alpha - 1
+    //     E[value]  =  ---------------
+    //                     H
+    //                      N, alpha
+    //
+    // where
+    //
+    //                    N
+    //                   ---
+    //                   \     -alpha
+    //     H          =  /    m        .
+    //      N, alpha     ---
+    //                   m=1
+    //
+    // For this test,
+    //
+    //                      -(alpha - 1)
+    //                     1
+    //     E[value]  =  ---------------
+    //                      -alpha
+    //                     1
+    //
+    //               =  1  .
+    //
+    double expectedMean = 1.0;
 
-  // The expected value for the mean of the values returned by a
-  // Zipfly distributed random variable is equal to 
-  //
-  //                   H
-  //                    N, alpha - 1
-  //     E[value]  =  ---------------
-  //                     H
-  //                      N, alpha
-  //                          
-  // where
-  //
-  //                    N   
-  //                   ---    
-  //                   \     -alpha
-  //     H          =  /    m        .
-  //      N, alpha     ---
-  //                   m=1    
-  //                 
-  // For this test,
-  //
-  //                      -(alpha - 1)
-  //                     1
-  //     E[value]  =  ---------------
-  //                      -alpha
-  //                     1
-  //
-  //               =  1  .
-  //               
-  double expectedMean = 1.0;
-
-  // Test that values have approximately the right mean value.
-  double TOLERANCE = expectedMean * 1e-2;
-  NS_TEST_ASSERT_MSG_EQ_TOL (valueMean, expectedMean, TOLERANCE, "Wrong mean value."); 
+    // Test that values have approximately the right mean value.
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedMean * TOLERANCE,
+                              "Wrong mean value.");
 }
 
-// ===========================================================================
-// Test case for Zeta distribution random variable stream generator
-// ===========================================================================
-class RandomVariableStreamZetaTestCase : public TestCase
+/**
+ * \ingroup rng-tests
+ * Test case for antithetic Zipf distribution random variable stream generator
+ */
+class ZipfAntitheticTestCase : public TestCaseBase
 {
-public:
-  static const uint32_t N_MEASUREMENTS = 1000000;
+  public:
+    // Constructor
+    ZipfAntitheticTestCase();
 
-  RandomVariableStreamZetaTestCase ();
-  virtual ~RandomVariableStreamZetaTestCase ();
+  private:
+    // Inherited
+    void DoRun() override;
 
-private:
-  virtual void DoRun (void);
+    /**
+     * Tolerance for testing rng values against expectation,
+     * as a fraction of mean value.
+     */
+    static constexpr double TOLERANCE{1e-2};
 };
 
-RandomVariableStreamZetaTestCase::RandomVariableStreamZetaTestCase ()
-  : TestCase ("Zeta Random Variable Stream Generator")
-{
-}
-
-RandomVariableStreamZetaTestCase::~RandomVariableStreamZetaTestCase ()
+ZipfAntitheticTestCase::ZipfAntitheticTestCase()
+    : TestCaseBase("Antithetic Zipf Random Variable Stream Generator")
 {
 }
 
 void
-RandomVariableStreamZetaTestCase::DoRun (void)
+ZipfAntitheticTestCase::DoRun()
 {
-  SeedManager::SetSeed (time (0));
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
 
-  double alpha = 5.0;
-  double value;
+    uint32_t n = 1;
+    double alpha = 2.0;
 
-  // Create the RNG with the specified range.
-  Ptr<ZetaRandomVariable> x = CreateObject<ZetaRandomVariable> ();
-  x->SetAttribute ("Alpha", DoubleValue (alpha));
+    // Create the RNG with the specified range.
+    Ptr<ZipfRandomVariable> x = CreateObject<ZipfRandomVariable>();
+    x->SetAttribute("N", IntegerValue(n));
+    x->SetAttribute("Alpha", DoubleValue(alpha));
 
-  // Calculate the mean of these values.
-  double sum = 0.0;
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      value = x->GetValue ();
-      sum += value;
-    }
-  double valueMean = sum / N_MEASUREMENTS;
+    // Make this generate antithetic values.
+    x->SetAttribute("Antithetic", BooleanValue(true));
 
-  // The expected value for the mean of the values returned by a
-  // zetaly distributed random variable is equal to 
-  //
-  //                   zeta(alpha - 1)
-  //     E[value]  =  ---------------   for alpha > 2 ,
-  //                     zeta(alpha)
-  //                          
-  // where zeta(alpha) is the Riemann zeta function.
-  //                 
-  // There are no simple analytic forms for the Riemann zeta function,
-  // which is why the gsl library is used in this test to calculate
-  // the known mean of the values.
-  double expectedMean = gsl_sf_zeta_int (alpha - 1) / gsl_sf_zeta_int (alpha);
+    // Calculate the mean of these values.
+    double valueMean = Average(x);
 
-  // Test that values have approximately the right mean value.
-  double TOLERANCE = expectedMean * 1e-2;
-  NS_TEST_ASSERT_MSG_EQ_TOL (valueMean, expectedMean, TOLERANCE, "Wrong mean value."); 
+    // The expected value for the mean of the values returned by a
+    // Zipfly distributed random variable is equal to
+    //
+    //                   H
+    //                    N, alpha - 1
+    //     E[value]  =  ---------------
+    //                     H
+    //                      N, alpha
+    //
+    // where
+    //
+    //                    N
+    //                   ---
+    //                   \     -alpha
+    //     H          =  /    m        .
+    //      N, alpha     ---
+    //                   m=1
+    //
+    // For this test,
+    //
+    //                      -(alpha - 1)
+    //                     1
+    //     E[value]  =  ---------------
+    //                      -alpha
+    //                     1
+    //
+    //               =  1  .
+    //
+    double expectedMean = 1.0;
+
+    // Test that values have approximately the right mean value.
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedMean * TOLERANCE,
+                              "Wrong mean value.");
 }
 
-// ===========================================================================
-// Test case for antithetic Zeta distribution random variable stream generator
-// ===========================================================================
-class RandomVariableStreamZetaAntitheticTestCase : public TestCase
+/**
+ * \ingroup rng-tests
+ * Test case for Zeta distribution random variable stream generator
+ */
+class ZetaTestCase : public TestCaseBase
 {
-public:
-  static const uint32_t N_MEASUREMENTS = 1000000;
+  public:
+    // Constructor
+    ZetaTestCase();
 
-  RandomVariableStreamZetaAntitheticTestCase ();
-  virtual ~RandomVariableStreamZetaAntitheticTestCase ();
+  private:
+    // Inherited
+    void DoRun() override;
 
-private:
-  virtual void DoRun (void);
+    /**
+     * Tolerance for testing rng values against expectation,
+     * as a fraction of mean value.
+     */
+    static constexpr double TOLERANCE{1e-2};
 };
 
-RandomVariableStreamZetaAntitheticTestCase::RandomVariableStreamZetaAntitheticTestCase ()
-  : TestCase ("Antithetic Zeta Random Variable Stream Generator")
-{
-}
-
-RandomVariableStreamZetaAntitheticTestCase::~RandomVariableStreamZetaAntitheticTestCase ()
+ZetaTestCase::ZetaTestCase()
+    : TestCaseBase("Zeta Random Variable Stream Generator")
 {
 }
 
 void
-RandomVariableStreamZetaAntitheticTestCase::DoRun (void)
+ZetaTestCase::DoRun()
 {
-  SeedManager::SetSeed (time (0));
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
 
-  double alpha = 5.0;
-  double value;
+    double alpha = 5.0;
 
-  // Create the RNG with the specified range.
-  Ptr<ZetaRandomVariable> x = CreateObject<ZetaRandomVariable> ();
-  x->SetAttribute ("Alpha", DoubleValue (alpha));
+    // Create the RNG with the specified range.
+    Ptr<ZetaRandomVariable> x = CreateObject<ZetaRandomVariable>();
+    x->SetAttribute("Alpha", DoubleValue(alpha));
 
-  // Make this generate antithetic values.
-  x->SetAttribute ("Antithetic", BooleanValue (true));
+    // Calculate the mean of these values.
+    double valueMean = Average(x);
 
-  // Calculate the mean of these values.
-  double sum = 0.0;
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      value = x->GetValue ();
-      sum += value;
-    }
-  double valueMean = sum / N_MEASUREMENTS;
+    // The expected value for the mean of the values returned by a
+    // zetaly distributed random variable is equal to
+    //
+    //                   zeta(alpha - 1)
+    //     E[value]  =  ---------------   for alpha > 2 ,
+    //                     zeta(alpha)
+    //
+    // where zeta(alpha) is the Riemann zeta function.
+    //
+    // There are no simple analytic forms for the Riemann zeta function,
+    // which is why the gsl library is used in this test to calculate
+    // the known mean of the values.
+    double expectedMean =
+        gsl_sf_zeta_int(static_cast<int>(alpha - 1)) / gsl_sf_zeta_int(static_cast<int>(alpha));
 
-  // The expected value for the mean of the values returned by a
-  // zetaly distributed random variable is equal to 
-  //
-  //                   zeta(alpha - 1)
-  //     E[value]  =  ---------------   for alpha > 2 ,
-  //                     zeta(alpha)
-  //                          
-  // where zeta(alpha) is the Riemann zeta function.
-  //                 
-  // There are no simple analytic forms for the Riemann zeta function,
-  // which is why the gsl library is used in this test to calculate
-  // the known mean of the values.
-  double expectedMean = gsl_sf_zeta_int (alpha - 1) / gsl_sf_zeta_int (alpha);
-
-  // Test that values have approximately the right mean value.
-  double TOLERANCE = expectedMean * 1e-2;
-  NS_TEST_ASSERT_MSG_EQ_TOL (valueMean, expectedMean, TOLERANCE, "Wrong mean value."); 
+    // Test that values have approximately the right mean value.
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedMean * TOLERANCE,
+                              "Wrong mean value.");
 }
 
-// ===========================================================================
-// Test case for deterministic random variable stream generator
-// ===========================================================================
-class RandomVariableStreamDeterministicTestCase : public TestCase
+/**
+ * \ingroup rng-tests
+ * Test case for antithetic Zeta distribution random variable stream generator
+ */
+class ZetaAntitheticTestCase : public TestCaseBase
 {
-public:
-  static const double TOLERANCE;
+  public:
+    // Constructor
+    ZetaAntitheticTestCase();
 
-  RandomVariableStreamDeterministicTestCase ();
-  virtual ~RandomVariableStreamDeterministicTestCase ();
+  private:
+    // Inherited
+    void DoRun() override;
 
-private:
-  virtual void DoRun (void);
+    /**
+     * Tolerance for testing rng values against expectation,
+     * as a fraction of mean value.
+     */
+    static constexpr double TOLERANCE{1e-2};
 };
 
-const double RandomVariableStreamDeterministicTestCase::TOLERANCE = 1e-8;
-
-RandomVariableStreamDeterministicTestCase::RandomVariableStreamDeterministicTestCase ()
-  : TestCase ("Deterministic Random Variable Stream Generator")
-{
-}
-
-RandomVariableStreamDeterministicTestCase::~RandomVariableStreamDeterministicTestCase ()
+ZetaAntitheticTestCase::ZetaAntitheticTestCase()
+    : TestCaseBase("Antithetic Zeta Random Variable Stream Generator")
 {
 }
 
 void
-RandomVariableStreamDeterministicTestCase::DoRun (void)
+ZetaAntitheticTestCase::DoRun()
 {
-  SeedManager::SetSeed (time (0));
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
 
-  Ptr<DeterministicRandomVariable> s = CreateObject<DeterministicRandomVariable> ();
+    double alpha = 5.0;
 
-  // The following array should give the sequence
-  //
-  //    4, 4, 7, 7, 10, 10 .
-  //
-  double array1 [] = { 4, 4, 7, 7, 10, 10};
-  uint64_t count1 = 6;
-  s->SetValueArray (array1, count1);
+    // Create the RNG with the specified range.
+    Ptr<ZetaRandomVariable> x = CreateObject<ZetaRandomVariable>();
+    x->SetAttribute("Alpha", DoubleValue(alpha));
 
-  double value;
+    // Make this generate antithetic values.
+    x->SetAttribute("Antithetic", BooleanValue(true));
 
-  // Test that the first sequence is correct.
-  value = s->GetValue (); 
-  NS_TEST_ASSERT_MSG_EQ_TOL (value, 4, TOLERANCE, "Sequence 1 value 1 wrong."); 
-  value = s->GetValue (); 
-  NS_TEST_ASSERT_MSG_EQ_TOL (value, 4, TOLERANCE, "Sequence 1 value 2 wrong."); 
-  value = s->GetValue (); 
-  NS_TEST_ASSERT_MSG_EQ_TOL (value, 7, TOLERANCE, "Sequence 1 value 3 wrong."); 
-  value = s->GetValue (); 
-  NS_TEST_ASSERT_MSG_EQ_TOL (value, 7, TOLERANCE, "Sequence 1 value 4 wrong."); 
-  value = s->GetValue (); 
-  NS_TEST_ASSERT_MSG_EQ_TOL (value, 10, TOLERANCE, "Sequence 1 value 5 wrong."); 
-  value = s->GetValue (); 
-  NS_TEST_ASSERT_MSG_EQ_TOL (value, 10, TOLERANCE, "Sequence 1 value 6 wrong."); 
+    // Calculate the mean of these values.
+    double valueMean = Average(x);
 
-  // The following array should give the sequence
-  //
-  //    1000, 2000, 7, 7 .
-  //
-  double array2 [] = { 1000, 2000, 3000, 4000};
-  uint64_t count2 = 4;
-  s->SetValueArray (array2, count2);
+    // The expected value for the mean of the values returned by a
+    // zetaly distributed random variable is equal to
+    //
+    //                   zeta(alpha - 1)
+    //     E[value]  =  ---------------   for alpha > 2 ,
+    //                     zeta(alpha)
+    //
+    // where zeta(alpha) is the Riemann zeta function.
+    //
+    // There are no simple analytic forms for the Riemann zeta function,
+    // which is why the gsl library is used in this test to calculate
+    // the known mean of the values.
+    double expectedMean =
+        gsl_sf_zeta_int(static_cast<int>(alpha) - 1) / gsl_sf_zeta_int(static_cast<int>(alpha));
 
-  // Test that the second sequence is correct.
-  value = s->GetValue (); 
-  NS_TEST_ASSERT_MSG_EQ_TOL (value, 1000, TOLERANCE, "Sequence 2 value 1 wrong."); 
-  value = s->GetValue (); 
-  NS_TEST_ASSERT_MSG_EQ_TOL (value, 2000, TOLERANCE, "Sequence 2 value 2 wrong."); 
-  value = s->GetValue (); 
-  NS_TEST_ASSERT_MSG_EQ_TOL (value, 3000, TOLERANCE, "Sequence 2 value 3 wrong."); 
-  value = s->GetValue (); 
-  NS_TEST_ASSERT_MSG_EQ_TOL (value, 4000, TOLERANCE, "Sequence 2 value 4 wrong."); 
-  value = s->GetValue (); 
+    // Test that values have approximately the right mean value.
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedMean * TOLERANCE,
+                              "Wrong mean value.");
 }
 
-// ===========================================================================
-// Test case for empirical distribution random variable stream generator
-// ===========================================================================
-class RandomVariableStreamEmpiricalTestCase : public TestCase
+/**
+ * \ingroup rng-tests
+ * Test case for deterministic random variable stream generator
+ */
+class DeterministicTestCase : public TestCaseBase
 {
-public:
-  static const uint32_t N_MEASUREMENTS = 1000000;
+  public:
+    // Constructor
+    DeterministicTestCase();
 
-  RandomVariableStreamEmpiricalTestCase ();
-  virtual ~RandomVariableStreamEmpiricalTestCase ();
+  private:
+    // Inherited
+    void DoRun() override;
 
-private:
-  virtual void DoRun (void);
+    /** Tolerance for testing rng values against expectation. */
+    static constexpr double TOLERANCE{1e-8};
 };
 
-RandomVariableStreamEmpiricalTestCase::RandomVariableStreamEmpiricalTestCase ()
-  : TestCase ("Empirical Random Variable Stream Generator")
-{
-}
-
-RandomVariableStreamEmpiricalTestCase::~RandomVariableStreamEmpiricalTestCase ()
+DeterministicTestCase::DeterministicTestCase()
+    : TestCaseBase("Deterministic Random Variable Stream Generator")
 {
 }
 
 void
-RandomVariableStreamEmpiricalTestCase::DoRun (void)
+DeterministicTestCase::DoRun()
 {
-  SeedManager::SetSeed (time (0));
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
 
-  // Create the RNG with a uniform distribution between 0 and 10.
-  Ptr<EmpiricalRandomVariable> x = CreateObject<EmpiricalRandomVariable> ();
-  x->CDF ( 0.0,  0.0);
-  x->CDF ( 5.0,  0.5);
-  x->CDF (10.0,  1.0);
+    Ptr<DeterministicRandomVariable> s = CreateObject<DeterministicRandomVariable>();
 
-  // Calculate the mean of these values.
-  double sum = 0.0;
-  double value;
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
-    {
-      value = x->GetValue ();
-      sum += value;
-    }
-  double valueMean = sum / N_MEASUREMENTS;
+    // The following array should give the sequence
+    //
+    //    4, 4, 7, 7, 10, 10 .
+    //
+    double array1[] = {4, 4, 7, 7, 10, 10};
+    std::size_t count1 = 6;
+    s->SetValueArray(array1, count1);
 
-  // The expected value for the mean of the values returned by this
-  // empirical distribution is the midpoint of the distribution
-  //
-  //     E[value]  =  5 .
-  //                          
-  double expectedMean = 5.0;
+    double value;
 
-  // Test that values have approximately the right mean value.
-  double TOLERANCE = expectedMean * 1e-2;
-  NS_TEST_ASSERT_MSG_EQ_TOL (valueMean, expectedMean, TOLERANCE, "Wrong mean value."); 
+    // Test that the first sequence is correct.
+    value = s->GetValue();
+    NS_TEST_ASSERT_MSG_EQ_TOL(value, 4, TOLERANCE, "Sequence 1 value 1 wrong.");
+    value = s->GetValue();
+    NS_TEST_ASSERT_MSG_EQ_TOL(value, 4, TOLERANCE, "Sequence 1 value 2 wrong.");
+    value = s->GetValue();
+    NS_TEST_ASSERT_MSG_EQ_TOL(value, 7, TOLERANCE, "Sequence 1 value 3 wrong.");
+    value = s->GetValue();
+    NS_TEST_ASSERT_MSG_EQ_TOL(value, 7, TOLERANCE, "Sequence 1 value 4 wrong.");
+    value = s->GetValue();
+    NS_TEST_ASSERT_MSG_EQ_TOL(value, 10, TOLERANCE, "Sequence 1 value 5 wrong.");
+    value = s->GetValue();
+    NS_TEST_ASSERT_MSG_EQ_TOL(value, 10, TOLERANCE, "Sequence 1 value 6 wrong.");
+
+    // The following array should give the sequence
+    //
+    //    1000, 2000, 7, 7 .
+    //
+    double array2[] = {1000, 2000, 3000, 4000};
+    std::size_t count2 = 4;
+    s->SetValueArray(array2, count2);
+
+    // Test that the second sequence is correct.
+    value = s->GetValue();
+    NS_TEST_ASSERT_MSG_EQ_TOL(value, 1000, TOLERANCE, "Sequence 2 value 1 wrong.");
+    value = s->GetValue();
+    NS_TEST_ASSERT_MSG_EQ_TOL(value, 2000, TOLERANCE, "Sequence 2 value 2 wrong.");
+    value = s->GetValue();
+    NS_TEST_ASSERT_MSG_EQ_TOL(value, 3000, TOLERANCE, "Sequence 2 value 3 wrong.");
+    value = s->GetValue();
+    NS_TEST_ASSERT_MSG_EQ_TOL(value, 4000, TOLERANCE, "Sequence 2 value 4 wrong.");
+    value = s->GetValue();
 }
 
-// ===========================================================================
-// Test case for antithetic empirical distribution random variable stream generator
-// ===========================================================================
-class RandomVariableStreamEmpiricalAntitheticTestCase : public TestCase
+/**
+ * \ingroup rng-tests
+ * Test case for empirical distribution random variable stream generator
+ */
+class EmpiricalTestCase : public TestCaseBase
 {
-public:
-  static const uint32_t N_MEASUREMENTS = 1000000;
+  public:
+    // Constructor
+    EmpiricalTestCase();
 
-  RandomVariableStreamEmpiricalAntitheticTestCase ();
-  virtual ~RandomVariableStreamEmpiricalAntitheticTestCase ();
+  private:
+    // Inherited
+    void DoRun() override;
 
-private:
-  virtual void DoRun (void);
+    /**
+     * Tolerance for testing rng values against expectation,
+     * as a fraction of mean value.
+     */
+    static constexpr double TOLERANCE{1e-2};
 };
 
-RandomVariableStreamEmpiricalAntitheticTestCase::RandomVariableStreamEmpiricalAntitheticTestCase ()
-  : TestCase ("EmpiricalAntithetic Random Variable Stream Generator")
-{
-}
-
-RandomVariableStreamEmpiricalAntitheticTestCase::~RandomVariableStreamEmpiricalAntitheticTestCase ()
+EmpiricalTestCase::EmpiricalTestCase()
+    : TestCaseBase("Empirical Random Variable Stream Generator")
 {
 }
 
 void
-RandomVariableStreamEmpiricalAntitheticTestCase::DoRun (void)
+EmpiricalTestCase::DoRun()
 {
-  SeedManager::SetSeed (time (0));
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
 
-  // Create the RNG with a uniform distribution between 0 and 10.
-  Ptr<EmpiricalRandomVariable> x = CreateObject<EmpiricalRandomVariable> ();
-  x->CDF ( 0.0,  0.0);
-  x->CDF ( 5.0,  0.5);
-  x->CDF (10.0,  1.0);
+    // Create the RNG with a uniform distribution between 0 and 10.
+    Ptr<EmpiricalRandomVariable> x = CreateObject<EmpiricalRandomVariable>();
+    x->SetInterpolate(false);
+    x->CDF(0.0, 0.0);
+    x->CDF(5.0, 0.25);
+    x->CDF(10.0, 1.0);
 
-  // Make this generate antithetic values.
-  x->SetAttribute ("Antithetic", BooleanValue (true));
-
-  // Calculate the mean of these values.
-  double sum = 0.0;
-  double value;
-  for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
+    // Check that only the correct values are returned
+    for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
     {
-      value = x->GetValue ();
-      sum += value;
+        double value = x->GetValue();
+        NS_TEST_EXPECT_MSG_EQ((value == 5) || (value == 10),
+                              true,
+                              "Incorrect value returned, expected only 5 or 10.");
     }
-  double valueMean = sum / N_MEASUREMENTS;
 
-  // The expected value for the mean of the values returned by this
-  // empirical distribution is the midpoint of the distribution
-  //
-  //     E[value]  =  5 .
-  //                          
-  double expectedMean = 5.0;
+    // Calculate the mean of the sampled values.
+    double valueMean = Average(x);
 
-  // Test that values have approximately the right mean value.
-  double TOLERANCE = expectedMean * 1e-2;
-  NS_TEST_ASSERT_MSG_EQ_TOL (valueMean, expectedMean, TOLERANCE, "Wrong mean value."); 
+    // The expected distribution with sampled values is
+    //     Value     Probability
+    //      5        25%
+    //     10        75%
+    //
+    // The expected mean is
+    //
+    //     E[value]  =  5 * 25%  +  10 * 75%  =  8.75
+    //
+    // Test that values have approximately the right mean value.
+    double expectedMean = 8.75;
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedMean * TOLERANCE,
+                              "Wrong mean value.");
+
+    // Calculate the mean of the interpolated values.
+    x->SetInterpolate(true);
+    valueMean = Average(x);
+
+    // The expected distribution (with interpolation) is
+    //     Bin     Probability
+    //     [0, 5)     25%
+    //     [5, 10)    75%
+    //
+    // Each bin is uniformly sampled, so the average of the samples in the
+    // bin is the center of the bin.
+    //
+    // The expected mean is
+    //
+    //     E[value]  =  2.5 * 25% + 7.5 * 75% = 6.25
+    //
+    expectedMean = 6.25;
+
+    // Test that values have approximately the right mean value.
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedMean * TOLERANCE,
+                              "Wrong mean value.");
+
+    // Bug 2082: Create the RNG with a uniform distribution between -1 and 1.
+    Ptr<EmpiricalRandomVariable> y = CreateObject<EmpiricalRandomVariable>();
+    y->SetInterpolate(false);
+    y->CDF(-1.0, 0.0);
+    y->CDF(0.0, 0.5);
+    y->CDF(1.0, 1.0);
+    NS_TEST_ASSERT_MSG_LT(y->GetValue(), 2, "Empirical variable with negative domain");
 }
 
-class RandomVariableStreamTestSuite : public TestSuite
+/**
+ * \ingroup rng-tests
+ * Test case for antithetic empirical distribution random variable stream generator
+ */
+class EmpiricalAntitheticTestCase : public TestCaseBase
 {
-public:
-  RandomVariableStreamTestSuite ();
+  public:
+    // Constructor
+    EmpiricalAntitheticTestCase();
+
+  private:
+    // Inherited
+    void DoRun() override;
+
+    /**
+     * Tolerance for testing rng values against expectation,
+     * as a fraction of mean value.
+     */
+    static constexpr double TOLERANCE{1e-2};
 };
 
-RandomVariableStreamTestSuite::RandomVariableStreamTestSuite ()
-  : TestSuite ("random-variable-stream-generators", UNIT)
+EmpiricalAntitheticTestCase::EmpiricalAntitheticTestCase()
+    : TestCaseBase("EmpiricalAntithetic Random Variable Stream Generator")
 {
-  AddTestCase (new RandomVariableStreamUniformTestCase, TestCase::QUICK);
-  AddTestCase (new RandomVariableStreamUniformAntitheticTestCase, TestCase::QUICK);
-  AddTestCase (new RandomVariableStreamConstantTestCase, TestCase::QUICK);
-  AddTestCase (new RandomVariableStreamSequentialTestCase, TestCase::QUICK);
-  AddTestCase (new RandomVariableStreamNormalTestCase, TestCase::QUICK);
-  AddTestCase (new RandomVariableStreamNormalAntitheticTestCase, TestCase::QUICK);
-  AddTestCase (new RandomVariableStreamExponentialTestCase, TestCase::QUICK);
-  AddTestCase (new RandomVariableStreamExponentialAntitheticTestCase, TestCase::QUICK);
-  AddTestCase (new RandomVariableStreamParetoTestCase, TestCase::QUICK);
-  AddTestCase (new RandomVariableStreamParetoAntitheticTestCase, TestCase::QUICK);
-  AddTestCase (new RandomVariableStreamWeibullTestCase, TestCase::QUICK);
-  AddTestCase (new RandomVariableStreamWeibullAntitheticTestCase, TestCase::QUICK);
-  AddTestCase (new RandomVariableStreamLogNormalTestCase, TestCase::QUICK);
-  /// \todo This test is currently disabled because it fails sometimes.
-  /// A possible reason for the failure is that the antithetic code is
-  /// not implemented properly for this log-normal case.
-  /*
-  AddTestCase (new RandomVariableStreamLogNormalAntitheticTestCase, TestCase::QUICK);
-  */
-  AddTestCase (new RandomVariableStreamGammaTestCase, TestCase::QUICK);
-  /// \todo This test is currently disabled because it fails sometimes.
-  /// A possible reason for the failure is that the antithetic code is
-  /// not implemented properly for this gamma case.
-  /*
-  AddTestCase (new RandomVariableStreamGammaAntitheticTestCase, TestCase::QUICK);
-  */
-  AddTestCase (new RandomVariableStreamErlangTestCase, TestCase::QUICK);
-  AddTestCase (new RandomVariableStreamErlangAntitheticTestCase, TestCase::QUICK);
-  AddTestCase (new RandomVariableStreamZipfTestCase, TestCase::QUICK);
-  AddTestCase (new RandomVariableStreamZipfAntitheticTestCase, TestCase::QUICK);
-  AddTestCase (new RandomVariableStreamZetaTestCase, TestCase::QUICK);
-  AddTestCase (new RandomVariableStreamZetaAntitheticTestCase, TestCase::QUICK);
-  AddTestCase (new RandomVariableStreamDeterministicTestCase, TestCase::QUICK);
-  AddTestCase (new RandomVariableStreamEmpiricalTestCase, TestCase::QUICK);
-  AddTestCase (new RandomVariableStreamEmpiricalAntitheticTestCase, TestCase::QUICK);
 }
 
-static RandomVariableStreamTestSuite randomVariableStreamTestSuite;
+void
+EmpiricalAntitheticTestCase::DoRun()
+{
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
+
+    // Create the RNG with a uniform distribution between 0 and 10.
+    Ptr<EmpiricalRandomVariable> x = CreateObject<EmpiricalRandomVariable>();
+    x->SetInterpolate(false);
+    x->CDF(0.0, 0.0);
+    x->CDF(5.0, 0.25);
+    x->CDF(10.0, 1.0);
+
+    // Make this generate antithetic values.
+    x->SetAttribute("Antithetic", BooleanValue(true));
+
+    // Check that only the correct values are returned
+    for (uint32_t i = 0; i < N_MEASUREMENTS; ++i)
+    {
+        double value = x->GetValue();
+        NS_TEST_EXPECT_MSG_EQ((value == 5) || (value == 10),
+                              true,
+                              "Incorrect value returned, expected only 5 or 10.");
+    }
+
+    // Calculate the mean of these values.
+    double valueMean = Average(x);
+    // Expected
+    //    E[value] = 5 * 25%  + 10 * 75%  = 8.75
+    double expectedMean = 8.75;
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedMean * TOLERANCE,
+                              "Wrong mean value.");
+
+    // Check interpolated sampling
+    x->SetInterpolate(true);
+    valueMean = Average(x);
+
+    // The expected value for the mean of the values returned by this
+    // empirical distribution with interpolation is
+    //
+    //     E[value]  =  2.5 * 25% + 7.5 * 75% = 6.25
+    //
+    expectedMean = 6.25;
+
+    // Test that values have approximately the right mean value.
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedMean * TOLERANCE,
+                              "Wrong mean value.");
+}
+
+/**
+ * \ingroup rng-tests
+ * Test case for caching of Normal RV parameters (see issue #302)
+ */
+class NormalCachingTestCase : public TestCaseBase
+{
+  public:
+    // Constructor
+    NormalCachingTestCase();
+
+  private:
+    // Inherited
+    void DoRun() override;
+};
+
+NormalCachingTestCase::NormalCachingTestCase()
+    : TestCaseBase("NormalRandomVariable caching of parameters")
+{
+}
+
+void
+NormalCachingTestCase::DoRun()
+{
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
+
+    Ptr<NormalRandomVariable> n = CreateObject<NormalRandomVariable>();
+    double v1 = n->GetValue(-10, 1, 10); // Mean -10, variance 1, bounded to [-20,0]
+    double v2 = n->GetValue(10, 1, 10);  // Mean 10, variance 1, bounded to [0,20]
+
+    NS_TEST_ASSERT_MSG_LT(v1, 0, "Incorrect value returned, expected < 0");
+    NS_TEST_ASSERT_MSG_GT(v2, 0, "Incorrect value returned, expected > 0");
+}
+
+/**
+ * \ingroup rng-tests
+ * Test case for bernoulli distribution random variable stream generator
+ */
+class BernoulliTestCase : public TestCaseBase
+{
+  public:
+    // Constructor
+    BernoulliTestCase();
+
+    // Inherited
+    double ChiSquaredTest(Ptr<RandomVariableStream> rng) const override;
+
+  private:
+    // Inherited
+    void DoRun() override;
+
+    /** Tolerance for testing rng values against expectation, in rms. */
+    static constexpr double TOLERANCE{5};
+};
+
+BernoulliTestCase::BernoulliTestCase()
+    : TestCaseBase("Bernoulli Random Variable Stream Generator")
+{
+}
+
+double
+BernoulliTestCase::ChiSquaredTest(Ptr<RandomVariableStream> rng) const
+{
+    gsl_histogram* h = gsl_histogram_alloc(2);
+    auto range = UniformHistogramBins(h, 0, 1);
+
+    double p = 0.5;
+    std::vector<double> expected = {N_MEASUREMENTS * (1 - p), N_MEASUREMENTS * p};
+
+    double chiSquared = ChiSquared(h, expected, rng);
+
+    gsl_histogram_free(h);
+    return chiSquared;
+}
+
+void
+BernoulliTestCase::DoRun()
+{
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
+
+    auto generator = RngGenerator<BernoulliRandomVariable>();
+    double sum = ChiSquaredsAverage(&generator, N_RUNS);
+    double maxStatistic = gsl_cdf_chisq_Qinv(0.05, 1);
+    NS_TEST_ASSERT_MSG_LT(sum, maxStatistic, "Chi-squared statistic out of range");
+
+    double probability = 0.5;
+
+    // Create the RNG with the specified range.
+    Ptr<BernoulliRandomVariable> x = CreateObject<BernoulliRandomVariable>();
+    x->SetAttribute("Probability", DoubleValue(probability));
+
+    // Calculate the mean of these values.
+    double mean = probability;
+    double valueMean = Average(x);
+    double expectedMean = mean;
+    double expectedRms = std::sqrt(mean / N_MEASUREMENTS);
+
+    // Test that values have approximately the right mean value.
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedRms * TOLERANCE,
+                              "Wrong mean value.");
+}
+
+/**
+ * \ingroup rng-tests
+ * Test case for antithetic bernoulli distribution random variable stream generator
+ */
+class BernoulliAntitheticTestCase : public TestCaseBase
+{
+  public:
+    // Constructor
+    BernoulliAntitheticTestCase();
+
+    // Inherited
+    double ChiSquaredTest(Ptr<RandomVariableStream> rng) const override;
+
+  private:
+    // Inherited
+    void DoRun() override;
+
+    /** Tolerance for testing rng values against expectation, in rms. */
+    static constexpr double TOLERANCE{5};
+};
+
+BernoulliAntitheticTestCase::BernoulliAntitheticTestCase()
+    : TestCaseBase("Antithetic Bernoulli Random Variable Stream Generator")
+{
+}
+
+double
+BernoulliAntitheticTestCase::ChiSquaredTest(Ptr<RandomVariableStream> rng) const
+{
+    gsl_histogram* h = gsl_histogram_alloc(2);
+    auto range = UniformHistogramBins(h, 0, 1);
+
+    double p = 0.5;
+    std::vector<double> expected = {N_MEASUREMENTS * (1 - p), N_MEASUREMENTS * p};
+
+    double chiSquared = ChiSquared(h, expected, rng);
+
+    gsl_histogram_free(h);
+    return chiSquared;
+}
+
+void
+BernoulliAntitheticTestCase::DoRun()
+{
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
+
+    auto generator = RngGenerator<BernoulliRandomVariable>(true);
+    double sum = ChiSquaredsAverage(&generator, N_RUNS);
+    double maxStatistic = gsl_cdf_chisq_Qinv(0.05, 1);
+    NS_TEST_ASSERT_MSG_LT(sum, maxStatistic, "Chi-squared statistic out of range");
+
+    double probability = 0.5;
+
+    // Create the RNG with the specified range.
+    Ptr<BernoulliRandomVariable> x = CreateObject<BernoulliRandomVariable>();
+    x->SetAttribute("Probability", DoubleValue(probability));
+
+    // Make this generate antithetic values.
+    x->SetAttribute("Antithetic", BooleanValue(true));
+
+    // Calculate the mean of these values.
+    double mean = probability;
+    double valueMean = Average(x);
+    double expectedMean = mean;
+    double expectedRms = std::sqrt(mean / N_MEASUREMENTS);
+
+    // Test that values have approximately the right mean value.
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedRms * TOLERANCE,
+                              "Wrong mean value.");
+}
+
+/**
+ * \ingroup rng-tests
+ * Test case for binomial distribution random variable stream generator
+ */
+class BinomialTestCase : public TestCaseBase
+{
+  public:
+    // Constructor
+    BinomialTestCase();
+
+    // Inherited
+    double ChiSquaredTest(Ptr<RandomVariableStream> rng) const override;
+
+  private:
+    // Inherited
+    void DoRun() override;
+
+    /** Tolerance for testing rng values against expectation, in rms. */
+    static constexpr double TOLERANCE{5};
+};
+
+BinomialTestCase::BinomialTestCase()
+    : TestCaseBase("Binomial Random Variable Stream Generator")
+{
+}
+
+double
+BinomialTestCase::ChiSquaredTest(Ptr<RandomVariableStream> rng) const
+{
+    uint32_t trials = 10;
+    double probability = 0.5;
+
+    gsl_histogram* h = gsl_histogram_alloc(trials + 1);
+    auto range = UniformHistogramBins(h, 0, trials);
+
+    std::vector<double> expected(trials + 1);
+    for (std::size_t i = 0; i < trials + 1; ++i)
+    {
+        expected[i] = N_MEASUREMENTS * gsl_ran_binomial_pdf(i, probability, trials);
+    }
+
+    double chiSquared = ChiSquared(h, expected, rng);
+
+    gsl_histogram_free(h);
+    return chiSquared;
+}
+
+void
+BinomialTestCase::DoRun()
+{
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
+
+    uint32_t trials = 10;
+    double probability = 0.5;
+
+    auto generator = RngGenerator<BinomialRandomVariable>();
+    double sum = ChiSquaredsAverage(&generator, N_RUNS);
+    double maxStatistic = gsl_cdf_chisq_Qinv(0.05, trials);
+    NS_TEST_ASSERT_MSG_LT(sum, maxStatistic, "Chi-squared statistic out of range");
+
+    // Create the RNG with the specified range.
+    Ptr<BinomialRandomVariable> x = CreateObject<BinomialRandomVariable>();
+    x->SetAttribute("Trials", IntegerValue(trials));
+    x->SetAttribute("Probability", DoubleValue(probability));
+
+    // Calculate the mean of these values.
+    double mean = trials * probability;
+    double valueMean = Average(x);
+    double expectedMean = mean;
+    double expectedRms = std::sqrt(mean / N_MEASUREMENTS);
+
+    // Test that values have approximately the right mean value.
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedRms * TOLERANCE,
+                              "Wrong mean value.");
+}
+
+/**
+ * \ingroup rng-tests
+ * Test case for antithetic binomial distribution random variable stream generator
+ */
+class BinomialAntitheticTestCase : public TestCaseBase
+{
+  public:
+    // Constructor
+    BinomialAntitheticTestCase();
+
+    // Inherited
+    double ChiSquaredTest(Ptr<RandomVariableStream> rng) const override;
+
+  private:
+    // Inherited
+    void DoRun() override;
+
+    /** Tolerance for testing rng values against expectation, in rms. */
+    static constexpr double TOLERANCE{5};
+};
+
+BinomialAntitheticTestCase::BinomialAntitheticTestCase()
+    : TestCaseBase("Antithetic Binomial Random Variable Stream Generator")
+{
+}
+
+double
+BinomialAntitheticTestCase::ChiSquaredTest(Ptr<RandomVariableStream> rng) const
+{
+    uint32_t trials = 10;
+    double probability = 0.5;
+
+    gsl_histogram* h = gsl_histogram_alloc(trials + 1);
+    auto range = UniformHistogramBins(h, 0, trials);
+
+    std::vector<double> expected(trials + 1);
+    for (std::size_t i = 0; i < trials + 1; ++i)
+    {
+        expected[i] = N_MEASUREMENTS * gsl_ran_binomial_pdf(i, probability, trials);
+    }
+
+    double chiSquared = ChiSquared(h, expected, rng);
+
+    gsl_histogram_free(h);
+    return chiSquared;
+}
+
+void
+BinomialAntitheticTestCase::DoRun()
+{
+    NS_LOG_FUNCTION(this);
+    SetTestSuiteSeed();
+
+    uint32_t trials = 10;
+    double probability = 0.5;
+
+    auto generator = RngGenerator<BinomialRandomVariable>(true);
+    double sum = ChiSquaredsAverage(&generator, N_RUNS);
+    double maxStatistic = gsl_cdf_chisq_Qinv(0.05, trials);
+    NS_TEST_ASSERT_MSG_LT(sum, maxStatistic, "Chi-squared statistic out of range");
+
+    // Create the RNG with the specified range.
+    Ptr<BinomialRandomVariable> x = CreateObject<BinomialRandomVariable>();
+    x->SetAttribute("Trials", IntegerValue(trials));
+    x->SetAttribute("Probability", DoubleValue(probability));
+
+    // Make this generate antithetic values.
+    x->SetAttribute("Antithetic", BooleanValue(true));
+
+    // Calculate the mean of these values.
+    double mean = trials * probability;
+    double valueMean = Average(x);
+    double expectedMean = mean;
+    double expectedRms = std::sqrt(mean / N_MEASUREMENTS);
+
+    // Test that values have approximately the right mean value.
+    NS_TEST_ASSERT_MSG_EQ_TOL(valueMean,
+                              expectedMean,
+                              expectedRms * TOLERANCE,
+                              "Wrong mean value.");
+}
+
+/**
+ * \ingroup rng-test
+ * \ingroup tests
+ *
+ * \brief Test the Shuffle function
+ *
+ * Check that the Shuffle function actually shuffles the elements and does so in a portable way.
+ */
+class ShuffleElementsTest : public TestCase
+{
+  public:
+    ShuffleElementsTest();
+
+  private:
+    void DoRun() override;
+};
+
+ShuffleElementsTest::ShuffleElementsTest()
+    : TestCase("Check correct operation of the Shuffle function")
+{
+}
+
+void
+ShuffleElementsTest::DoRun()
+{
+    RngSeedManager::SetSeed(1);
+    RngSeedManager::SetRun(1);
+
+    auto rv = CreateObject<UniformRandomVariable>();
+    rv->SetStream(1);
+
+    // test empty vector
+    std::vector<uint8_t> vec{};
+
+    Shuffle(vec.begin(), vec.end(), rv);
+
+    NS_TEST_EXPECT_MSG_EQ(vec.empty(), true, "Expected an empty vector");
+
+    // test vector with one value
+    vec.push_back(3);
+
+    Shuffle(vec.begin(), vec.end(), rv);
+
+    NS_TEST_EXPECT_MSG_EQ((vec == std::vector<uint8_t>{3}), true, "Expected vector {3}");
+
+    // test vector with two values
+    vec.push_back(1);
+
+    Shuffle(vec.begin(), vec.end(), rv);
+
+    NS_TEST_EXPECT_MSG_EQ((vec == std::vector<uint8_t>{1, 3}), true, "Expected vector {1, 3}");
+
+    // test vector with multiple values
+    vec.push_back(7);
+    vec.push_back(2);
+    vec.push_back(4);
+    vec.push_back(9);
+
+    Shuffle(vec.begin(), vec.end(), rv);
+
+    NS_TEST_EXPECT_MSG_EQ((vec == std::vector<uint8_t>{4, 1, 9, 3, 2, 7}),
+                          true,
+                          "Expected vector {4, 1, 9, 3, 2, 7}");
+}
+
+/**
+ * \ingroup rng-tests
+ * RandomVariableStream test suite, covering all random number variable
+ * stream generator types.
+ */
+class RandomVariableSuite : public TestSuite
+{
+  public:
+    // Constructor
+    RandomVariableSuite();
+};
+
+RandomVariableSuite::RandomVariableSuite()
+    : TestSuite("random-variable-stream-generators", Type::UNIT)
+{
+    AddTestCase(new UniformTestCase);
+    AddTestCase(new UniformAntitheticTestCase);
+    AddTestCase(new ConstantTestCase);
+    AddTestCase(new SequentialTestCase);
+    AddTestCase(new NormalTestCase);
+    AddTestCase(new NormalAntitheticTestCase);
+    AddTestCase(new ExponentialTestCase);
+    AddTestCase(new ExponentialAntitheticTestCase);
+    AddTestCase(new ParetoTestCase);
+    AddTestCase(new ParetoAntitheticTestCase);
+    AddTestCase(new WeibullTestCase);
+    AddTestCase(new WeibullAntitheticTestCase);
+    AddTestCase(new LogNormalTestCase);
+    /// \todo This test is currently disabled because it fails sometimes.
+    /// A possible reason for the failure is that the antithetic code is
+    /// not implemented properly for this log-normal case.
+    /*
+    AddTestCase (new LogNormalAntitheticTestCase);
+    */
+    AddTestCase(new GammaTestCase);
+    /// \todo This test is currently disabled because it fails sometimes.
+    /// A possible reason for the failure is that the antithetic code is
+    /// not implemented properly for this gamma case.
+    /*
+    AddTestCase (new GammaAntitheticTestCase);
+    */
+    AddTestCase(new ErlangTestCase);
+    AddTestCase(new ErlangAntitheticTestCase);
+    AddTestCase(new ZipfTestCase);
+    AddTestCase(new ZipfAntitheticTestCase);
+    AddTestCase(new ZetaTestCase);
+    AddTestCase(new ZetaAntitheticTestCase);
+    AddTestCase(new DeterministicTestCase);
+    AddTestCase(new EmpiricalTestCase);
+    AddTestCase(new EmpiricalAntitheticTestCase);
+    /// Issue #302:  NormalRandomVariable produces stale values
+    AddTestCase(new NormalCachingTestCase);
+    AddTestCase(new BernoulliTestCase);
+    AddTestCase(new BernoulliAntitheticTestCase);
+    AddTestCase(new BinomialTestCase);
+    AddTestCase(new BinomialAntitheticTestCase);
+    AddTestCase(new ShuffleElementsTest);
+}
+
+static RandomVariableSuite randomVariableSuite; //!< Static variable for test initialization
+
+} // namespace RandomVariable
+
+} // namespace test
+
+} // namespace ns3

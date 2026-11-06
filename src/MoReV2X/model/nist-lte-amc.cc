@@ -243,7 +243,7 @@ NistLteAmc::GetTypeId (void)
   .AddAttribute ("AmcModel",
                 "AMC model used to assign CQI",
                  EnumValue (NistLteAmc::MiErrorModel),
-                 MakeEnumAccessor (&NistLteAmc::m_amcModel),
+                 MakeEnumAccessor<AmcModel> (&NistLteAmc::m_amcModel),
                  MakeEnumChecker (NistLteAmc::MiErrorModel, "Vienna",
                                   NistLteAmc::PiroEW2010, "PiroEW2010",
                                   NistLteAmc::NistErrorModel, "Nist"));

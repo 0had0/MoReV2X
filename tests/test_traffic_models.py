@@ -68,7 +68,7 @@ class TrafficModels(ScratchRuns):
         self.assertEqual(set(ssps[ssps.node > 10].priority), {6})
 
     def test_refused_models(self):
-        env = dict(os.environ, DYLD_LIBRARY_PATH=BUILD, LD_LIBRARY_PATH=BUILD)
+        env = dict(os.environ, DYLD_LIBRARY_PATH=os.path.join(BUILD, "lib"), LD_LIBRARY_PATH=os.path.join(BUILD, "lib"))
         workdir = tempfile.mkdtemp(prefix="morev2x-test-")
         self.scratch = getattr(self, "scratch", []) + [workdir]
         for model in ("periodic3", "periodic7"):

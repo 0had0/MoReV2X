@@ -41,7 +41,7 @@ struct NistLteSpectrumSignalParameters : public SpectrumSignalParameters
 {
 
   // inherited from SpectrumSignalParameters
-  virtual Ptr<SpectrumSignalParameters> Copy ();
+  virtual Ptr<SpectrumSignalParameters> Copy () const override;
 
   /**
    * default constructor
@@ -71,7 +71,7 @@ struct NistLteSpectrumSignalParametersDataFrame : public SpectrumSignalParameter
 {
   
   // inherited from SpectrumSignalParameters
-  virtual Ptr<SpectrumSignalParameters> Copy ();
+  virtual Ptr<SpectrumSignalParameters> Copy () const override;
   
   /**
   * default constructor
@@ -103,7 +103,7 @@ struct NistLteSpectrumSignalParametersDlCtrlFrame : public SpectrumSignalParamet
 {
   
   // inherited from SpectrumSignalParameters
-  virtual Ptr<SpectrumSignalParameters> Copy ();
+  virtual Ptr<SpectrumSignalParameters> Copy () const override;
   
   /**
   * default constructor
@@ -133,7 +133,7 @@ struct NistLteSpectrumSignalParametersUlSrsFrame : public SpectrumSignalParamete
 {
   
   // inherited from SpectrumSignalParameters
-  virtual Ptr<SpectrumSignalParameters> Copy ();
+  virtual Ptr<SpectrumSignalParameters> Copy () const override;
   
   /**
   * default constructor
@@ -157,7 +157,7 @@ struct NistLteSpectrumSignalParametersSlFrame : public SpectrumSignalParameters
 {
   
   // inherited from SpectrumSignalParameters
-  virtual Ptr<SpectrumSignalParameters> Copy ();
+  virtual Ptr<SpectrumSignalParameters> Copy () const override;
   
   /**
   * default constructor
@@ -199,7 +199,7 @@ struct NistLteSpectrumSignalParametersV2XSlFrame : public SpectrumSignalParamete
 {
   
   // inherited from SpectrumSignalParameters
-  virtual Ptr<SpectrumSignalParameters> Copy ();
+  virtual Ptr<SpectrumSignalParameters> Copy () const override;
   
   /**
   * default constructor

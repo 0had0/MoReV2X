@@ -1,4 +1,3 @@
-/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
  * Copyright (c) 2006 INRIA, 2010 NICTA
  *
@@ -20,6 +19,12 @@
  */
 #ifndef NS_ASSERT_H
 #define NS_ASSERT_H
+
+/**
+ * \file
+ * \ingroup assert
+ * NS_ASSERT() and NS_ASSERT_MSG() macro definitions
+ */
 
 /**
  * \ingroup debugging
@@ -45,31 +50,28 @@
 
 #ifdef NS3_ASSERT_ENABLE
 
-#include <iostream>
-
 #include "fatal-error.h"
+
+#include <iostream>
 
 /**
  * \ingroup assert
  *
  * At runtime, in debugging builds, if this condition is not
- * true, the program prints the source file, line number and 
+ * true, the program prints the source file, line number and
  * unverified condition and halts by calling std::terminate
  *
- * \param condition condition to verify.
+ * \param [in] condition Condition to verify.
  */
-#define NS_ASSERT(condition)                                    \
-  do                                                            \
-    {                                                           \
-      if (!(condition))                                         \
-        {                                                       \
-          std::cerr << "assert failed. cond=\"" <<              \
-          # condition << "\", ";                               \
-          NS_FATAL_ERROR_NO_MSG ();                              \
-        }                                                       \
-    }                                                           \
-  while (false)
-
+#define NS_ASSERT(condition)                                                                       \
+    do                                                                                             \
+    {                                                                                              \
+        if (!(condition))                                                                          \
+        {                                                                                          \
+            std::cerr << "NS_ASSERT failed, cond=\"" << #condition << "\", ";                      \
+            NS_FATAL_ERROR_NO_MSG();                                                               \
+        }                                                                                          \
+    } while (false)
 
 /**
  * \ingroup assert
@@ -78,36 +80,36 @@
  * true, the program prints the message to output and
  * halts by calling std::terminate.
  *
- * \param condition condition to verify.
- * \param message message to output
+ * \param [in] condition Condition to verify.
+ * \param [in] message Message to output
  */
-#define NS_ASSERT_MSG(condition, message)             \
-  do                                                  \
-    {                                                 \
-      if (!(condition))                               \
-        {                                             \
-          std::cerr << "assert failed. cond=\"" <<    \
-          # condition << "\", ";                     \
-          NS_FATAL_ERROR (message);                   \
-        }                                             \
-    }                                                 \
-  while (false)
+#define NS_ASSERT_MSG(condition, message)                                                          \
+    do                                                                                             \
+    {                                                                                              \
+        if (!(condition))                                                                          \
+        {                                                                                          \
+            std::cerr << "NS_ASSERT failed, cond=\"" << #condition << "\", ";                      \
+            NS_FATAL_ERROR(message);                                                               \
+        }                                                                                          \
+    } while (false)
 
 #else /* NS3_ASSERT_ENABLE */
 
-#define NS_ASSERT(condition)                          \
-  do                                                  \
-    {                                                 \
-      (void)sizeof (condition);                       \
-    }                                                 \
-  while (false)
+// NOTE: The no-op macros are not inserted into the final code.
+// However, the use of sizeof() allows the compiler to silently check if the condition is
+// syntactically valid.
 
-#define NS_ASSERT_MSG(condition, message)             \
-  do                                                  \
-    {                                                 \
-      (void)sizeof (condition);                       \
-    }                                                 \
-  while (false)
+#define NS_ASSERT(condition)                                                                       \
+    do                                                                                             \
+    {                                                                                              \
+        (void)sizeof(condition);                                                                   \
+    } while (false)
+
+#define NS_ASSERT_MSG(condition, message)                                                          \
+    do                                                                                             \
+    {                                                                                              \
+        (void)sizeof(condition);                                                                   \
+    } while (false)
 
 #endif /* NS3_ASSERT_ENABLE */
 

@@ -1,4 +1,3 @@
-/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
  * Copyright (c) 2012 CTTC
  *
@@ -21,52 +20,41 @@
 #ifndef BUILDINGS_HELPER_H
 #define BUILDINGS_HELPER_H
 
-#include <string>
 #include <ns3/attribute.h>
-#include <ns3/object-factory.h>
 #include <ns3/node-container.h>
+#include <ns3/object-factory.h>
 #include <ns3/ptr.h>
 
+#include <string>
 
-namespace ns3 {
+namespace ns3
+{
 
 class MobilityModel;
 class Building;
 
+/**
+ * \ingroup buildings
+ *
+ * Helper used to install a MobilityBuildingInfo into a set of nodes.
+ */
 class BuildingsHelper
 {
-public:
-  /**
-  * Install the MobilityBuildingInfo to a node
-  *
-  * \param node the mobility model of the node to be updated
-  */
-  static void Install (Ptr<Node> node);     // for any nodes
-  /**
-  * Install the MobilityBuildingInfo to the set of nodes in a NodeContainer
-  *
-  * \param c the NodeContainer including the nodes to be updated
-  */
-  static void Install (NodeContainer c);     // for any nodes
-  /**
-  * This method goes through the whole NodeList and, for each node in
-  * the list, calls BuildingsHelper::MakeConsistent() passing to it
-  * the MobilityModel of that node. 
-  *
-  */
-  static void MakeMobilityModelConsistent ();
-  /**
-  * Make the given mobility model consistent, by determining whether
-  * its position falls inside any of the building in BuildingList, and
-  * updating accordingly the BuildingInfo aggregated with the MobilityModel.
-  *
-  * \param bmm the mobility model to be made consistent
-  */
-  static void MakeConsistent (Ptr<MobilityModel> bmm);
-  
+  public:
+    /**
+     * Install the MobilityBuildingInfo to a node
+     *
+     * \param node the mobility model of the node to be updated
+     */
+    static void Install(Ptr<Node> node); // for any nodes
+    /**
+     * Install the MobilityBuildingInfo to the set of nodes in a NodeContainer
+     *
+     * \param c the NodeContainer including the nodes to be updated
+     */
+    static void Install(NodeContainer c); // for any nodes
 };
 
-
-}
+} // namespace ns3
 
 #endif /* BUILDINGS_HELPER_H */

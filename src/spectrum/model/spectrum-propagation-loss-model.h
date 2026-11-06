@@ -1,4 +1,3 @@
-/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
  * Copyright (c) 2009 CTTC
  *
@@ -21,15 +20,15 @@
 #ifndef SPECTRUM_PROPAGATION_LOSS_MODEL_H
 #define SPECTRUM_PROPAGATION_LOSS_MODEL_H
 
+#include "spectrum-value.h"
 
-#include <ns3/object.h>
 #include <ns3/mobility-model.h>
-#include <ns3/spectrum-value.h>
+#include <ns3/object.h>
 
-namespace ns3 {
+namespace ns3
+{
 
-
-
+struct SpectrumSignalParameters;
 
 /**
  * \ingroup spectrum
@@ -43,65 +42,86 @@ namespace ns3 {
  */
 class SpectrumPropagationLossModel : public Object
 {
-public:
-  SpectrumPropagationLossModel ();
-  virtual ~SpectrumPropagationLossModel ();
+  public:
+    SpectrumPropagationLossModel();
+    ~SpectrumPropagationLossModel() override;
 
-  static TypeId GetTypeId ();
+    /**
+     * \brief Get the type ID.
+     * \return the object TypeId
+     */
+    static TypeId GetTypeId();
 
+    /**
+     * Used to chain various instances of SpectrumPropagationLossModel
+     *
+     * @param next
+     */
+    void SetNext(Ptr<SpectrumPropagationLossModel> next);
 
-  /**
-   * used to chain various instances of SpectrumPropagationLossModel
-   *
-   * @param next
-   */
-  void SetNext (Ptr<SpectrumPropagationLossModel> next);
+    /**
+     * Return the pointer to the next SpectrumPropagationLossModel, if any.
+     *
+     * @return Pointer to the next model, if any.
+     */
+    Ptr<SpectrumPropagationLossModel> GetNext() const;
 
-  /**
-   * This method is to be called to calculate
-   *
-   * @param txPsd the SpectrumValue representing the power spectral
-   * density of the transmission. Watt units are to be used for radio
-   * communications, and Pascal units for acoustic communications
-   * (e.g. underwater).
-   *
-   * @param a sender mobility
-   * @param b receiver mobility
-   *
-   * @return set of values vs frequency representing the received
-   * power in the same units used for the txPower parameter.
-   */
-  Ptr<SpectrumValue> CalcRxPowerSpectralDensity (Ptr<const SpectrumValue> txPsd,
-                                                 Ptr<const MobilityModel> a,
-                                                 Ptr<const MobilityModel> b) const;
+    /**
+     * This method is to be called to calculate
+     *
+     * @param params the spectrum signal parameters.
+     * @param a sender mobility
+     * @param b receiver mobility
+     *
+     * @return set of values Vs frequency representing the received
+     * power in the same units used for the txPower parameter.
+     */
+    Ptr<SpectrumValue> CalcRxPowerSpectralDensity(Ptr<const SpectrumSignalParameters> params,
+                                                  Ptr<const MobilityModel> a,
+                                                  Ptr<const MobilityModel> b) const;
 
-protected:
-  virtual void DoDispose ();
+    /**
+     * If this loss model uses objects of type RandomVariableStream,
+     * set the stream numbers to the integers starting with the offset
+     * 'stream'. Return the number of streams (possibly zero) that
+     * have been assigned.  If there are SpectrumPropagationLossModels chained
+     * together, this method will also assign streams to the
+     * downstream models.
+     *
+     * \param stream the stream index offset start
+     * \return the number of stream indices assigned by this model
+     */
+    int64_t AssignStreams(int64_t stream);
 
+  protected:
+    void DoDispose() override;
+    /**
+     * Assign a fixed random variable stream number to the random variables used by this model.
+     *
+     * Subclasses must implement this; those not using random variables can return zero.
+     *
+     * \param stream first stream index to use
+     * \return the number of stream indices assigned by this model
+     */
+    virtual int64_t DoAssignStreams(int64_t stream) = 0;
 
-private:
-  /**
-   *
-   *
-   * @param txPsd set of values vs frequency representing the
-   * transmission power. See SpectrumChannel for details.
-   * @param a sender mobility
-   * @param b receiver mobility
-   *
-   * @return set of values vs frequency representing the received
-   * power in the same units used for the txPower parameter.
-   */
-  virtual Ptr<SpectrumValue> DoCalcRxPowerSpectralDensity (Ptr<const SpectrumValue> txPsd,
-                                                           Ptr<const MobilityModel> a,
-                                                           Ptr<const MobilityModel> b) const = 0;
+  private:
+    /**
+     *
+     * @param params the spectrum signal parameters.
+     * @param a sender mobility
+     * @param b receiver mobility
+     *
+     * @return set of values Vs frequency representing the received
+     * power in the same units used for the txPower parameter.
+     */
+    virtual Ptr<SpectrumValue> DoCalcRxPowerSpectralDensity(
+        Ptr<const SpectrumSignalParameters> params,
+        Ptr<const MobilityModel> a,
+        Ptr<const MobilityModel> b) const = 0;
 
-  Ptr<SpectrumPropagationLossModel> m_next;
+    Ptr<SpectrumPropagationLossModel> m_next; //!< SpectrumPropagationLossModel chained to this one.
 };
-
-
-
-
-
 
 } // namespace ns3
 

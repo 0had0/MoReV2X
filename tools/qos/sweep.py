@@ -131,7 +131,7 @@ def ensure_flows(config, out, run):
 
 def command_line(config, run, trace, flows, folder):
     scenario = config["scenarios"][run["scenario"]]
-    binary = os.path.join(ROOT, config.get("binary", "build/optimized/scratch/QOS"))
+    binary = os.path.join(ROOT, config.get("binary", "build/scratch/ns3.42-QOS-optimized"))
     arguments = {"trace": trace, "flows": flows, "out": os.path.join(folder, "logs") + "/",
                  "simTime": config["sim_time"], "seed": run["seed"], "runNo": 1}
     arguments.update(config.get("phy", {}))
@@ -167,7 +167,7 @@ def execute(config, out, run):
         with open(os.path.join(folder, "command.txt"), "w") as handle:
             handle.write(" ".join(line) + "\n")
         environment = dict(os.environ)
-        build = os.path.dirname(os.path.dirname(line[0]))
+        build = os.path.join(os.path.dirname(os.path.dirname(line[0])), "lib")
         environment["LD_LIBRARY_PATH"] = build + os.pathsep + environment.get("LD_LIBRARY_PATH", "")
         environment["DYLD_LIBRARY_PATH"] = build + os.pathsep + environment.get("DYLD_LIBRARY_PATH", "")
         with open(os.path.join(folder, "stdout.log"), "w") as log:

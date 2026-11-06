@@ -1,4 +1,3 @@
-/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
  * Copyright (c) 2010 INRIA
  *
@@ -23,10 +22,12 @@
 /**
  * \file
  * \ingroup ptr
- * Default deletion implementation for reference-counted smart pointers.
+ * ns3::DefaultDeleter declaration and template implementation,
+ * for reference-counted smart pointers.
  */
 
-namespace ns3 {
+namespace ns3
+{
 
 /**
  * \ingroup ptr
@@ -35,23 +36,24 @@ namespace ns3 {
  *        last reference to an object they manage
  *        disappears.
  *
- * \tparam T The object type being deleted.
+ * \tparam T \deduced The object type being deleted.
  * \sa ns3::SimpleRefCount
  */
 template <typename T>
 struct DefaultDeleter
 {
-  /**
-   * The default deleter implementation, which just does a normal
-   * \code
-   *   delete object;
-   * \endcode
-   * \tparam T The object type being deleted.
-   * \param [in] object The object to delete.
-   */
-  inline static void Delete (T *object) {
-    delete object;
-  }
+    /**
+     * The default deleter implementation, which just does a normal
+     * \code
+     *   delete object;
+     * \endcode
+     * \tparam T \deduced The object type being deleted.
+     * \param [in] object The object to delete.
+     */
+    inline static void Delete(T* object)
+    {
+        delete object;
+    }
 };
 
 } // namespace ns3

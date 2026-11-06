@@ -1,4 +1,3 @@
-/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
  * Copyright (c) 2005,2006 INRIA
  *
@@ -15,1621 +14,2342 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * Author: Mathieu Lacage <mathieu.lacage@sophia.inria.fr>
+ * Authors: Mathieu Lacage <mathieu.lacage@sophia.inria.fr>
+ *          Sébastien Deronne <sebastien.deronne@gmail.com>
  */
 
 #include "wifi-phy.h"
-#include "wifi-mode.h"
-#include "wifi-channel.h"
-#include "wifi-preamble.h"
-#include "ns3/simulator.h"
-#include "ns3/packet.h"
-#include "ns3/assert.h"
+
+#include "error-rate-model.h"
+#include "frame-capture-model.h"
+#include "interference-helper.h"
+#include "preamble-detection-model.h"
+#include "wifi-net-device.h"
+#include "wifi-ppdu.h"
+#include "wifi-psdu.h"
+#include "wifi-radio-energy-model.h"
+#include "wifi-utils.h"
+
+#include "ns3/channel.h"
+#include "ns3/dsss-phy.h"
+#include "ns3/eht-phy.h" //also includes OFDM, HT, VHT and HE
+#include "ns3/erp-ofdm-phy.h"
+#include "ns3/error-model.h"
+#include "ns3/ht-configuration.h"
 #include "ns3/log.h"
-#include "ns3/double.h"
-#include "ns3/uinteger.h"
-#include "ns3/enum.h"
-#include "ns3/trace-source-accessor.h"
-#include <cmath>
+#include "ns3/mobility-model.h"
+#include "ns3/pointer.h"
+#include "ns3/random-variable-stream.h"
+#include "ns3/simulator.h"
+#include "ns3/string.h"
+#include "ns3/tuple.h"
+#include "ns3/vht-configuration.h"
 
-namespace ns3 {
+#include <algorithm>
 
-NS_LOG_COMPONENT_DEFINE ("WifiPhy");
+#undef NS_LOG_APPEND_CONTEXT
+#define NS_LOG_APPEND_CONTEXT                                                                      \
+    WIFI_PHY_NS_LOG_APPEND_CONTEXT(                                                                \
+        (m_device && (m_device->GetNPhys() > m_phyId) && m_device->GetPhy(m_phyId)                 \
+             ? m_device->GetPhy(m_phyId)                                                           \
+             : nullptr))
 
-/****************************************************************
- *       This destructor is needed.
- ****************************************************************/
-
-WifiPhyListener::~WifiPhyListener ()
+namespace ns3
 {
-}
+
+NS_LOG_COMPONENT_DEFINE("WifiPhy");
 
 /****************************************************************
  *       The actual WifiPhy class
  ****************************************************************/
 
-NS_OBJECT_ENSURE_REGISTERED (WifiPhy);
+NS_OBJECT_ENSURE_REGISTERED(WifiPhy);
 
 TypeId
-WifiPhy::GetTypeId (void)
+WifiPhy::GetTypeId()
 {
-  static TypeId tid = TypeId ("ns3::WifiPhy")
-    .SetParent<Object> ()
-    .AddTraceSource ("PhyTxBegin",
-                     "Trace source indicating a packet "
-                     "has begun transmitting over the channel medium",
-                     MakeTraceSourceAccessor (&WifiPhy::m_phyTxBeginTrace),
-                     "ns3::Packet::TracedCallback")
-    .AddTraceSource ("PhyTxEnd",
-                     "Trace source indicating a packet "
-                     "has been completely transmitted over the channel. "
-                     "NOTE: the only official WifiPhy implementation "
-                     "available to this date (YansWifiPhy) never fires "
-                     "this trace source.",
-                     MakeTraceSourceAccessor (&WifiPhy::m_phyTxEndTrace),
-                     "ns3::Packet::TracedCallback")
-    .AddTraceSource ("PhyTxDrop",
-                     "Trace source indicating a packet "
-                     "has been dropped by the device during transmission",
-                     MakeTraceSourceAccessor (&WifiPhy::m_phyTxDropTrace),
-                     "ns3::Packet::TracedCallback")
-    .AddTraceSource ("PhyRxBegin",
-                     "Trace source indicating a packet "
-                     "has begun being received from the channel medium "
-                     "by the device",
-                     MakeTraceSourceAccessor (&WifiPhy::m_phyRxBeginTrace),
-                     "ns3::Packet::TracedCallback")
-    .AddTraceSource ("PhyRxEnd",
-                     "Trace source indicating a packet "
-                     "has been completely received from the channel medium "
-                     "by the device",
-                     MakeTraceSourceAccessor (&WifiPhy::m_phyRxEndTrace),
-                     "ns3::Packet::TracedCallback")
-    .AddTraceSource ("PhyRxDrop",
-                     "Trace source indicating a packet "
-                     "has been dropped by the device during reception",
-                     MakeTraceSourceAccessor (&WifiPhy::m_phyRxDropTrace),
-                     "ns3::Packet::TracedCallback")
-    .AddTraceSource ("MonitorSnifferRx",
-                     "Trace source simulating a wifi device in monitor mode "
-                     "sniffing all received frames",
-                     MakeTraceSourceAccessor (&WifiPhy::m_phyMonitorSniffRxTrace),
-                     "ns3::WifiPhy::MonitorSnifferRxCallback")
-    .AddTraceSource ("MonitorSnifferTx",
-                     "Trace source simulating the capability of a wifi device "
-                     "in monitor mode to sniff all frames being transmitted",
-                     MakeTraceSourceAccessor (&WifiPhy::m_phyMonitorSniffTxTrace),
-                     "ns3::WifiPhy::MonitorSnifferTxCallback")
-  ;
-  return tid;
+    static TypeId tid =
+        TypeId("ns3::WifiPhy")
+            .SetParent<Object>()
+            .SetGroupName("Wifi")
+            .AddAttribute("Channel",
+                          "The channel attached to this PHY",
+                          TypeId::ATTR_GET,
+                          PointerValue(),
+                          MakePointerAccessor(&WifiPhy::GetChannel),
+                          MakePointerChecker<Channel>())
+            .AddAttribute(
+                "ChannelSettings",
+                "Tuple {channel number, channel width (MHz), PHY band, primary20 index} "
+                "describing the settings of the operating channel. The primary20 index is "
+                "the index of the primary 20 MHz channel within the operating channel "
+                "(0 indicates the 20 MHz subchannel with the lowest center frequency) and "
+                "is only valid if the width of the operating channel is a multiple of 20 MHz. "
+                "If the standard for this object has not been set yet, the value of this "
+                "attribute is saved and will be used to set the operating channel when the "
+                "standard is configured. If the PHY band is left unspecified, the default "
+                "band for the configured standard is used. If the channel width and the "
+                "channel number are both 0, the default channel width for the configured "
+                "standard and band are used. If the channel number is 0, the default "
+                "channel number for the configured standard, band and channel width is used."
+                "Note that the channel width can be left unspecified (0) if the channel "
+                "number uniquely identify a frequency channel for the given standard and band.",
+                StringValue("{0, 0, BAND_UNSPECIFIED, 0}"),
+                MakeTupleAccessor<UintegerValue,
+                                  UintegerValue,
+                                  EnumValue<WifiPhyBand>,
+                                  UintegerValue>((void(WifiPhy::*)(const ChannelTuple&)) &
+                                                 WifiPhy::SetOperatingChannel),
+                MakeTupleChecker<UintegerValue,
+                                 UintegerValue,
+                                 EnumValue<WifiPhyBand>,
+                                 UintegerValue>(
+                    MakeUintegerChecker<uint8_t>(0, 233),
+                    MakeUintegerChecker<uint16_t>(0, 160),
+                    MakeEnumChecker(WifiPhyBand::WIFI_PHY_BAND_2_4GHZ,
+                                    "BAND_2_4GHZ",
+                                    WifiPhyBand::WIFI_PHY_BAND_5GHZ,
+                                    "BAND_5GHZ",
+                                    WifiPhyBand::WIFI_PHY_BAND_6GHZ,
+                                    "BAND_6GHZ",
+                                    WifiPhyBand::WIFI_PHY_BAND_UNSPECIFIED,
+                                    "BAND_UNSPECIFIED"),
+                    MakeUintegerChecker<uint8_t>(0, 7)))
+            .AddAttribute("Frequency",
+                          "The center frequency (MHz) of the current operating channel.",
+                          TypeId::ATTR_GET,
+                          UintegerValue(0),
+                          MakeUintegerAccessor(&WifiPhy::GetFrequency),
+                          MakeUintegerChecker<uint16_t>())
+            .AddAttribute("ChannelNumber",
+                          "The channel number of the current operating channel.",
+                          TypeId::ATTR_GET,
+                          UintegerValue(0),
+                          MakeUintegerAccessor(&WifiPhy::GetChannelNumber),
+                          MakeUintegerChecker<uint8_t>(0, 233))
+            .AddAttribute(
+                "ChannelWidth",
+                "The width in MHz of the current operating channel (5, 10, 20, 22, 40, 80 or 160).",
+                TypeId::ATTR_GET,
+                UintegerValue(0),
+                MakeUintegerAccessor(&WifiPhy::GetChannelWidth),
+                MakeUintegerChecker<uint16_t>(5, 160))
+            .AddAttribute(
+                "Primary20MHzIndex",
+                "The index of the primary 20 MHz channel within the current operating channel "
+                "(0 indicates the 20 MHz subchannel with the lowest center frequency).",
+                UintegerValue(0),
+                MakeUintegerAccessor(&WifiPhy::GetPrimary20Index),
+                MakeUintegerChecker<uint8_t>(0, 7))
+            .AddAttribute("FixedPhyBand",
+                          "If set to true, changing PHY band is prohibited after initialization.",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(&WifiPhy::SetFixedPhyBand, &WifiPhy::HasFixedPhyBand),
+                          MakeBooleanChecker())
+            .AddAttribute(
+                "RxSensitivity",
+                "The energy of a received signal should be higher than "
+                "this threshold (dBm) for the PHY to detect the signal. "
+                "This threshold refers to a width of 20 MHz and will be "
+                "scaled to match the width of the received signal.",
+                DoubleValue(-101.0),
+                MakeDoubleAccessor(&WifiPhy::SetRxSensitivity, &WifiPhy::GetRxSensitivity),
+                MakeDoubleChecker<double>())
+            .AddAttribute(
+                "CcaEdThreshold",
+                "The energy of all received signals should be higher than "
+                "this threshold (dBm) in the primary channel to allow the PHY layer "
+                "to declare CCA BUSY state.",
+                DoubleValue(-62.0),
+                MakeDoubleAccessor(&WifiPhy::SetCcaEdThreshold, &WifiPhy::GetCcaEdThreshold),
+                MakeDoubleChecker<double>())
+            .AddAttribute("CcaSensitivity",
+                          "The energy of a received wifi signal should be higher than "
+                          "this threshold (dBm) in the primary channel to allow the PHY layer "
+                          "to declare CCA BUSY state.",
+                          DoubleValue(-82.0),
+                          MakeDoubleAccessor(&WifiPhy::SetCcaSensitivityThreshold,
+                                             &WifiPhy::GetCcaSensitivityThreshold),
+                          MakeDoubleChecker<double>())
+            .AddAttribute("TxGain",
+                          "Transmission gain (dB).",
+                          DoubleValue(0.0),
+                          MakeDoubleAccessor(&WifiPhy::SetTxGain, &WifiPhy::GetTxGain),
+                          MakeDoubleChecker<double>())
+            .AddAttribute("RxGain",
+                          "Reception gain (dB).",
+                          DoubleValue(0.0),
+                          MakeDoubleAccessor(&WifiPhy::SetRxGain, &WifiPhy::GetRxGain),
+                          MakeDoubleChecker<double>())
+            .AddAttribute("TxPowerLevels",
+                          "Number of transmission power levels available between "
+                          "TxPowerStart and TxPowerEnd included.",
+                          UintegerValue(1),
+                          MakeUintegerAccessor(&WifiPhy::m_nTxPower),
+                          MakeUintegerChecker<uint8_t>())
+            .AddAttribute("TxPowerEnd",
+                          "Maximum available transmission level (dBm).",
+                          DoubleValue(16.0206),
+                          MakeDoubleAccessor(&WifiPhy::SetTxPowerEnd, &WifiPhy::GetTxPowerEnd),
+                          MakeDoubleChecker<double>())
+            .AddAttribute("TxPowerStart",
+                          "Minimum available transmission level (dBm).",
+                          DoubleValue(16.0206),
+                          MakeDoubleAccessor(&WifiPhy::SetTxPowerStart, &WifiPhy::GetTxPowerStart),
+                          MakeDoubleChecker<double>())
+            .AddAttribute(
+                "RxNoiseFigure",
+                "Loss (dB) in the Signal-to-Noise-Ratio due to non-idealities in the receiver."
+                " According to Wikipedia (http://en.wikipedia.org/wiki/Noise_figure), this is "
+                "\"the difference in decibels (dB) between"
+                " the noise output of the actual receiver to the noise output of an "
+                " ideal receiver with the same overall gain and bandwidth when the receivers "
+                " are connected to sources at the standard noise temperature T0 (usually 290 K)\".",
+                DoubleValue(7),
+                MakeDoubleAccessor(&WifiPhy::SetRxNoiseFigure),
+                MakeDoubleChecker<double>())
+            .AddAttribute("State",
+                          "The state of the PHY layer.",
+                          PointerValue(),
+                          MakePointerAccessor(&WifiPhy::m_state),
+                          MakePointerChecker<WifiPhyStateHelper>())
+            .AddAttribute("ChannelSwitchDelay",
+                          "Delay between two short frames transmitted on different frequencies.",
+                          TimeValue(MicroSeconds(250)),
+                          MakeTimeAccessor(&WifiPhy::m_channelSwitchDelay),
+                          MakeTimeChecker(Seconds(0)))
+            .AddAttribute(
+                "Antennas",
+                "The number of antennas on the device.",
+                UintegerValue(1),
+                MakeUintegerAccessor(&WifiPhy::GetNumberOfAntennas, &WifiPhy::SetNumberOfAntennas),
+                MakeUintegerChecker<uint8_t>(1, 8))
+            .AddAttribute("MaxSupportedTxSpatialStreams",
+                          "The maximum number of supported TX spatial streams."
+                          "This parameter is only valuable for 802.11n/ac/ax STAs and APs.",
+                          UintegerValue(1),
+                          MakeUintegerAccessor(&WifiPhy::GetMaxSupportedTxSpatialStreams,
+                                               &WifiPhy::SetMaxSupportedTxSpatialStreams),
+                          MakeUintegerChecker<uint8_t>(1, 8))
+            .AddAttribute("MaxSupportedRxSpatialStreams",
+                          "The maximum number of supported RX spatial streams."
+                          "This parameter is only valuable for 802.11n/ac/ax STAs and APs.",
+                          UintegerValue(1),
+                          MakeUintegerAccessor(&WifiPhy::GetMaxSupportedRxSpatialStreams,
+                                               &WifiPhy::SetMaxSupportedRxSpatialStreams),
+                          MakeUintegerChecker<uint8_t>(1, 8))
+            .AddAttribute("ShortPlcpPreambleSupported",
+                          "Whether or not short PHY preamble is supported."
+                          "This parameter is only valuable for 802.11b STAs and APs."
+                          "Note: 802.11g APs and STAs always support short PHY preamble.",
+                          BooleanValue(false),
+                          MakeBooleanAccessor(&WifiPhy::GetShortPhyPreambleSupported,
+                                              &WifiPhy::SetShortPhyPreambleSupported),
+                          MakeBooleanChecker())
+            .AddAttribute("FrameCaptureModel",
+                          "Ptr to an object that implements the frame capture model",
+                          PointerValue(),
+                          MakePointerAccessor(&WifiPhy::m_frameCaptureModel),
+                          MakePointerChecker<FrameCaptureModel>())
+            .AddAttribute("PreambleDetectionModel",
+                          "Ptr to an object that implements the preamble detection model",
+                          PointerValue(),
+                          MakePointerAccessor(&WifiPhy::m_preambleDetectionModel),
+                          MakePointerChecker<PreambleDetectionModel>())
+            .AddAttribute("PostReceptionErrorModel",
+                          "An optional packet error model can be added to the receive "
+                          "packet process after any propagation-based (SNR-based) error "
+                          "models have been applied. Typically this is used to force "
+                          "specific packet drops, for testing purposes.",
+                          PointerValue(),
+                          MakePointerAccessor(&WifiPhy::m_postReceptionErrorModel),
+                          MakePointerChecker<ErrorModel>())
+            .AddAttribute("InterferenceHelper",
+                          "Ptr to an object that implements the interference helper",
+                          PointerValue(),
+                          MakePointerAccessor(&WifiPhy::m_interference),
+                          MakePointerChecker<InterferenceHelper>())
+            .AddAttribute("Sifs",
+                          "The duration of the Short Interframe Space. "
+                          "NOTE that the default value is overwritten by the value defined "
+                          "by the standard; if you want to set this attribute, you have to "
+                          "do it after that the PHY object is initialized.",
+                          TimeValue(MicroSeconds(0)),
+                          MakeTimeAccessor(&WifiPhy::m_sifs),
+                          MakeTimeChecker())
+            .AddAttribute("Slot",
+                          "The duration of a slot. "
+                          "NOTE that the default value is overwritten by the value defined "
+                          "by the standard; if you want to set this attribute, you have to "
+                          "do it after that the PHY object is initialized.",
+                          TimeValue(MicroSeconds(0)),
+                          MakeTimeAccessor(&WifiPhy::m_slot),
+                          MakeTimeChecker())
+            .AddAttribute("Pifs",
+                          "The duration of the PCF Interframe Space. "
+                          "NOTE that the default value is overwritten by the value defined "
+                          "by the standard; if you want to set this attribute, you have to "
+                          "do it after that the PHY object is initialized.",
+                          TimeValue(MicroSeconds(0)),
+                          MakeTimeAccessor(&WifiPhy::m_pifs),
+                          MakeTimeChecker())
+            .AddAttribute("PowerDensityLimit",
+                          "The mean equivalent isotropically radiated power density"
+                          "limit (in dBm/MHz) set by regulators.",
+                          DoubleValue(100.0), // set to a high value so as to have no effect
+                          MakeDoubleAccessor(&WifiPhy::m_powerDensityLimit),
+                          MakeDoubleChecker<double>())
+            .AddTraceSource("PhyTxBegin",
+                            "Trace source indicating a packet "
+                            "has begun transmitting over the channel medium",
+                            MakeTraceSourceAccessor(&WifiPhy::m_phyTxBeginTrace),
+                            "ns3::WifiPhy::PhyTxBeginTracedCallback")
+            .AddTraceSource("PhyTxPsduBegin",
+                            "Trace source indicating a PSDU "
+                            "has begun transmitting over the channel medium",
+                            MakeTraceSourceAccessor(&WifiPhy::m_phyTxPsduBeginTrace),
+                            "ns3::WifiPhy::PsduTxBeginCallback")
+            .AddTraceSource("PhyTxEnd",
+                            "Trace source indicating a packet "
+                            "has been completely transmitted over the channel.",
+                            MakeTraceSourceAccessor(&WifiPhy::m_phyTxEndTrace),
+                            "ns3::Packet::TracedCallback")
+            .AddTraceSource("PhyTxDrop",
+                            "Trace source indicating a packet "
+                            "has been dropped by the device during transmission",
+                            MakeTraceSourceAccessor(&WifiPhy::m_phyTxDropTrace),
+                            "ns3::Packet::TracedCallback")
+            .AddTraceSource("PhyRxBegin",
+                            "Trace source indicating a packet "
+                            "has begun being received from the channel medium "
+                            "by the device",
+                            MakeTraceSourceAccessor(&WifiPhy::m_phyRxBeginTrace),
+                            "ns3::WifiPhy::PhyRxBeginTracedCallback")
+            .AddTraceSource("PhyRxPayloadBegin",
+                            "Trace source indicating the reception of the "
+                            "payload of a PPDU has begun",
+                            MakeTraceSourceAccessor(&WifiPhy::m_phyRxPayloadBeginTrace),
+                            "ns3::WifiPhy::PhyRxPayloadBeginTracedCallback")
+            .AddTraceSource("PhyRxEnd",
+                            "Trace source indicating a packet "
+                            "has been completely received from the channel medium "
+                            "by the device",
+                            MakeTraceSourceAccessor(&WifiPhy::m_phyRxEndTrace),
+                            "ns3::Packet::TracedCallback")
+            .AddTraceSource("PhyRxDrop",
+                            "Trace source indicating a packet "
+                            "has been dropped by the device during reception",
+                            MakeTraceSourceAccessor(&WifiPhy::m_phyRxDropTrace),
+                            "ns3::Packet::TracedCallback")
+            .AddTraceSource("PhyRxPpduDrop",
+                            "Trace source indicating a ppdu "
+                            "has been dropped by the device during reception",
+                            MakeTraceSourceAccessor(&WifiPhy::m_phyRxPpduDropTrace),
+                            "ns3::WifiPhy::PhyRxPpduDropTracedCallback")
+            .AddTraceSource("MonitorSnifferRx",
+                            "Trace source simulating a wifi device in monitor mode "
+                            "sniffing all received frames",
+                            MakeTraceSourceAccessor(&WifiPhy::m_phyMonitorSniffRxTrace),
+                            "ns3::WifiPhy::MonitorSnifferRxTracedCallback")
+            .AddTraceSource("MonitorSnifferTx",
+                            "Trace source simulating the capability of a wifi device "
+                            "in monitor mode to sniff all frames being transmitted",
+                            MakeTraceSourceAccessor(&WifiPhy::m_phyMonitorSniffTxTrace),
+                            "ns3::WifiPhy::MonitorSnifferTxTracedCallback")
+            .AddTraceSource("SignalTransmission",
+                            "Trace start of signal transmission",
+                            MakeTraceSourceAccessor(&WifiPhy::m_signalTransmissionCb),
+                            "ns3::SpectrumWifiPhy::SignalTransmissionCallback");
+    return tid;
 }
 
-WifiPhy::WifiPhy ()
+WifiPhy::WifiPhy()
+    : m_phyId(0),
+      m_txMpduReferenceNumber(0xffffffff),
+      m_rxMpduReferenceNumber(0xffffffff),
+      m_endPhyRxEvent(),
+      m_endTxEvent(),
+      m_currentEvent(nullptr),
+      m_previouslyRxPpduUid(UINT64_MAX),
+      m_standard(WIFI_STANDARD_UNSPECIFIED),
+      m_maxModClassSupported(WIFI_MOD_CLASS_UNKNOWN),
+      m_band(WIFI_PHY_BAND_UNSPECIFIED),
+      m_sifs(Seconds(0)),
+      m_slot(Seconds(0)),
+      m_pifs(Seconds(0)),
+      m_ackTxTime(Seconds(0)),
+      m_blockAckTxTime(Seconds(0)),
+      m_powerRestricted(false),
+      m_channelAccessRequested(false),
+      m_txSpatialStreams(1),
+      m_rxSpatialStreams(1),
+      m_wifiRadioEnergyModel(nullptr),
+      m_timeLastPreambleDetected(Seconds(0))
 {
-  NS_LOG_FUNCTION (this);
-  m_totalAmpduSize = 0;
-  m_totalAmpduNumSymbols = 0;
+    NS_LOG_FUNCTION(this);
+    m_random = CreateObject<UniformRandomVariable>();
+    m_state = CreateObject<WifiPhyStateHelper>();
 }
 
-WifiPhy::~WifiPhy ()
+WifiPhy::~WifiPhy()
 {
-  NS_LOG_FUNCTION (this);
+    NS_LOG_FUNCTION(this);
 }
 
-//return the L-SIG
-WifiMode
-WifiPhy::GetMFPlcpHeaderMode (WifiMode payloadMode, WifiPreamble preamble)
+void
+WifiPhy::DoInitialize()
 {
-    switch (payloadMode.GetBandwidth ())
-       {
-       case 20000000:
-          return WifiPhy::GetOfdmRate6_5MbpsBW20MHz ();
-        case 40000000:
-           return WifiPhy::GetOfdmRate13_5MbpsBW40MHz ();
-        default:
-            return WifiPhy::GetOfdmRate6_5MbpsBW20MHz ();
-      }
+    NS_LOG_FUNCTION(this);
+
+    // This method ensures that the local mobility model pointer holds
+    // a pointer to the Node's aggregated mobility model (if one exists)
+    // in the case that the user has not directly called SetMobility()
+    // on this WifiPhy during simulation setup.  If the mobility model
+    // needs to be added or changed during simulation runtime, users must
+    // call SetMobility() on this object.
+
+    if (!m_mobility)
+    {
+        NS_ABORT_MSG_UNLESS(m_device && m_device->GetNode(),
+                            "Either install a MobilityModel on this object or ensure that this "
+                            "object is part of a Node and NetDevice");
+        m_mobility = m_device->GetNode()->GetObject<MobilityModel>();
+        if (!m_mobility)
+        {
+            NS_LOG_WARN("Mobility not found, propagation models might not work properly");
+        }
+    }
+}
+
+void
+WifiPhy::DoDispose()
+{
+    NS_LOG_FUNCTION(this);
+
+    m_device = nullptr;
+    m_mobility = nullptr;
+    m_frameCaptureModel = nullptr;
+    m_preambleDetectionModel = nullptr;
+    m_wifiRadioEnergyModel = nullptr;
+    m_postReceptionErrorModel = nullptr;
+    if (m_interference)
+    {
+        m_interference->Dispose();
+    }
+    m_interference = nullptr;
+    m_random = nullptr;
+    m_state = nullptr;
+
+    Reset();
+
+    // this should be done after calling the Reset function
+    for (auto& phyEntity : m_phyEntities)
+    {
+        phyEntity.second = nullptr;
+    }
+    m_phyEntities.clear();
+}
+
+std::map<WifiModulationClass, Ptr<PhyEntity>>&
+WifiPhy::GetStaticPhyEntities()
+{
+    static std::map<WifiModulationClass, Ptr<PhyEntity>> g_staticPhyEntities;
+    return g_staticPhyEntities;
+}
+
+Ptr<WifiPhyStateHelper>
+WifiPhy::GetState() const
+{
+    return m_state;
+}
+
+void
+WifiPhy::SetReceiveOkCallback(RxOkCallback callback)
+{
+    m_state->SetReceiveOkCallback(callback);
+}
+
+void
+WifiPhy::SetReceiveErrorCallback(RxErrorCallback callback)
+{
+    m_state->SetReceiveErrorCallback(callback);
+}
+
+void
+WifiPhy::RegisterListener(const std::shared_ptr<WifiPhyListener>& listener)
+{
+    m_state->RegisterListener(listener);
+}
+
+void
+WifiPhy::UnregisterListener(const std::shared_ptr<WifiPhyListener>& listener)
+{
+    m_state->UnregisterListener(listener);
+}
+
+void
+WifiPhy::SetCapabilitiesChangedCallback(Callback<void> callback)
+{
+    m_capabilitiesChangedCallback = callback;
+}
+
+void
+WifiPhy::SetRxSensitivity(double threshold)
+{
+    NS_LOG_FUNCTION(this << threshold);
+    m_rxSensitivityDbm = threshold;
+}
+
+double
+WifiPhy::GetRxSensitivity() const
+{
+    return m_rxSensitivityDbm;
+}
+
+void
+WifiPhy::SetCcaEdThreshold(double threshold)
+{
+    NS_LOG_FUNCTION(this << threshold);
+    m_ccaEdThresholdW = DbmToW(threshold);
+}
+
+double
+WifiPhy::GetCcaEdThreshold() const
+{
+    return WToDbm(m_ccaEdThresholdW);
+}
+
+void
+WifiPhy::SetCcaSensitivityThreshold(double threshold)
+{
+    NS_LOG_FUNCTION(this << threshold);
+    m_ccaSensitivityThresholdW = DbmToW(threshold);
+}
+
+double
+WifiPhy::GetCcaSensitivityThreshold() const
+{
+    return WToDbm(m_ccaSensitivityThresholdW);
+}
+
+void
+WifiPhy::SetRxNoiseFigure(double noiseFigureDb)
+{
+    NS_LOG_FUNCTION(this << noiseFigureDb);
+    if (m_interference)
+    {
+        m_interference->SetNoiseFigure(DbToRatio(noiseFigureDb));
+    }
+    m_noiseFigureDb = noiseFigureDb;
+}
+
+void
+WifiPhy::SetTxPowerStart(double start)
+{
+    NS_LOG_FUNCTION(this << start);
+    m_txPowerBaseDbm = start;
+}
+
+double
+WifiPhy::GetTxPowerStart() const
+{
+    return m_txPowerBaseDbm;
+}
+
+void
+WifiPhy::SetTxPowerEnd(double end)
+{
+    NS_LOG_FUNCTION(this << end);
+    m_txPowerEndDbm = end;
+}
+
+double
+WifiPhy::GetTxPowerEnd() const
+{
+    return m_txPowerEndDbm;
+}
+
+void
+WifiPhy::SetNTxPower(uint8_t n)
+{
+    NS_LOG_FUNCTION(this << +n);
+    m_nTxPower = n;
+}
+
+uint8_t
+WifiPhy::GetNTxPower() const
+{
+    return m_nTxPower;
+}
+
+void
+WifiPhy::SetTxGain(double gain)
+{
+    NS_LOG_FUNCTION(this << gain);
+    m_txGainDb = gain;
+}
+
+double
+WifiPhy::GetTxGain() const
+{
+    return m_txGainDb;
+}
+
+void
+WifiPhy::SetRxGain(double gain)
+{
+    NS_LOG_FUNCTION(this << gain);
+    m_rxGainDb = gain;
+}
+
+double
+WifiPhy::GetRxGain() const
+{
+    return m_rxGainDb;
+}
+
+void
+WifiPhy::SetShortPhyPreambleSupported(bool enable)
+{
+    NS_LOG_FUNCTION(this << enable);
+    m_shortPreamble = enable;
+}
+
+bool
+WifiPhy::GetShortPhyPreambleSupported() const
+{
+    return m_shortPreamble;
+}
+
+void
+WifiPhy::SetDevice(const Ptr<WifiNetDevice> device)
+{
+    m_device = device;
+}
+
+Ptr<WifiNetDevice>
+WifiPhy::GetDevice() const
+{
+    return m_device;
+}
+
+void
+WifiPhy::SetMobility(const Ptr<MobilityModel> mobility)
+{
+    m_mobility = mobility;
+}
+
+Ptr<MobilityModel>
+WifiPhy::GetMobility() const
+{
+    return m_mobility;
+}
+
+void
+WifiPhy::SetPhyId(uint8_t phyId)
+{
+    NS_LOG_FUNCTION(this << phyId);
+    m_phyId = phyId;
+}
+
+uint8_t
+WifiPhy::GetPhyId() const
+{
+    return m_phyId;
+}
+
+void
+WifiPhy::SetInterferenceHelper(const Ptr<InterferenceHelper> helper)
+{
+    NS_LOG_FUNCTION(this << helper);
+    m_interference = helper;
+    m_interference->SetNoiseFigure(DbToRatio(m_noiseFigureDb));
+    m_interference->SetNumberOfReceiveAntennas(m_numberOfAntennas);
+}
+
+void
+WifiPhy::SetErrorRateModel(const Ptr<ErrorRateModel> model)
+{
+    NS_LOG_FUNCTION(this << model);
+    NS_ASSERT(m_interference);
+    m_interference->SetErrorRateModel(model);
+}
+
+void
+WifiPhy::SetPostReceptionErrorModel(const Ptr<ErrorModel> em)
+{
+    NS_LOG_FUNCTION(this << em);
+    m_postReceptionErrorModel = em;
+}
+
+void
+WifiPhy::SetFrameCaptureModel(const Ptr<FrameCaptureModel> model)
+{
+    m_frameCaptureModel = model;
+}
+
+void
+WifiPhy::SetPreambleDetectionModel(const Ptr<PreambleDetectionModel> model)
+{
+    m_preambleDetectionModel = model;
+}
+
+void
+WifiPhy::SetWifiRadioEnergyModel(const Ptr<WifiRadioEnergyModel> wifiRadioEnergyModel)
+{
+    m_wifiRadioEnergyModel = wifiRadioEnergyModel;
+}
+
+double
+WifiPhy::GetPowerDbm(uint8_t power) const
+{
+    NS_ASSERT(m_txPowerBaseDbm <= m_txPowerEndDbm);
+    NS_ASSERT(m_nTxPower > 0);
+    double dbm;
+    if (m_nTxPower > 1)
+    {
+        dbm = m_txPowerBaseDbm + power * (m_txPowerEndDbm - m_txPowerBaseDbm) / (m_nTxPower - 1);
+    }
+    else
+    {
+        NS_ASSERT_MSG(m_txPowerBaseDbm == m_txPowerEndDbm,
+                      "cannot have TxPowerEnd != TxPowerStart with TxPowerLevels == 1");
+        dbm = m_txPowerBaseDbm;
+    }
+    return dbm;
 }
 
 Time
-WifiPhy::GetPlcpHtTrainingSymbolDuration (WifiPreamble preamble, WifiTxVector txvector)
+WifiPhy::GetChannelSwitchDelay() const
 {
-  uint8_t Ndltf, Neltf;
+    return m_channelSwitchDelay;
+}
 
-  //We suppose here that STBC = 0. 
-  //If STBC > 0, we need a different mapping between Nss and Nltf (IEEE 802.11n-2012 standard, page 1682).
-  if (txvector.GetNss () < 3)
-    {
-      Ndltf = txvector.GetNss();
-    }
-  else 
-    {
-      Ndltf = 4;
-    }
-  if (txvector.GetNess () < 3)
-    {
-      Neltf = txvector.GetNess();
-    }
-  else 
-    {
-      Neltf = 4;
-    }
+double
+WifiPhy::CalculateSnr(const WifiTxVector& txVector, double ber) const
+{
+    return m_interference->GetErrorRateModel()->CalculateSnr(txVector, ber);
+}
 
-  switch (preamble)
+const Ptr<const PhyEntity>
+WifiPhy::GetStaticPhyEntity(WifiModulationClass modulation)
+{
+    const auto it = GetStaticPhyEntities().find(modulation);
+    NS_ABORT_MSG_IF(it == GetStaticPhyEntities().cend(),
+                    "Unimplemented Wi-Fi modulation class " << modulation);
+    return it->second;
+}
+
+Ptr<PhyEntity>
+WifiPhy::GetPhyEntity(WifiModulationClass modulation) const
+{
+    const auto it = m_phyEntities.find(modulation);
+    NS_ABORT_MSG_IF(it == m_phyEntities.cend(),
+                    "Unsupported Wi-Fi modulation class " << modulation);
+    return it->second;
+}
+
+Ptr<PhyEntity>
+WifiPhy::GetPhyEntity(WifiStandard standard) const
+{
+    return GetPhyEntity(GetModulationClassForStandard(standard));
+}
+
+Ptr<PhyEntity>
+WifiPhy::GetLatestPhyEntity() const
+{
+    return GetPhyEntity(m_standard);
+}
+
+Ptr<PhyEntity>
+WifiPhy::GetPhyEntityForPpdu(const Ptr<const WifiPpdu> ppdu) const
+{
+    NS_ABORT_IF(!ppdu);
+    const auto modulation = ppdu->GetModulation();
+    if (modulation > m_phyEntities.rbegin()->first)
     {
-     case WIFI_PREAMBLE_HT_MF:
-         return MicroSeconds(4 + (4 * Ndltf) + (4 * Neltf));
-     case WIFI_PREAMBLE_HT_GF:
-	     return MicroSeconds((4 * Ndltf) + (4 * Neltf));
-     default:
-       // no training for non HT
-         return MicroSeconds(0);
+        // unsupported modulation: start reception process with latest PHY entity
+        return GetLatestPhyEntity();
+    }
+    if (modulation < WIFI_MOD_CLASS_HT)
+    {
+        // for non-HT (duplicate), call the latest PHY entity since some extra processing can be
+        // done in PHYs implemented in HT and later (e.g. channel width selection for non-HT
+        // duplicates)
+        return GetLatestPhyEntity();
+    }
+    return GetPhyEntity(modulation);
+}
+
+void
+WifiPhy::AddStaticPhyEntity(WifiModulationClass modulation, Ptr<PhyEntity> phyEntity)
+{
+    NS_ASSERT_MSG(!GetStaticPhyEntities().contains(modulation),
+                  "The PHY entity has already been added. The setting should only be done once per "
+                  "modulation class");
+    GetStaticPhyEntities()[modulation] = phyEntity;
+}
+
+void
+WifiPhy::AddPhyEntity(WifiModulationClass modulation, Ptr<PhyEntity> phyEntity)
+{
+    NS_LOG_FUNCTION(this << modulation);
+    NS_ABORT_MSG_IF(!GetStaticPhyEntities().contains(modulation),
+                    "Cannot add an unimplemented PHY to supported list. Update the former first.");
+    NS_ASSERT_MSG(m_phyEntities.find(modulation) == m_phyEntities.end(),
+                  "The PHY entity has already been added. The setting should only be done once per "
+                  "modulation class");
+    phyEntity->SetOwner(this);
+    m_phyEntities[modulation] = phyEntity;
+}
+
+void
+WifiPhy::SetSifs(Time sifs)
+{
+    m_sifs = sifs;
+}
+
+Time
+WifiPhy::GetSifs() const
+{
+    return m_sifs;
+}
+
+void
+WifiPhy::SetSlot(Time slot)
+{
+    m_slot = slot;
+}
+
+Time
+WifiPhy::GetSlot() const
+{
+    return m_slot;
+}
+
+void
+WifiPhy::SetPifs(Time pifs)
+{
+    m_pifs = pifs;
+}
+
+Time
+WifiPhy::GetPifs() const
+{
+    return m_pifs;
+}
+
+Time
+WifiPhy::GetAckTxTime() const
+{
+    return m_ackTxTime;
+}
+
+Time
+WifiPhy::GetBlockAckTxTime() const
+{
+    return m_blockAckTxTime;
+}
+
+void
+WifiPhy::Configure80211a()
+{
+    NS_LOG_FUNCTION(this);
+    AddPhyEntity(WIFI_MOD_CLASS_OFDM, Create<OfdmPhy>());
+
+    // See Table 17-21 "OFDM PHY characteristics" of 802.11-2016
+    SetSifs(MicroSeconds(16));
+    SetSlot(MicroSeconds(9));
+    SetPifs(GetSifs() + GetSlot());
+    // See Table 10-5 "Determination of the EstimatedAckTxTime based on properties
+    // of the PPDU causing the EIFS" of 802.11-2016
+    m_ackTxTime = MicroSeconds(44);
+}
+
+void
+WifiPhy::Configure80211b()
+{
+    NS_LOG_FUNCTION(this);
+    Ptr<DsssPhy> phyEntity = Create<DsssPhy>();
+    AddPhyEntity(WIFI_MOD_CLASS_HR_DSSS, phyEntity);
+    AddPhyEntity(WIFI_MOD_CLASS_DSSS, phyEntity); // when plain DSSS modes are used
+
+    // See Table 16-4 "HR/DSSS PHY characteristics" of 802.11-2016
+    SetSifs(MicroSeconds(10));
+    SetSlot(MicroSeconds(20));
+    SetPifs(GetSifs() + GetSlot());
+    // See Table 10-5 "Determination of the EstimatedAckTxTime based on properties
+    // of the PPDU causing the EIFS" of 802.11-2016
+    m_ackTxTime = MicroSeconds(304);
+}
+
+void
+WifiPhy::Configure80211g()
+{
+    NS_LOG_FUNCTION(this);
+    // See Table 18-5 "ERP characteristics" of 802.11-2016
+    // Slot time defaults to the "long slot time" of 20 us in the standard
+    // according to mixed 802.11b/g deployments.  Short slot time is enabled
+    // if the user sets the ShortSlotTimeSupported flag to true and when the BSS
+    // consists of only ERP STAs capable of supporting this option.
+    Configure80211b();
+    AddPhyEntity(WIFI_MOD_CLASS_ERP_OFDM, Create<ErpOfdmPhy>());
+}
+
+void
+WifiPhy::Configure80211p()
+{
+    NS_LOG_FUNCTION(this);
+    if (GetChannelWidth() == 10)
+    {
+        AddPhyEntity(WIFI_MOD_CLASS_OFDM, Create<OfdmPhy>(OFDM_PHY_10_MHZ));
+
+        // See Table 17-21 "OFDM PHY characteristics" of 802.11-2016
+        SetSifs(MicroSeconds(32));
+        SetSlot(MicroSeconds(13));
+        SetPifs(GetSifs() + GetSlot());
+        m_ackTxTime = MicroSeconds(88);
+    }
+    else if (GetChannelWidth() == 5)
+    {
+        AddPhyEntity(WIFI_MOD_CLASS_OFDM, Create<OfdmPhy>(OFDM_PHY_5_MHZ));
+
+        // See Table 17-21 "OFDM PHY characteristics" of 802.11-2016
+        SetSifs(MicroSeconds(64));
+        SetSlot(MicroSeconds(21));
+        SetPifs(GetSifs() + GetSlot());
+        m_ackTxTime = MicroSeconds(176);
+    }
+    else
+    {
+        NS_FATAL_ERROR("802.11p configured with a wrong channel width!");
     }
 }
 
-//return L-SIG
-Time
-WifiPhy::GetPlcpHtSigHeaderDuration (WifiMode payloadMode, WifiPreamble preamble)
+void
+WifiPhy::Configure80211n()
 {
-         switch (preamble)
+    NS_LOG_FUNCTION(this);
+    if (m_band == WIFI_PHY_BAND_2_4GHZ)
+    {
+        Configure80211g();
+    }
+    else
+    {
+        Configure80211a();
+    }
+    AddPhyEntity(WIFI_MOD_CLASS_HT, Create<HtPhy>(m_txSpatialStreams));
+
+    // See Table 10-5 "Determination of the EstimatedAckTxTime based on properties
+    // of the PPDU causing the EIFS" of 802.11-2016
+    m_blockAckTxTime = MicroSeconds(68);
+}
+
+void
+WifiPhy::Configure80211ac()
+{
+    NS_LOG_FUNCTION(this);
+    Configure80211n();
+    AddPhyEntity(WIFI_MOD_CLASS_VHT, Create<VhtPhy>());
+}
+
+void
+WifiPhy::Configure80211ax()
+{
+    NS_LOG_FUNCTION(this);
+    if (m_band == WIFI_PHY_BAND_2_4GHZ)
+    {
+        Configure80211n();
+    }
+    else
+    {
+        Configure80211ac();
+    }
+    AddPhyEntity(WIFI_MOD_CLASS_HE, Create<HePhy>());
+}
+
+void
+WifiPhy::Configure80211be()
+{
+    NS_LOG_FUNCTION(this);
+    Configure80211ax();
+    AddPhyEntity(WIFI_MOD_CLASS_EHT, Create<EhtPhy>());
+}
+
+void
+WifiPhy::SetMaxModulationClassSupported(WifiModulationClass modClass)
+{
+    NS_LOG_FUNCTION(this << modClass);
+    m_maxModClassSupported = modClass;
+}
+
+WifiModulationClass
+WifiPhy::GetMaxModulationClassSupported() const
+{
+    return m_maxModClassSupported;
+}
+
+void
+WifiPhy::ConfigureStandard(WifiStandard standard)
+{
+    NS_LOG_FUNCTION(this << standard);
+
+    NS_ABORT_MSG_IF(m_standard != WIFI_STANDARD_UNSPECIFIED && standard != m_standard,
+                    "Cannot change standard");
+
+    m_standard = standard;
+
+    if (m_maxModClassSupported == WIFI_MOD_CLASS_UNKNOWN)
+    {
+        m_maxModClassSupported = GetModulationClassForStandard(m_standard);
+    }
+
+    if (!m_operatingChannel.IsSet())
+    {
+        NS_LOG_DEBUG("Setting the operating channel first");
+        SetOperatingChannel(m_channelSettings);
+        // return because we are called back by SetOperatingChannel
+        return;
+    }
+
+    // this function is called when changing PHY band, hence we have to delete
+    // the previous PHY entities
+    m_phyEntities.clear();
+
+    switch (standard)
+    {
+    case WIFI_STANDARD_80211a:
+        Configure80211a();
+        break;
+    case WIFI_STANDARD_80211b:
+        Configure80211b();
+        break;
+    case WIFI_STANDARD_80211g:
+        Configure80211g();
+        break;
+    case WIFI_STANDARD_80211p:
+        Configure80211p();
+        break;
+    case WIFI_STANDARD_80211n:
+        Configure80211n();
+        break;
+    case WIFI_STANDARD_80211ac:
+        Configure80211ac();
+        break;
+    case WIFI_STANDARD_80211ax:
+        Configure80211ax();
+        break;
+    case WIFI_STANDARD_80211be:
+        Configure80211be();
+        break;
+    case WIFI_STANDARD_UNSPECIFIED:
+    default:
+        NS_ASSERT_MSG(false, "Unsupported standard");
+        break;
+    }
+}
+
+WifiPhyBand
+WifiPhy::GetPhyBand() const
+{
+    return m_band;
+}
+
+WifiStandard
+WifiPhy::GetStandard() const
+{
+    return m_standard;
+}
+
+const WifiPhyOperatingChannel&
+WifiPhy::GetOperatingChannel() const
+{
+    return m_operatingChannel;
+}
+
+uint16_t
+WifiPhy::GetFrequency() const
+{
+    return m_operatingChannel.GetFrequency();
+}
+
+uint8_t
+WifiPhy::GetChannelNumber() const
+{
+    return m_operatingChannel.GetNumber();
+}
+
+uint16_t
+WifiPhy::GetChannelWidth() const
+{
+    return m_operatingChannel.GetWidth();
+}
+
+uint8_t
+WifiPhy::GetPrimary20Index() const
+{
+    return m_operatingChannel.GetPrimaryChannelIndex(20);
+}
+
+void
+WifiPhy::SetFixedPhyBand(bool enable)
+{
+    m_fixedPhyBand = enable;
+}
+
+bool
+WifiPhy::HasFixedPhyBand() const
+{
+    return m_fixedPhyBand;
+}
+
+uint16_t
+WifiPhy::GetTxBandwidth(WifiMode mode, uint16_t maxAllowedWidth) const
+{
+    auto modulation = mode.GetModulationClass();
+    if (modulation == WIFI_MOD_CLASS_DSSS || modulation == WIFI_MOD_CLASS_HR_DSSS)
+    {
+        return 22;
+    }
+
+    return std::min({GetChannelWidth(), GetMaximumChannelWidth(modulation), maxAllowedWidth});
+}
+
+void
+WifiPhy::SetOperatingChannel(const WifiPhyOperatingChannel& channel)
+{
+    NS_LOG_FUNCTION(this << channel);
+    WifiPhy::ChannelTuple tuple(channel.GetNumber(),
+                                channel.GetWidth(),
+                                channel.GetPhyBand(),
+                                channel.GetPrimaryChannelIndex(20));
+    SetOperatingChannel(tuple);
+}
+
+void
+WifiPhy::SetOperatingChannel(const ChannelTuple& channelTuple)
+{
+    // the generic operator<< for tuples does not give a pretty result
+    NS_LOG_FUNCTION(this << +std::get<0>(channelTuple) << std::get<1>(channelTuple)
+                         << static_cast<WifiPhyBand>(std::get<2>(channelTuple))
+                         << +std::get<3>(channelTuple));
+
+    m_channelSettings = channelTuple;
+
+    if (m_standard == WIFI_STANDARD_UNSPECIFIED)
+    {
+        NS_LOG_DEBUG("Channel information will be applied when a standard is configured");
+        return;
+    }
+
+    if (IsInitialized())
+    {
+        const auto delay = GetDelayUntilChannelSwitch();
+        if (!delay.has_value())
+        {
+            // switching channel is not possible now
+            return;
+        }
+        if (delay.value().IsStrictlyPositive())
+        {
+            // switching channel has been postponed
+            void (WifiPhy::*fp)(const ChannelTuple&) = &WifiPhy::SetOperatingChannel;
+            Simulator::Schedule(delay.value(), fp, this, channelTuple);
+            return;
+        }
+    }
+
+    // channel can be switched now.
+    DoChannelSwitch();
+}
+
+std::optional<Time>
+WifiPhy::GetDelayUntilChannelSwitch()
+{
+    if (!IsInitialized())
+    {
+        // this is not channel switch, this is initialization
+        NS_LOG_DEBUG("Before initialization, nothing to do");
+        return Seconds(0);
+    }
+
+    NS_ASSERT(!IsStateSwitching());
+    std::optional<Time> delay;
+    switch (m_state->GetState())
+    {
+    case WifiPhyState::RX:
+        NS_LOG_DEBUG("drop packet because of channel switching while reception");
+        AbortCurrentReception(CHANNEL_SWITCHING);
+        delay = Seconds(0);
+        break;
+    case WifiPhyState::TX:
+        NS_LOG_DEBUG("channel switching postponed until end of current transmission");
+        delay = GetDelayUntilIdle();
+        break;
+    case WifiPhyState::CCA_BUSY:
+    case WifiPhyState::IDLE:
+        Reset();
+        delay = Seconds(0);
+        break;
+    case WifiPhyState::SLEEP:
+        NS_LOG_DEBUG("channel switching ignored in sleep mode");
+        break;
+    default:
+        NS_ASSERT(false);
+        break;
+    }
+
+    return delay;
+}
+
+void
+WifiPhy::DoChannelSwitch()
+{
+    NS_LOG_FUNCTION(this);
+
+    m_powerRestricted = false;
+    m_channelAccessRequested = false;
+
+    // Update unspecified parameters with default values
+    {
+        auto& [number, width, band, primary20] = m_channelSettings;
+        if (band == WIFI_PHY_BAND_UNSPECIFIED)
+        {
+            band = GetDefaultPhyBand(m_standard);
+        }
+        if (width == 0 && number == 0)
+        {
+            width = GetDefaultChannelWidth(m_standard, static_cast<WifiPhyBand>(band));
+        }
+        if (number == 0)
+        {
+            number =
+                WifiPhyOperatingChannel::GetDefaultChannelNumber(width,
+                                                                 m_standard,
+                                                                 static_cast<WifiPhyBand>(band));
+        }
+    }
+
+    // We need to call SetStandard if this is the first time we set a channel or we
+    // are changing PHY band. Checking if the new PHY band is different than the
+    // previous one covers both cases because initially the PHY band is unspecified
+    bool changingPhyBand = (static_cast<WifiPhyBand>(std::get<2>(m_channelSettings)) != m_band);
+
+    NS_ABORT_MSG_IF(IsInitialized() && m_fixedPhyBand && changingPhyBand,
+                    "Trying to change PHY band while prohibited.");
+
+    m_band = static_cast<WifiPhyBand>(std::get<2>(m_channelSettings));
+
+    // check that the channel width is supported
+    uint16_t chWidth = std::get<1>(m_channelSettings);
+
+    if (m_device)
+    {
+        if (auto htConfig = m_device->GetHtConfiguration();
+            htConfig && !htConfig->Get40MHzOperationSupported() && chWidth > 20)
+        {
+            NS_ABORT_MSG("Attempting to set a " << chWidth
+                                                << " MHz channel on"
+                                                   "a station only supporting 20 MHz operation");
+        }
+
+        if (auto vhtConfig = m_device->GetVhtConfiguration();
+            vhtConfig && !vhtConfig->Get160MHzOperationSupported() && chWidth > 80)
+        {
+            NS_ABORT_MSG("Attempting to set a " << chWidth
+                                                << " MHz channel on"
+                                                   "a station supporting up to 80 MHz operation");
+        }
+    }
+
+    NS_LOG_DEBUG("switching channel");
+    m_operatingChannel.Set(std::get<0>(m_channelSettings), 0, chWidth, m_standard, m_band);
+    m_operatingChannel.SetPrimary20Index(std::get<3>(m_channelSettings));
+
+    if (changingPhyBand)
+    {
+        ConfigureStandard(m_standard);
+    }
+
+    if (IsInitialized())
+    {
+        // notify channel switching
+        m_state->SwitchToChannelSwitching(GetChannelSwitchDelay());
+        /*
+         * Needed here to be able to correctly sensed the medium for the first
+         * time after the switching. The actual switching is not performed until
+         * after m_channelSwitchDelay. Packets received during the switching
+         * state are added to the event list and are employed later to figure
+         * out the state of the medium after the switching.
+         */
+    }
+}
+
+void
+WifiPhy::SetNumberOfAntennas(uint8_t antennas)
+{
+    NS_LOG_FUNCTION(this << +antennas);
+    NS_ASSERT_MSG(antennas > 0 && antennas <= 8, "unsupported number of antennas");
+    m_numberOfAntennas = antennas;
+    if (m_interference)
+    {
+        m_interference->SetNumberOfReceiveAntennas(antennas);
+    }
+}
+
+uint8_t
+WifiPhy::GetNumberOfAntennas() const
+{
+    return m_numberOfAntennas;
+}
+
+void
+WifiPhy::SetMaxSupportedTxSpatialStreams(uint8_t streams)
+{
+    NS_ASSERT(streams <= GetNumberOfAntennas());
+    bool changed = (m_txSpatialStreams != streams);
+    m_txSpatialStreams = streams;
+    if (changed)
+    {
+        auto phyEntity = m_phyEntities.find(WIFI_MOD_CLASS_HT);
+        if (phyEntity != m_phyEntities.end())
+        {
+            Ptr<HtPhy> htPhy = DynamicCast<HtPhy>(phyEntity->second);
+            if (htPhy)
             {
-             case WIFI_PREAMBLE_HT_MF:
-               // HT-SIG
-               return MicroSeconds(8);
-             case WIFI_PREAMBLE_HT_GF:
-               //HT-SIG
-               return MicroSeconds(8);
-             default:
-               // no HT-SIG for non HT
-               return MicroSeconds(0);
+                htPhy->SetMaxSupportedNss(
+                    m_txSpatialStreams); // this is essential to have the right MCSs configured
             }
-}
 
-WifiMode
-WifiPhy::GetPlcpHeaderMode (WifiMode payloadMode, WifiPreamble preamble)
-{
-  switch (payloadMode.GetModulationClass ())
-    {
-    case WIFI_MOD_CLASS_OFDM:
-      {
-        switch (payloadMode.GetBandwidth ())
-          {
-          case 5000000:
-            return WifiPhy::GetOfdmRate1_5MbpsBW5MHz ();
-          case 10000000:
-            return WifiPhy::GetOfdmRate3MbpsBW10MHz ();
-          default:
-            // (Section 18.3.2 "PLCP frame format"; IEEE Std 802.11-2012)
-            // actually this is only the first part of the PlcpHeader,
-            // because the last 16 bits of the PlcpHeader are using the
-            // same mode of the payload
-            return WifiPhy::GetOfdmRate6Mbps ();
-          }
-      }
-    //Added by Ghada to support 11n
-    case WIFI_MOD_CLASS_HT:
-      {  //return the HT-SIG
-         // IEEE Std 802.11n, 20.3.23
-         switch (preamble)
-           {
-            case WIFI_PREAMBLE_HT_MF:
-                switch (payloadMode.GetBandwidth ())
-                  {
-                   case 20000000:
-                      return WifiPhy::GetOfdmRate13MbpsBW20MHz ();
-                   case 40000000:
-                      return WifiPhy::GetOfdmRate27MbpsBW40MHz ();
-                   default:
-                      return WifiPhy::GetOfdmRate13MbpsBW20MHz ();
-                  }
-            case WIFI_PREAMBLE_HT_GF:
-                  switch (payloadMode.GetBandwidth ())
-                  {
-                   case 20000000:
-                      return WifiPhy::GetOfdmRate13MbpsBW20MHz ();
-                   case 40000000:
-                      return WifiPhy::GetOfdmRate27MbpsBW40MHz ();
-                   default:
-                      return WifiPhy::GetOfdmRate13MbpsBW20MHz ();
-                  }
-             default:
-                return WifiPhy::GetOfdmRate6Mbps ();
-          }
-      }
-    case WIFI_MOD_CLASS_ERP_OFDM:
-      return WifiPhy::GetErpOfdmRate6Mbps ();
-
-    case WIFI_MOD_CLASS_DSSS:
-      if (preamble == WIFI_PREAMBLE_LONG)
-        {
-          // (Section 16.2.3 "PLCP field definitions" and Section 17.2.2.2 "Long PPDU format"; IEEE Std 802.11-2012)
-          return WifiPhy::GetDsssRate1Mbps ();
-        }
-      else  //  WIFI_PREAMBLE_SHORT
-        {
-          // (Section 17.2.2.3 "Short PPDU format"; IEEE Std 802.11-2012)
-          return WifiPhy::GetDsssRate2Mbps ();
-        }
-
-    default:
-      NS_FATAL_ERROR ("unsupported modulation class");
-      return WifiMode ();
-    }
-}
-
-
-Time
-WifiPhy::GetPlcpHeaderDuration (WifiMode payloadMode, WifiPreamble preamble)
-{
-  if (preamble == WIFI_PREAMBLE_NONE)
-  {
-      return MicroSeconds(0);
-  }
-  switch (payloadMode.GetModulationClass ())
-    {
-    case WIFI_MOD_CLASS_OFDM:
-      {
-        switch (payloadMode.GetBandwidth ())
-          {
-          case 20000000:
-          default:
-            // (Section 18.3.3 "PLCP preamble (SYNC))" and Figure 18-4 "OFDM training structure"; IEEE Std 802.11-2012)
-            // also (Section 18.3.2.4 "Timing related parameters" Table 18-5 "Timing-related parameters"; IEEE Std 802.11-2012)
-            // We return the duration of the SIGNAL field only, since the
-            // SERVICE field (which strictly speaking belongs to the PLCP
-            // header, see Section 18.3.2 and Figure 18-1) is sent using the
-            // payload mode.
-            return MicroSeconds(4);
-          case 10000000:
-            // (Section 18.3.2.4 "Timing related parameters" Table 18-5 "Timing-related parameters"; IEEE Std 802.11-2012)
-            return MicroSeconds(8);
-          case 5000000:
-            // (Section 18.3.2.4 "Timing related parameters" Table 18-5 "Timing-related parameters"; IEEE Std 802.11-2012)
-            return MicroSeconds(16);
-          }
-      }
-     //Added by Ghada to support 11n
-    case WIFI_MOD_CLASS_HT:
-      { //IEEE 802.11n Figure 20.1
-         switch (preamble)
+            if (!m_capabilitiesChangedCallback.IsNull())
             {
-             case WIFI_PREAMBLE_HT_MF:
-               // L-SIG
-               return MicroSeconds(4);
-             case WIFI_PREAMBLE_HT_GF:
-               //L-SIG
-               return MicroSeconds(0);
-             default:
-               // L-SIG
-               return MicroSeconds(4);
+                m_capabilitiesChangedCallback();
             }
-      }
-    case WIFI_MOD_CLASS_ERP_OFDM:
-      return MicroSeconds(4);
-
-    case WIFI_MOD_CLASS_DSSS:
-      if (preamble == WIFI_PREAMBLE_SHORT)
-        {
-          // (Section 17.2.2.3 "Short PPDU format" and Figure 17-2 "Short PPDU format"; IEEE Std 802.11-2012)
-          return MicroSeconds(24);
         }
-      else // WIFI_PREAMBLE_LONG
-        {
-          // (Section 17.2.2.2 "Long PPDU format" and Figure 17-1 "Short PPDU format"; IEEE Std 802.11-2012)
-          return MicroSeconds(48);
-        }
+    }
+}
 
+uint8_t
+WifiPhy::GetMaxSupportedTxSpatialStreams() const
+{
+    return m_txSpatialStreams;
+}
+
+void
+WifiPhy::SetMaxSupportedRxSpatialStreams(uint8_t streams)
+{
+    NS_ASSERT(streams <= GetNumberOfAntennas());
+    bool changed = (m_rxSpatialStreams != streams);
+    m_rxSpatialStreams = streams;
+    if (changed && !m_capabilitiesChangedCallback.IsNull())
+    {
+        m_capabilitiesChangedCallback();
+    }
+}
+
+uint8_t
+WifiPhy::GetMaxSupportedRxSpatialStreams() const
+{
+    return m_rxSpatialStreams;
+}
+
+std::list<uint8_t>
+WifiPhy::GetBssMembershipSelectorList() const
+{
+    std::list<uint8_t> list;
+    for (const auto& phyEntity : m_phyEntities)
+    {
+        Ptr<HtPhy> htPhy = DynamicCast<HtPhy>(phyEntity.second);
+        if (htPhy)
+        {
+            list.emplace_back(htPhy->GetBssMembershipSelector());
+        }
+    }
+    return list;
+}
+
+void
+WifiPhy::SetSleepMode()
+{
+    NS_LOG_FUNCTION(this);
+    m_powerRestricted = false;
+    m_channelAccessRequested = false;
+    switch (m_state->GetState())
+    {
+    case WifiPhyState::TX:
+        NS_LOG_DEBUG("setting sleep mode postponed until end of current transmission");
+        Simulator::Schedule(GetDelayUntilIdle(), &WifiPhy::SetSleepMode, this);
+        break;
+    case WifiPhyState::RX:
+        NS_LOG_DEBUG("setting sleep mode postponed until end of current reception");
+        Simulator::Schedule(GetDelayUntilIdle(), &WifiPhy::SetSleepMode, this);
+        break;
+    case WifiPhyState::SWITCHING:
+        NS_LOG_DEBUG("setting sleep mode postponed until end of channel switching");
+        Simulator::Schedule(GetDelayUntilIdle(), &WifiPhy::SetSleepMode, this);
+        break;
+    case WifiPhyState::CCA_BUSY:
+    case WifiPhyState::IDLE:
+        NS_LOG_DEBUG("setting sleep mode");
+        // The PHY object may be in CCA_BUSY state because it is receiving a preamble. Cancel
+        // preamble events before switching to sleep state
+        Reset();
+        // It may happen that we request to switch to sleep at the same time the reception of
+        // a PPDU ends. In such a case, WifiPhyStateHelper::GetState() does not return RX
+        // (m_endRx equals now), we get here and set the state to SLEEP. However,
+        // WifiPhyStateHelper::DoSwitchFromRx() may be called after this function (at the same
+        // simulation time), thus hitting the assert that checks that the state is IDLE or
+        // CCA_BUSY.
+        Simulator::ScheduleNow(&WifiPhyStateHelper::SwitchToSleep, m_state);
+        break;
+    case WifiPhyState::SLEEP:
+        NS_LOG_DEBUG("already in sleep mode");
+        break;
     default:
-      NS_FATAL_ERROR ("unsupported modulation class");
-      return MicroSeconds(0);
+        NS_ASSERT(false);
+        break;
+    }
+}
+
+void
+WifiPhy::SetOffMode()
+{
+    NS_LOG_FUNCTION(this);
+    m_powerRestricted = false;
+    m_channelAccessRequested = false;
+    Reset();
+    m_state->SwitchToOff();
+}
+
+void
+WifiPhy::ResumeFromSleep()
+{
+    NS_LOG_FUNCTION(this);
+    switch (m_state->GetState())
+    {
+    case WifiPhyState::TX:
+    case WifiPhyState::RX:
+    case WifiPhyState::IDLE:
+    case WifiPhyState::CCA_BUSY:
+    case WifiPhyState::SWITCHING: {
+        NS_LOG_DEBUG("not in sleep mode, there is nothing to resume");
+        break;
+    }
+    case WifiPhyState::SLEEP: {
+        NS_LOG_DEBUG("resuming from sleep mode");
+        m_state->SwitchFromSleep();
+        SwitchMaybeToCcaBusy();
+        break;
+    }
+    default: {
+        NS_ASSERT(false);
+        break;
+    }
+    }
+}
+
+void
+WifiPhy::ResumeFromOff()
+{
+    NS_LOG_FUNCTION(this);
+    switch (m_state->GetState())
+    {
+    case WifiPhyState::TX:
+    case WifiPhyState::RX:
+    case WifiPhyState::IDLE:
+    case WifiPhyState::CCA_BUSY:
+    case WifiPhyState::SWITCHING:
+    case WifiPhyState::SLEEP: {
+        NS_LOG_DEBUG("not in off mode, there is nothing to resume");
+        break;
+    }
+    case WifiPhyState::OFF: {
+        NS_LOG_DEBUG("resuming from off mode");
+        m_state->SwitchFromOff();
+        SwitchMaybeToCcaBusy();
+        break;
+    }
+    default: {
+        NS_ASSERT(false);
+        break;
+    }
     }
 }
 
 Time
-WifiPhy::GetPlcpPreambleDuration (WifiMode payloadMode, WifiPreamble preamble)
+WifiPhy::GetPreambleDetectionDuration()
 {
-  if (preamble == WIFI_PREAMBLE_NONE)
-  {
-      return MicroSeconds(0);
-  }
-  switch (payloadMode.GetModulationClass ())
-    {
-    case WIFI_MOD_CLASS_OFDM:
-      {
-        switch (payloadMode.GetBandwidth ())
-          {
-          case 20000000:
-          default:
-            // (Section 18.3.3 "PLCP preamble (SYNC))" Figure 18-4 "OFDM training structure"
-            // also Section 18.3.2.3 "Modulation-dependent parameters" Table 18-4 "Modulation-dependent parameters"; IEEE Std 802.11-2012)
-            return MicroSeconds(16);
-          case 10000000:
-            // (Section 18.3.3 "PLCP preamble (SYNC))" Figure 18-4 "OFDM training structure"
-            // also Section 18.3.2.3 "Modulation-dependent parameters" Table 18-4 "Modulation-dependent parameters"; IEEE Std 802.11-2012)
-            return MicroSeconds(32);
-          case 5000000:
-            // (Section 18.3.3 "PLCP preamble (SYNC))" Figure 18-4 "OFDM training structure"
-            // also Section 18.3.2.3 "Modulation-dependent parameters" Table 18-4 "Modulation-dependent parameters"; IEEE Std 802.11-2012)
-            return MicroSeconds(64);
-          }
-      }
-    case WIFI_MOD_CLASS_HT:
-      {
-        //IEEE 802.11n Figure 20.1 the training symbols before L_SIG or HT_SIG
-        return MicroSeconds(16);
-      }
-    case WIFI_MOD_CLASS_ERP_OFDM:
-      return MicroSeconds(16);
-
-    case WIFI_MOD_CLASS_DSSS:
-      if (preamble == WIFI_PREAMBLE_SHORT)
-        {
-          // (Section 17.2.2.3 "Short PPDU format)" Figure 17-2 "Short PPDU format"; IEEE Std 802.11-2012)
-          return MicroSeconds(72);
-        }
-      else // WIFI_PREAMBLE_LONG
-        {
-          // (Section 17.2.2.2 "Long PPDU format)" Figure 17-1 "Long PPDU format"; IEEE Std 802.11-2012)
-          return MicroSeconds(144);
-        }
-    default:
-      NS_FATAL_ERROR ("unsupported modulation class");
-      return MicroSeconds(0);
-    }
+    return MicroSeconds(4);
 }
 
 Time
-WifiPhy::GetPayloadDuration (uint32_t size, WifiTxVector txvector, WifiPreamble preamble, double frequency, uint8_t packetType, uint8_t incFlag)
+WifiPhy::GetStartOfPacketDuration(const WifiTxVector& txVector)
 {
-  WifiMode payloadMode=txvector.GetMode();
-
-  NS_LOG_FUNCTION (size << payloadMode);
- 
-  switch (payloadMode.GetModulationClass ())
-    {
-    case WIFI_MOD_CLASS_OFDM:
-    case WIFI_MOD_CLASS_ERP_OFDM:
-      {
-        // (Section 18.3.2.4 "Timing related parameters" Table 18-5 "Timing-related parameters"; IEEE Std 802.11-2012
-        // corresponds to T_{SYM} in the table)
-        Time symbolDuration;
-
-        switch (payloadMode.GetBandwidth ())
-          {
-          case 20000000:
-          default:
-            symbolDuration = MicroSeconds(4);
-            break;
-          case 10000000:
-            symbolDuration = MicroSeconds(8);
-            break;
-          case 5000000:
-            symbolDuration = MicroSeconds(16);
-            break;
-          }
-
-        // (Section 18.3.2.3 "Modulation-dependent parameters" Table 18-4 "Modulation-dependent parameters"; IEEE Std 802.11-2012)
-        // corresponds to N_{DBPS} in the table
-        double numDataBitsPerSymbol = payloadMode.GetDataRate () * symbolDuration.GetNanoSeconds() / 1e9;
-
-        // (Section 18.3.5.4 "Pad bits (PAD)" Equation 18-11; IEEE Std 802.11-2012)
-        uint32_t numSymbols;
-
-        if (packetType == 1 && preamble != WIFI_PREAMBLE_NONE)
-          {
-            //First packet in an A-MPDU
-            numSymbols= ceil((16 + size * 8.0 + 6) / (numDataBitsPerSymbol));
-            if (incFlag == 1)
-              {
-                m_totalAmpduSize += size;
-                m_totalAmpduNumSymbols += numSymbols;
-              } 
-          }
-        else if (packetType == 1 && preamble == WIFI_PREAMBLE_NONE)
-          {
-            //consecutive packets in an A-MPDU
-            numSymbols= ((size * 8.0) / (numDataBitsPerSymbol));
-            if (incFlag == 1)
-              {
-                m_totalAmpduSize += size;
-                m_totalAmpduNumSymbols += numSymbols;
-              }
-          }
-        else if (packetType == 2 && preamble == WIFI_PREAMBLE_NONE)
-          {
-           //last packet in an A-MPDU
-           uint32_t totalAmpduSize = m_totalAmpduSize + size;
-           numSymbols = lrint (ceil((16 + totalAmpduSize * 8.0 + 6) / (numDataBitsPerSymbol)));
-           numSymbols -= m_totalAmpduNumSymbols;
-           if (incFlag == 1)
-             {
-               m_totalAmpduSize = 0;
-               m_totalAmpduNumSymbols = 0;
-             }
-          }
-        else if (packetType == 0 && preamble != WIFI_PREAMBLE_NONE)
-          {
-            //Not an A-MPDU
-            numSymbols = lrint (ceil ((16 + size * 8.0 + 6.0) / (numDataBitsPerSymbol)));
-          }
-        else
-            NS_FATAL_ERROR ("Wrong combination of preamble and packet type"); 
-
-        // Add signal extension for ERP PHY
-        if (payloadMode.GetModulationClass () == WIFI_MOD_CLASS_ERP_OFDM)
-          {
-            return Time (numSymbols * symbolDuration) + MicroSeconds(6);
-          }
-        else
-          {
-            return Time (numSymbols * symbolDuration);
-          }
-      }
-    case WIFI_MOD_CLASS_HT:
-      {
-         Time symbolDuration;
-         double m_Stbc;
-        //if short GI data rate is used then symbol duration is 3.6us else symbol duration is 4us
-        //In the future has to create a stationmanager that only uses these data rates if sender and reciever support GI
-         if (payloadMode.GetUniqueName() == "OfdmRate135MbpsBW40MHzShGi" || payloadMode.GetUniqueName() == "OfdmRate65MbpsBW20MHzShGi" )
-           {
-             symbolDuration = NanoSeconds(3600);
-           }
-         else
-           {
-             switch (payloadMode.GetDataRate ()/ (txvector.GetNss()))
-               { //shortGi
-                  case 7200000:
-                  case 14400000:
-                  case 21700000:
-                  case 28900000:
-                  case 43300000:
-                  case 57800000:
-                  case 72200000:
-                  case 15000000:
-                  case 30000000:
-                  case 45000000:
-                  case 60000000:
-                  case 90000000:
-                  case 120000000:
-                  case 150000000:
-                    symbolDuration = NanoSeconds(3600);
-                    break;               
-                 default:
-                    symbolDuration = MicroSeconds(4);
-              }
-           }
-         if  (txvector.IsStbc())
-            m_Stbc=2;
-         else
-           m_Stbc=1;
-         double numDataBitsPerSymbol = payloadMode.GetDataRate () * txvector.GetNss() * symbolDuration.GetNanoSeconds() / 1e9;
-         //check tables 20-35 and 20-36 in the standard to get cases when nes =2
-         double Nes=1;
-        // IEEE Std 802.11n, section 20.3.11, equation (20-32)
-        uint32_t numSymbols;
-        if (packetType == 1 && preamble != WIFI_PREAMBLE_NONE)
-          {
-           //First packet in an A-MPDU
-           numSymbols = ceil(m_Stbc*(16 + size * 8.0 + 6*Nes) / (m_Stbc* numDataBitsPerSymbol));
-           if (incFlag == 1)
-             {
-               m_totalAmpduSize += size;
-               m_totalAmpduNumSymbols += numSymbols;
-             }
-          }
-        else if (packetType == 1 && preamble == WIFI_PREAMBLE_NONE)
-          {
-            //consecutive packets in an A-MPDU
-            numSymbols = m_Stbc* ((size * 8.0 ) / (m_Stbc* numDataBitsPerSymbol));
-            if (incFlag == 1)
-              {
-                m_totalAmpduSize += size;
-                m_totalAmpduNumSymbols += numSymbols;
-              }
-          }
-        else if (packetType == 2 && preamble == WIFI_PREAMBLE_NONE)
-          {
-            //last packet in an A-MPDU
-            uint32_t totalAmpduSize = m_totalAmpduSize+size;
-            numSymbols = lrint (m_Stbc* ceil((16 + totalAmpduSize * 8.0 + 6*Nes) / (m_Stbc* numDataBitsPerSymbol)));
-            NS_ASSERT (m_totalAmpduNumSymbols <= numSymbols);
-            numSymbols -= m_totalAmpduNumSymbols;
-            if (incFlag == 1)
-              {
-                m_totalAmpduSize = 0;
-                m_totalAmpduNumSymbols = 0;
-              }
-          }
-        else if (packetType == 0 && preamble != WIFI_PREAMBLE_NONE)
-           //Not an A-MPDU
-          {
-           numSymbols = lrint (m_Stbc*ceil ((16 + size * 8.0 + 6.0*Nes) / (m_Stbc* numDataBitsPerSymbol)));
-          }
-        else
-           NS_FATAL_ERROR ("Wrong combination of preamble and packet type");
-       
-        if (frequency >= 2400 && frequency <= 2500 && ((packetType == 0 && preamble != WIFI_PREAMBLE_NONE) || (packetType == 2 && preamble == WIFI_PREAMBLE_NONE))) //at 2.4 GHz
-          {
-            return Time (numSymbols * symbolDuration) + MicroSeconds(6);
-          }
-        else  //at 5 GHz
-          {
-            return Time (numSymbols * symbolDuration);
-          }
-         
-      }
-    case WIFI_MOD_CLASS_DSSS:
-      // (Section 17.2.3.6 "Long PLCP LENGTH field"; IEEE Std 802.11-2012)
-      NS_LOG_LOGIC (" size=" << size
-                             << " mode=" << payloadMode
-                             << " rate=" << payloadMode.GetDataRate () );
-      return MicroSeconds (lrint (ceil ((size * 8.0) / (payloadMode.GetDataRate () / 1.0e6))));
-
-    default:
-      NS_FATAL_ERROR ("unsupported modulation class");
-      return MicroSeconds (0);
-    }
+    return MicroSeconds(4);
 }
 
 Time
-WifiPhy::CalculateTxDuration (uint32_t size, WifiTxVector txvector, WifiPreamble preamble, double frequency, uint8_t packetType, uint8_t incFlag)
+WifiPhy::GetPayloadDuration(uint32_t size,
+                            const WifiTxVector& txVector,
+                            WifiPhyBand band,
+                            MpduType mpdutype,
+                            uint16_t staId)
 {
-  WifiMode payloadMode=txvector.GetMode();
-  Time duration = GetPlcpPreambleDuration (payloadMode, preamble)
-    + GetPlcpHeaderDuration (payloadMode, preamble)
-    + GetPlcpHtSigHeaderDuration (payloadMode, preamble)
-    + GetPlcpHtTrainingSymbolDuration (preamble, txvector)
-    + GetPayloadDuration (size, txvector, preamble, frequency, packetType, incFlag);
-  return duration;
+    uint32_t totalAmpduSize;
+    double totalAmpduNumSymbols;
+    return GetPayloadDuration(size,
+                              txVector,
+                              band,
+                              mpdutype,
+                              false,
+                              totalAmpduSize,
+                              totalAmpduNumSymbols,
+                              staId);
+}
+
+Time
+WifiPhy::GetPayloadDuration(uint32_t size,
+                            const WifiTxVector& txVector,
+                            WifiPhyBand band,
+                            MpduType mpdutype,
+                            bool incFlag,
+                            uint32_t& totalAmpduSize,
+                            double& totalAmpduNumSymbols,
+                            uint16_t staId)
+{
+    return GetStaticPhyEntity(txVector.GetModulationClass())
+        ->GetPayloadDuration(size,
+                             txVector,
+                             band,
+                             mpdutype,
+                             incFlag,
+                             totalAmpduSize,
+                             totalAmpduNumSymbols,
+                             staId);
+}
+
+Time
+WifiPhy::CalculatePhyPreambleAndHeaderDuration(const WifiTxVector& txVector)
+{
+    return GetStaticPhyEntity(txVector.GetModulationClass())
+        ->CalculatePhyPreambleAndHeaderDuration(txVector);
+}
+
+Time
+WifiPhy::CalculateTxDuration(uint32_t size,
+                             const WifiTxVector& txVector,
+                             WifiPhyBand band,
+                             uint16_t staId)
+{
+    Time duration = CalculatePhyPreambleAndHeaderDuration(txVector) +
+                    GetPayloadDuration(size, txVector, band, NORMAL_MPDU, staId);
+    NS_ASSERT(duration.IsStrictlyPositive());
+    return duration;
+}
+
+Time
+WifiPhy::CalculateTxDuration(Ptr<const WifiPsdu> psdu,
+                             const WifiTxVector& txVector,
+                             WifiPhyBand band)
+{
+    return CalculateTxDuration(GetWifiConstPsduMap(psdu, txVector), txVector, band);
+}
+
+Time
+WifiPhy::CalculateTxDuration(WifiConstPsduMap psduMap,
+                             const WifiTxVector& txVector,
+                             WifiPhyBand band)
+{
+    return GetStaticPhyEntity(txVector.GetModulationClass())
+        ->CalculateTxDuration(psduMap, txVector, band);
+}
+
+uint32_t
+WifiPhy::GetMaxPsduSize(WifiModulationClass modulation)
+{
+    return GetStaticPhyEntity(modulation)->GetMaxPsduSize();
 }
 
 void
-WifiPhy::NotifyTxBegin (Ptr<const Packet> packet)
+WifiPhy::NotifyTxBegin(WifiConstPsduMap psdus, double txPowerW)
 {
-  m_phyTxBeginTrace (packet);
-}
-
-void
-WifiPhy::NotifyTxEnd (Ptr<const Packet> packet)
-{
-  m_phyTxEndTrace (packet);
-}
-
-void
-WifiPhy::NotifyTxDrop (Ptr<const Packet> packet)
-{
-  m_phyTxDropTrace (packet);
-}
-
-void
-WifiPhy::NotifyRxBegin (Ptr<const Packet> packet)
-{
-  m_phyRxBeginTrace (packet);
-}
-
-void
-WifiPhy::NotifyRxEnd (Ptr<const Packet> packet)
-{
-  m_phyRxEndTrace (packet);
-}
-
-void
-WifiPhy::NotifyRxDrop (Ptr<const Packet> packet)
-{
-  m_phyRxDropTrace (packet);
-}
-
-void
-WifiPhy::NotifyMonitorSniffRx (Ptr<const Packet> packet, uint16_t channelFreqMhz, uint16_t channelNumber, uint32_t rate, bool isShortPreamble, double signalDbm, double noiseDbm)
-{
-  m_phyMonitorSniffRxTrace (packet, channelFreqMhz, channelNumber, rate, isShortPreamble, signalDbm, noiseDbm);
-}
-
-void
-WifiPhy::NotifyMonitorSniffTx (Ptr<const Packet> packet, uint16_t channelFreqMhz, uint16_t channelNumber, uint32_t rate, bool isShortPreamble, uint8_t txPower)
-{
-  m_phyMonitorSniffTxTrace (packet, channelFreqMhz, channelNumber, rate, isShortPreamble, txPower);
-}
-
-
-// Clause 15 rates (DSSS)
-
-WifiMode
-WifiPhy::GetDsssRate1Mbps ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("DsssRate1Mbps",
-                                     WIFI_MOD_CLASS_DSSS,
-                                     true,
-                                     22000000, 1000000,
-                                     WIFI_CODE_RATE_UNDEFINED,
-                                     2);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetDsssRate2Mbps ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("DsssRate2Mbps",
-                                     WIFI_MOD_CLASS_DSSS,
-                                     true,
-                                     22000000, 2000000,
-                                     WIFI_CODE_RATE_UNDEFINED,
-                                     4);
-  return mode;
-}
-
-
-// Clause 18 rates (HR/DSSS)
-
-WifiMode
-WifiPhy::GetDsssRate5_5Mbps ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("DsssRate5_5Mbps",
-                                     WIFI_MOD_CLASS_DSSS,
-                                     true,
-                                     22000000, 5500000,
-                                     WIFI_CODE_RATE_UNDEFINED,
-                                     4);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetDsssRate11Mbps ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("DsssRate11Mbps",
-                                     WIFI_MOD_CLASS_DSSS,
-                                     true,
-                                     22000000, 11000000,
-                                     WIFI_CODE_RATE_UNDEFINED,
-                                     4);
-  return mode;
-}
-
-
-// Clause 19.5 rates (ERP-OFDM)
-
-WifiMode
-WifiPhy::GetErpOfdmRate6Mbps ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("ErpOfdmRate6Mbps",
-                                     WIFI_MOD_CLASS_ERP_OFDM,
-                                     true,
-                                     20000000, 6000000,
-                                     WIFI_CODE_RATE_1_2,
-                                     2);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetErpOfdmRate9Mbps ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("ErpOfdmRate9Mbps",
-                                     WIFI_MOD_CLASS_ERP_OFDM,
-                                     false,
-                                     20000000, 9000000,
-                                     WIFI_CODE_RATE_3_4,
-                                     2);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetErpOfdmRate12Mbps ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("ErpOfdmRate12Mbps",
-                                     WIFI_MOD_CLASS_ERP_OFDM,
-                                     true,
-                                     20000000, 12000000,
-                                     WIFI_CODE_RATE_1_2,
-                                     4);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetErpOfdmRate18Mbps ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("ErpOfdmRate18Mbps",
-                                     WIFI_MOD_CLASS_ERP_OFDM,
-                                     false,
-                                     20000000, 18000000,
-                                     WIFI_CODE_RATE_3_4,
-                                     4);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetErpOfdmRate24Mbps ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("ErpOfdmRate24Mbps",
-                                     WIFI_MOD_CLASS_ERP_OFDM,
-                                     true,
-                                     20000000, 24000000,
-                                     WIFI_CODE_RATE_1_2,
-                                     16);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetErpOfdmRate36Mbps ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("ErpOfdmRate36Mbps",
-                                     WIFI_MOD_CLASS_ERP_OFDM,
-                                     false,
-                                     20000000, 36000000,
-                                     WIFI_CODE_RATE_3_4,
-                                     16);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetErpOfdmRate48Mbps ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("ErpOfdmRate48Mbps",
-                                     WIFI_MOD_CLASS_ERP_OFDM,
-                                     false,
-                                     20000000, 48000000,
-                                     WIFI_CODE_RATE_2_3,
-                                     64);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetErpOfdmRate54Mbps ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("ErpOfdmRate54Mbps",
-                                     WIFI_MOD_CLASS_ERP_OFDM,
-                                     false,
-                                     20000000, 54000000,
-                                     WIFI_CODE_RATE_3_4,
-                                     64);
-  return mode;
-}
-
-
-// Clause 17 rates (OFDM)
-
-WifiMode
-WifiPhy::GetOfdmRate6Mbps ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate6Mbps",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     true,
-                                     20000000, 6000000,
-                                     WIFI_CODE_RATE_1_2,
-                                     2);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate9Mbps ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate9Mbps",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     false,
-                                     20000000, 9000000,
-                                     WIFI_CODE_RATE_3_4,
-                                     2);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate12Mbps ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate12Mbps",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     true,
-                                     20000000, 12000000,
-                                     WIFI_CODE_RATE_1_2,
-                                     4);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate18Mbps ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate18Mbps",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     false,
-                                     20000000, 18000000,
-                                     WIFI_CODE_RATE_3_4,
-                                     4);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate24Mbps ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate24Mbps",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     true,
-                                     20000000, 24000000,
-                                     WIFI_CODE_RATE_1_2,
-                                     16);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate36Mbps ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate36Mbps",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     false,
-                                     20000000, 36000000,
-                                     WIFI_CODE_RATE_3_4,
-                                     16);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate48Mbps ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate48Mbps",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     false,
-                                     20000000, 48000000,
-                                     WIFI_CODE_RATE_2_3,
-                                     64);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate54Mbps ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate54Mbps",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     false,
-                                     20000000, 54000000,
-                                     WIFI_CODE_RATE_3_4,
-                                     64);
-  return mode;
-}
-
-// 10 MHz channel rates
-
-WifiMode
-WifiPhy::GetOfdmRate3MbpsBW10MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate3MbpsBW10MHz",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     true,
-                                     10000000, 3000000,
-                                     WIFI_CODE_RATE_1_2,
-                                     2);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate4_5MbpsBW10MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate4_5MbpsBW10MHz",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     false,
-                                     10000000, 4500000,
-                                     WIFI_CODE_RATE_3_4,
-                                     2);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate6MbpsBW10MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate6MbpsBW10MHz",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     true,
-                                     10000000, 6000000,
-                                     WIFI_CODE_RATE_1_2,
-                                     4);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate9MbpsBW10MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate9MbpsBW10MHz",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     false,
-                                     10000000, 9000000,
-                                     WIFI_CODE_RATE_3_4,
-                                     4);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate12MbpsBW10MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate12MbpsBW10MHz",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     true,
-                                     10000000, 12000000,
-                                     WIFI_CODE_RATE_1_2,
-                                     16);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate18MbpsBW10MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate18MbpsBW10MHz",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     false,
-                                     10000000, 18000000,
-                                     WIFI_CODE_RATE_3_4,
-                                     16);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate24MbpsBW10MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate24MbpsBW10MHz",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     false,
-                                     10000000, 24000000,
-                                     WIFI_CODE_RATE_2_3,
-                                     64);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate27MbpsBW10MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate27MbpsBW10MHz",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     false,
-                                     10000000, 27000000,
-                                     WIFI_CODE_RATE_3_4,
-                                     64);
-  return mode;
-}
-
-// 5 MHz channel rates
-
-WifiMode
-WifiPhy::GetOfdmRate1_5MbpsBW5MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate1_5MbpsBW5MHz",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     true,
-                                     5000000, 1500000,
-                                     WIFI_CODE_RATE_1_2,
-                                     2);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate2_25MbpsBW5MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate2_25MbpsBW5MHz",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     false,
-                                     5000000, 2250000,
-                                     WIFI_CODE_RATE_3_4,
-                                     2);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate3MbpsBW5MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate3MbpsBW5MHz",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     true,
-                                     5000000, 3000000,
-                                     WIFI_CODE_RATE_1_2,
-                                     4);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate4_5MbpsBW5MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate4_5MbpsBW5MHz",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     false,
-                                     5000000, 4500000,
-                                     WIFI_CODE_RATE_3_4,
-                                     4);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate6MbpsBW5MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate6MbpsBW5MHz",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     true,
-                                     5000000, 6000000,
-                                     WIFI_CODE_RATE_1_2,
-                                     16);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate9MbpsBW5MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate9MbpsBW5MHz",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     false,
-                                     5000000, 9000000,
-                                     WIFI_CODE_RATE_3_4,
-                                     16);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate12MbpsBW5MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate12MbpsBW5MHz",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     false,
-                                     5000000, 12000000,
-                                     WIFI_CODE_RATE_2_3,
-                                     64);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate13_5MbpsBW5MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate13_5MbpsBW5MHz",
-                                     WIFI_MOD_CLASS_OFDM,
-                                     false,
-                                     5000000, 13500000,
-                                     WIFI_CODE_RATE_3_4,
-                                     64);
-  return mode;
-}
-
-// Clause 20
-
-WifiMode
-WifiPhy::GetOfdmRate6_5MbpsBW20MHz ()
-{
-  static WifiMode mode =
-  WifiModeFactory::CreateWifiMode ("OfdmRate6_5MbpsBW20MHz",
-                                    WIFI_MOD_CLASS_HT,
-                                    true,
-                                    20000000, 6500000,
-                                    WIFI_CODE_RATE_1_2,
-                                    2);
-  return mode;
-}
-WifiMode
-WifiPhy::GetOfdmRate7_2MbpsBW20MHz ()
-{
-  static WifiMode mode =
-  WifiModeFactory::CreateWifiMode ("OfdmRate7_2MbpsBW20MHz",
-                                    WIFI_MOD_CLASS_HT,
-                                    false,
-                                    20000000, 7200000,
-                                    WIFI_CODE_RATE_1_2,
-                                    2);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate13MbpsBW20MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate13MbpsBW20MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     true,
-                                     20000000, 13000000,
-                                     WIFI_CODE_RATE_1_2,
-                                     4);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate14_4MbpsBW20MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate14_4MbpsBW20MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     20000000, 14400000,
-                                     WIFI_CODE_RATE_1_2,
-                                     4);
-  return mode;
-}
-WifiMode
-WifiPhy::GetOfdmRate19_5MbpsBW20MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate19_5MbpsBW20MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     true,
-                                     20000000, 19500000,
-                                     WIFI_CODE_RATE_3_4,
-                                     4);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate21_7MbpsBW20MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate21_7MbpsBW20MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     20000000, 21700000,
-                                     WIFI_CODE_RATE_3_4,
-                                     4);
-  return mode;
-}
-
-
-WifiMode
-WifiPhy::GetOfdmRate26MbpsBW20MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate26MbpsBW20MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     true,
-                                     20000000, 26000000,
-                                     WIFI_CODE_RATE_1_2,
-                                     16);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate28_9MbpsBW20MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate28_9MbpsBW20MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     20000000, 28900000,
-                                     WIFI_CODE_RATE_1_2,
-                                     16);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate39MbpsBW20MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate39MbpsBW20MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     true,
-                                     20000000, 39000000,
-                                     WIFI_CODE_RATE_3_4,
-                                     16);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate43_3MbpsBW20MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate43_3MbpsBW20MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     20000000, 43300000,
-                                     WIFI_CODE_RATE_3_4,
-                                     16);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate52MbpsBW20MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate52MbpsBW20MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     true,
-                                     20000000, 52000000,
-                                     WIFI_CODE_RATE_2_3,
-                                     64);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate57_8MbpsBW20MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate57_8MbpsBW20MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     20000000, 57800000,
-                                     WIFI_CODE_RATE_2_3,
-                                     64);
-  return mode;
-}
-
-
-WifiMode
-WifiPhy::GetOfdmRate58_5MbpsBW20MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate58_5MbpsBW20MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     true,
-                                     20000000, 58500000,
-                                     WIFI_CODE_RATE_3_4,
-                                     64);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate65MbpsBW20MHzShGi ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate65MbpsBW20MHzShGi",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     20000000, 65000000,
-                                     WIFI_CODE_RATE_3_4,
-                                     64);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate65MbpsBW20MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate65MbpsBW20MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     true,
-                                     20000000, 65000000,
-                                     WIFI_CODE_RATE_5_6,
-                                     64);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate72_2MbpsBW20MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate72_2MbpsBW20MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     20000000, 72200000,
-                                     WIFI_CODE_RATE_5_6,
-                                     64);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate13_5MbpsBW40MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate13_5MbpsBW40MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     40000000, 13500000,
-                                     WIFI_CODE_RATE_1_2,
-                                     2);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate15MbpsBW40MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate15MbpsBW40MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     40000000, 15000000,
-                                     WIFI_CODE_RATE_1_2,
-                                     2);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate27MbpsBW40MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate27MbpsBW40MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     40000000, 27000000,
-                                     WIFI_CODE_RATE_1_2,
-                                     4);
-  return mode;
-}
-WifiMode
-WifiPhy::GetOfdmRate30MbpsBW40MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate30MbpsBW40MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     40000000, 30000000,
-                                     WIFI_CODE_RATE_1_2,
-                                     4);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate40_5MbpsBW40MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate40_5MbpsBW40MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     40000000, 40500000,
-                                     WIFI_CODE_RATE_3_4,
-                                     4);
-  return mode;
-}
-WifiMode
-WifiPhy::GetOfdmRate45MbpsBW40MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate45MbpsBW40MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     40000000, 45000000,
-                                     WIFI_CODE_RATE_3_4,
-                                     4);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate54MbpsBW40MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate54MbpsBW40MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     40000000, 54000000,
-                                     WIFI_CODE_RATE_1_2,
-                                     16);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate60MbpsBW40MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate60MbpsBW40MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     40000000, 60000000,
-                                     WIFI_CODE_RATE_1_2,
-                                     16);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate81MbpsBW40MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate81MbpsBW40MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     40000000, 81000000,
-                                     WIFI_CODE_RATE_3_4,
-                                     16);
-  return mode;
-}
-WifiMode
-WifiPhy::GetOfdmRate90MbpsBW40MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate90MbpsBW40MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     40000000, 90000000,
-                                     WIFI_CODE_RATE_3_4,
-                                     16);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate108MbpsBW40MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate108MbpsBW40MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     40000000, 108000000,
-                                     WIFI_CODE_RATE_2_3,
-                                     64);
-  return mode;
-}
-WifiMode
-WifiPhy::GetOfdmRate120MbpsBW40MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate120MbpsBW40MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     40000000, 120000000,
-                                     WIFI_CODE_RATE_2_3,
-                                     64);
-  return mode;
-}
-WifiMode
-WifiPhy::GetOfdmRate121_5MbpsBW40MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate121_5MbpsBW40MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     40000000, 121500000,
-                                     WIFI_CODE_RATE_3_4,
-                                     64);
-  return mode;
-}
-WifiMode
-WifiPhy::GetOfdmRate135MbpsBW40MHzShGi ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate135MbpsBW40MHzShGi",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     40000000, 135000000,
-                                     WIFI_CODE_RATE_3_4,
-                                     64);
-  return mode;
-}
-WifiMode
-WifiPhy::GetOfdmRate135MbpsBW40MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate135MbpsBW40MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     40000000, 135000000,
-                                     WIFI_CODE_RATE_5_6,
-                                     64);
-  return mode;
-}
-
-WifiMode
-WifiPhy::GetOfdmRate150MbpsBW40MHz ()
-{
-  static WifiMode mode =
-    WifiModeFactory::CreateWifiMode ("OfdmRate150MbpsBW40MHz",
-                                     WIFI_MOD_CLASS_HT,
-                                     false,
-                                     40000000, 150000000,
-                                     WIFI_CODE_RATE_5_6,
-                                     64);
-  return mode;
-}
-
-
-
-std::ostream& operator<< (std::ostream& os, enum WifiPhy::State state)
-{
-  switch (state)
+    if (!m_phyTxBeginTrace.IsEmpty())
     {
-    case WifiPhy::IDLE:
-      return (os << "IDLE");
-    case WifiPhy::CCA_BUSY:
-      return (os << "CCA_BUSY");
-    case WifiPhy::TX:
-      return (os << "TX");
-    case WifiPhy::RX:
-      return (os << "RX");
-    case WifiPhy::SWITCHING:
-      return (os << "SWITCHING");
-    case WifiPhy::SLEEP:
-      return (os << "SLEEP");
-    default:
-      NS_FATAL_ERROR ("Invalid WifiPhy state");
-      return (os << "INVALID");
+        for (const auto& psdu : psdus)
+        {
+            for (auto& mpdu : *PeekPointer(psdu.second))
+            {
+                m_phyTxBeginTrace(mpdu->GetProtocolDataUnit(), txPowerW);
+            }
+        }
     }
 }
 
+void
+WifiPhy::NotifyTxEnd(WifiConstPsduMap psdus)
+{
+    if (!m_phyTxEndTrace.IsEmpty())
+    {
+        for (const auto& psdu : psdus)
+        {
+            for (auto& mpdu : *PeekPointer(psdu.second))
+            {
+                m_phyTxEndTrace(mpdu->GetProtocolDataUnit());
+            }
+        }
+    }
+}
 
+void
+WifiPhy::NotifyTxDrop(Ptr<const WifiPsdu> psdu)
+{
+    if (!m_phyTxDropTrace.IsEmpty())
+    {
+        for (auto& mpdu : *PeekPointer(psdu))
+        {
+            m_phyTxDropTrace(mpdu->GetProtocolDataUnit());
+        }
+    }
+}
+
+void
+WifiPhy::NotifyRxBegin(Ptr<const WifiPsdu> psdu, const RxPowerWattPerChannelBand& rxPowersW)
+{
+    if (psdu && !m_phyRxBeginTrace.IsEmpty())
+    {
+        for (auto& mpdu : *PeekPointer(psdu))
+        {
+            m_phyRxBeginTrace(mpdu->GetProtocolDataUnit(), rxPowersW);
+        }
+    }
+}
+
+void
+WifiPhy::NotifyRxEnd(Ptr<const WifiPsdu> psdu)
+{
+    if (psdu && !m_phyRxEndTrace.IsEmpty())
+    {
+        for (auto& mpdu : *PeekPointer(psdu))
+        {
+            m_phyRxEndTrace(mpdu->GetProtocolDataUnit());
+        }
+    }
+}
+
+void
+WifiPhy::NotifyRxDrop(Ptr<const WifiPsdu> psdu, WifiPhyRxfailureReason reason)
+{
+    if (psdu && !m_phyRxDropTrace.IsEmpty())
+    {
+        for (auto& mpdu : *PeekPointer(psdu))
+        {
+            m_phyRxDropTrace(mpdu->GetProtocolDataUnit(), reason);
+        }
+    }
+}
+
+void
+WifiPhy::NotifyRxPpduDrop(Ptr<const WifiPpdu> ppdu, WifiPhyRxfailureReason reason)
+{
+    NotifyRxDrop(GetAddressedPsduInPpdu(ppdu), reason);
+    m_phyRxPpduDropTrace(ppdu, reason);
+}
+
+void
+WifiPhy::NotifyMonitorSniffRx(Ptr<const WifiPsdu> psdu,
+                              uint16_t channelFreqMhz,
+                              WifiTxVector txVector,
+                              SignalNoiseDbm signalNoise,
+                              std::vector<bool> statusPerMpdu,
+                              uint16_t staId)
+{
+    MpduInfo aMpdu;
+    if (psdu->IsAggregate())
+    {
+        // Expand A-MPDU
+        NS_ASSERT_MSG(txVector.IsAggregation(),
+                      "TxVector with aggregate flag expected here according to PSDU");
+        aMpdu.mpduRefNumber = ++m_rxMpduReferenceNumber;
+        size_t nMpdus = psdu->GetNMpdus();
+        NS_ASSERT_MSG(statusPerMpdu.size() == nMpdus, "Should have one reception status per MPDU");
+        if (!m_phyMonitorSniffRxTrace.IsEmpty())
+        {
+            aMpdu.type = (psdu->IsSingle()) ? SINGLE_MPDU : FIRST_MPDU_IN_AGGREGATE;
+            for (size_t i = 0; i < nMpdus;)
+            {
+                if (statusPerMpdu.at(i)) // packet received without error, hand over to sniffer
+                {
+                    m_phyMonitorSniffRxTrace(psdu->GetAmpduSubframe(i),
+                                             channelFreqMhz,
+                                             txVector,
+                                             aMpdu,
+                                             signalNoise,
+                                             staId);
+                }
+                ++i;
+                aMpdu.type =
+                    (i == (nMpdus - 1)) ? LAST_MPDU_IN_AGGREGATE : MIDDLE_MPDU_IN_AGGREGATE;
+            }
+        }
+    }
+    else
+    {
+        NS_ASSERT_MSG(statusPerMpdu.size() == 1,
+                      "Should have one reception status for normal MPDU");
+        if (!m_phyMonitorSniffRxTrace.IsEmpty())
+        {
+            aMpdu.type = NORMAL_MPDU;
+            m_phyMonitorSniffRxTrace(psdu->GetPacket(),
+                                     channelFreqMhz,
+                                     txVector,
+                                     aMpdu,
+                                     signalNoise,
+                                     staId);
+        }
+    }
+}
+
+void
+WifiPhy::NotifyMonitorSniffTx(Ptr<const WifiPsdu> psdu,
+                              uint16_t channelFreqMhz,
+                              WifiTxVector txVector,
+                              uint16_t staId)
+{
+    MpduInfo aMpdu;
+    if (psdu->IsAggregate())
+    {
+        // Expand A-MPDU
+        NS_ASSERT_MSG(txVector.IsAggregation(),
+                      "TxVector with aggregate flag expected here according to PSDU");
+        aMpdu.mpduRefNumber = ++m_rxMpduReferenceNumber;
+        if (!m_phyMonitorSniffTxTrace.IsEmpty())
+        {
+            size_t nMpdus = psdu->GetNMpdus();
+            aMpdu.type = (psdu->IsSingle()) ? SINGLE_MPDU : FIRST_MPDU_IN_AGGREGATE;
+            for (size_t i = 0; i < nMpdus;)
+            {
+                m_phyMonitorSniffTxTrace(psdu->GetAmpduSubframe(i),
+                                         channelFreqMhz,
+                                         txVector,
+                                         aMpdu,
+                                         staId);
+                ++i;
+                aMpdu.type =
+                    (i == (nMpdus - 1)) ? LAST_MPDU_IN_AGGREGATE : MIDDLE_MPDU_IN_AGGREGATE;
+            }
+        }
+    }
+    else
+    {
+        if (!m_phyMonitorSniffTxTrace.IsEmpty())
+        {
+            aMpdu.type = NORMAL_MPDU;
+            m_phyMonitorSniffTxTrace(psdu->GetPacket(), channelFreqMhz, txVector, aMpdu, staId);
+        }
+    }
+}
+
+WifiConstPsduMap
+WifiPhy::GetWifiConstPsduMap(Ptr<const WifiPsdu> psdu, const WifiTxVector& txVector)
+{
+    return GetStaticPhyEntity(txVector.GetModulationClass())->GetWifiConstPsduMap(psdu, txVector);
+}
+
+void
+WifiPhy::Send(Ptr<const WifiPsdu> psdu, const WifiTxVector& txVector)
+{
+    NS_LOG_FUNCTION(this << *psdu << txVector);
+    Send(GetWifiConstPsduMap(psdu, txVector), txVector);
+}
+
+void
+WifiPhy::Send(WifiConstPsduMap psdus, const WifiTxVector& txVector)
+{
+    NS_LOG_FUNCTION(this << psdus << txVector);
+    /* Transmission can happen if:
+     *  - we are syncing on a packet. It is the responsibility of the
+     *    MAC layer to avoid doing this but the PHY does nothing to
+     *    prevent it.
+     *  - we are idle
+     */
+    NS_ASSERT(!m_state->IsStateTx() && !m_state->IsStateSwitching());
+    NS_ASSERT(m_endTxEvent.IsExpired());
+
+    if (!txVector.IsValid(m_band))
+    {
+        NS_FATAL_ERROR("TX-VECTOR is invalid!");
+    }
+
+    uint8_t nss = 0;
+    if (txVector.IsMu())
+    {
+        // We do not support mixed OFDMA and MU-MIMO
+        if (txVector.IsDlMuMimo())
+        {
+            nss = txVector.GetNssTotal();
+        }
+        else
+        {
+            nss = txVector.GetNssMax();
+        }
+    }
+    else
+    {
+        nss = txVector.GetNss();
+    }
+
+    if (nss > GetMaxSupportedTxSpatialStreams())
+    {
+        NS_FATAL_ERROR("Unsupported number of spatial streams!");
+    }
+
+    if (m_state->IsStateSleep())
+    {
+        NS_LOG_DEBUG("Dropping packet because in sleep mode");
+        for (const auto& psdu : psdus)
+        {
+            NotifyTxDrop(psdu.second);
+        }
+        return;
+    }
+
+    Time txDuration = CalculateTxDuration(psdus, txVector, GetPhyBand());
+
+    bool noEndPreambleDetectionEvent = true;
+    for (const auto& [mc, entity] : m_phyEntities)
+    {
+        noEndPreambleDetectionEvent =
+            noEndPreambleDetectionEvent && entity->NoEndPreambleDetectionEvents();
+    }
+    if (!noEndPreambleDetectionEvent && !m_currentEvent)
+    {
+        // PHY is in the initial few microseconds during which the
+        // start of RX has occurred but the preamble detection period
+        // has not elapsed
+        AbortCurrentReception(SIGNAL_DETECTION_ABORTED_BY_TX);
+    }
+    else if (!noEndPreambleDetectionEvent || m_currentEvent)
+    {
+        AbortCurrentReception(RECEPTION_ABORTED_BY_TX);
+    }
+
+    if (m_powerRestricted)
+    {
+        NS_LOG_DEBUG("Transmitting with power restriction for " << txDuration.As(Time::NS));
+    }
+    else
+    {
+        NS_LOG_DEBUG("Transmitting without power restriction for " << txDuration.As(Time::NS));
+    }
+
+    if (m_state->GetState() == WifiPhyState::OFF)
+    {
+        NS_LOG_DEBUG("Transmission canceled because device is OFF");
+        return;
+    }
+
+    Ptr<WifiPpdu> ppdu =
+        GetPhyEntity(txVector.GetModulationClass())->BuildPpdu(psdus, txVector, txDuration);
+    m_previouslyRxPpduUid = UINT64_MAX; // reset (after creation of PPDU) to use it only once
+
+    double txPowerW = DbmToW(GetTxPowerForTransmission(ppdu) + GetTxGain());
+    NotifyTxBegin(psdus, txPowerW);
+    if (!m_phyTxPsduBeginTrace.IsEmpty())
+    {
+        m_phyTxPsduBeginTrace(psdus, txVector, txPowerW);
+    }
+    for (const auto& psdu : psdus)
+    {
+        NotifyMonitorSniffTx(psdu.second, GetFrequency(), txVector, psdu.first);
+    }
+    m_state->SwitchToTx(txDuration, psdus, GetPowerDbm(txVector.GetTxPowerLevel()), txVector);
+
+    if (m_wifiRadioEnergyModel &&
+        m_wifiRadioEnergyModel->GetMaximumTimeInState(WifiPhyState::TX) < txDuration)
+    {
+        ppdu->SetTruncatedTx();
+    }
+
+    m_endTxEvent =
+        Simulator::Schedule(txDuration, &WifiPhy::TxDone, this, psdus); // TODO: fix for MU
+
+    StartTx(ppdu);
+    ppdu->ResetTxVector();
+
+    m_channelAccessRequested = false;
+    m_powerRestricted = false;
+}
+
+void
+WifiPhy::TxDone(const WifiConstPsduMap& psdus)
+{
+    NS_LOG_FUNCTION(this << psdus);
+    NotifyTxEnd(psdus);
+    Reset();
+    // we might have received signals during TX
+    SwitchMaybeToCcaBusy();
+}
+
+uint64_t
+WifiPhy::GetPreviouslyRxPpduUid() const
+{
+    return m_previouslyRxPpduUid;
+}
+
+void
+WifiPhy::SetPreviouslyRxPpduUid(uint64_t uid)
+{
+    NS_ASSERT(m_standard >= WIFI_STANDARD_80211be);
+    m_previouslyRxPpduUid = uid;
+}
+
+void
+WifiPhy::Reset()
+{
+    NS_LOG_FUNCTION(this);
+    m_currentPreambleEvents.clear();
+    bool noEndPreambleDetectionEvent = true;
+    for (const auto& [mc, entity] : m_phyEntities)
+    {
+        noEndPreambleDetectionEvent =
+            noEndPreambleDetectionEvent && entity->NoEndPreambleDetectionEvents();
+    }
+    if (m_interference && (m_currentEvent || !noEndPreambleDetectionEvent))
+    {
+        m_interference->NotifyRxEnd(Simulator::Now(), GetCurrentFrequencyRange());
+    }
+    m_currentEvent = nullptr;
+    for (auto& phyEntity : m_phyEntities)
+    {
+        phyEntity.second->CancelAllEvents();
+    }
+    m_endPhyRxEvent.Cancel();
+    m_endTxEvent.Cancel();
+}
+
+void
+WifiPhy::StartReceivePreamble(Ptr<const WifiPpdu> ppdu,
+                              RxPowerWattPerChannelBand& rxPowersW,
+                              Time rxDuration)
+{
+    NS_LOG_FUNCTION(this << ppdu << rxDuration);
+    WifiModulationClass modulation = ppdu->GetModulation();
+    NS_ASSERT(m_maxModClassSupported != WIFI_MOD_CLASS_UNKNOWN);
+    if (auto it = m_phyEntities.find(modulation);
+        it != m_phyEntities.end() && modulation <= m_maxModClassSupported)
+    {
+        it->second->StartReceivePreamble(ppdu, rxPowersW, rxDuration);
+    }
+    else
+    {
+        // TODO find a fallback PHY for receiving the PPDU (e.g. 11a for 11ax due to preamble
+        // structure)
+        NS_LOG_DEBUG("Unsupported modulation received (" << modulation << "), consider as noise");
+        m_interference->Add(ppdu, rxDuration, rxPowersW, GetCurrentFrequencyRange());
+        SwitchMaybeToCcaBusy();
+    }
+}
+
+bool
+WifiPhy::IsReceivingPhyHeader() const
+{
+    return m_endPhyRxEvent.IsPending();
+}
+
+void
+WifiPhy::EndReceiveInterBss()
+{
+    NS_LOG_FUNCTION(this);
+    if (!m_channelAccessRequested)
+    {
+        m_powerRestricted = false;
+    }
+}
+
+void
+WifiPhy::NotifyChannelAccessRequested()
+{
+    NS_LOG_FUNCTION(this);
+    m_channelAccessRequested = true;
+}
+
+bool
+WifiPhy::IsModeSupported(WifiMode mode) const
+{
+    for (const auto& phyEntity : m_phyEntities)
+    {
+        if (phyEntity.second->IsModeSupported(mode))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+WifiMode
+WifiPhy::GetDefaultMode() const
+{
+    // Start from oldest standards and move up (guaranteed by fact that WifModulationClass is
+    // ordered)
+    for (const auto& phyEntity : m_phyEntities)
+    {
+        for (const auto& mode : *(phyEntity.second))
+        {
+            return mode;
+        }
+    }
+    NS_ASSERT_MSG(false, "Should have found at least one default mode");
+    return WifiMode();
+}
+
+bool
+WifiPhy::IsMcsSupported(WifiModulationClass modulation, uint8_t mcs) const
+{
+    const auto phyEntity = m_phyEntities.find(modulation);
+    if (phyEntity == m_phyEntities.end())
+    {
+        return false;
+    }
+    return phyEntity->second->IsMcsSupported(mcs);
+}
+
+std::list<WifiMode>
+WifiPhy::GetModeList() const
+{
+    std::list<WifiMode> list;
+    for (const auto& phyEntity : m_phyEntities)
+    {
+        if (!phyEntity.second->HandlesMcsModes()) // to exclude MCSs from search
+        {
+            for (const auto& mode : *(phyEntity.second))
+            {
+                list.emplace_back(mode);
+            }
+        }
+    }
+    return list;
+}
+
+std::list<WifiMode>
+WifiPhy::GetModeList(WifiModulationClass modulation) const
+{
+    std::list<WifiMode> list;
+    const auto phyEntity = m_phyEntities.find(modulation);
+    if (phyEntity != m_phyEntities.end())
+    {
+        if (!phyEntity->second->HandlesMcsModes()) // to exclude MCSs from search
+        {
+            for (const auto& mode : *(phyEntity->second))
+            {
+                list.emplace_back(mode);
+            }
+        }
+    }
+    return list;
+}
+
+uint16_t
+WifiPhy::GetNMcs() const
+{
+    uint16_t numMcs = 0;
+    for (const auto& phyEntity : m_phyEntities)
+    {
+        if (phyEntity.second->HandlesMcsModes()) // to exclude non-MCS modes from search
+        {
+            numMcs += phyEntity.second->GetNumModes();
+        }
+    }
+    return numMcs;
+}
+
+std::list<WifiMode>
+WifiPhy::GetMcsList() const
+{
+    std::list<WifiMode> list;
+    for (const auto& phyEntity : m_phyEntities)
+    {
+        if (phyEntity.second->HandlesMcsModes()) // to exclude non-MCS modes from search
+        {
+            for (const auto& mode : *(phyEntity.second))
+            {
+                list.emplace_back(mode);
+            }
+        }
+    }
+    return list;
+}
+
+std::list<WifiMode>
+WifiPhy::GetMcsList(WifiModulationClass modulation) const
+{
+    std::list<WifiMode> list;
+    auto phyEntity = m_phyEntities.find(modulation);
+    if (phyEntity != m_phyEntities.end())
+    {
+        if (phyEntity->second->HandlesMcsModes()) // to exclude non-MCS modes from search
+        {
+            for (const auto& mode : *(phyEntity->second))
+            {
+                list.emplace_back(mode);
+            }
+        }
+    }
+    return list;
+}
+
+WifiMode
+WifiPhy::GetMcs(WifiModulationClass modulation, uint8_t mcs) const
+{
+    NS_ASSERT_MSG(IsMcsSupported(modulation, mcs), "Unsupported MCS");
+    return m_phyEntities.at(modulation)->GetMcs(mcs);
+}
+
+bool
+WifiPhy::IsStateCcaBusy() const
+{
+    return m_state->IsStateCcaBusy();
+}
+
+bool
+WifiPhy::IsStateIdle() const
+{
+    return m_state->IsStateIdle();
+}
+
+bool
+WifiPhy::IsStateRx() const
+{
+    return m_state->IsStateRx();
+}
+
+bool
+WifiPhy::IsStateTx() const
+{
+    return m_state->IsStateTx();
+}
+
+bool
+WifiPhy::IsStateSwitching() const
+{
+    return m_state->IsStateSwitching();
+}
+
+bool
+WifiPhy::IsStateSleep() const
+{
+    return m_state->IsStateSleep();
+}
+
+bool
+WifiPhy::IsStateOff() const
+{
+    return m_state->IsStateOff();
+}
+
+Time
+WifiPhy::GetDelayUntilIdle()
+{
+    return m_state->GetDelayUntilIdle();
+}
+
+Time
+WifiPhy::GetLastRxStartTime() const
+{
+    return m_state->GetLastRxStartTime();
+}
+
+Time
+WifiPhy::GetLastRxEndTime() const
+{
+    return m_state->GetLastRxEndTime();
+}
+
+void
+WifiPhy::SwitchMaybeToCcaBusy(const Ptr<const WifiPpdu> ppdu /* = nullptr */)
+{
+    NS_LOG_FUNCTION(this);
+    GetLatestPhyEntity()->SwitchMaybeToCcaBusy(ppdu);
+}
+
+void
+WifiPhy::NotifyCcaBusy(const Ptr<const WifiPpdu> ppdu, Time duration)
+{
+    NS_LOG_FUNCTION(this << duration);
+    GetLatestPhyEntity()->NotifyCcaBusy(ppdu, duration, WIFI_CHANLIST_PRIMARY);
+}
+
+void
+WifiPhy::AbortCurrentReception(WifiPhyRxfailureReason reason)
+{
+    NS_LOG_FUNCTION(this << reason);
+    if (reason != OBSS_PD_CCA_RESET ||
+        m_currentEvent) // Otherwise abort has already been called previously
+    {
+        if (reason == SIGNAL_DETECTION_ABORTED_BY_TX)
+        {
+            for (auto signalDetectEvent : m_currentPreambleEvents)
+            {
+                NotifyRxPpduDrop(signalDetectEvent.second->GetPpdu(),
+                                 SIGNAL_DETECTION_ABORTED_BY_TX);
+            }
+        }
+        for (auto& phyEntity : m_phyEntities)
+        {
+            phyEntity.second->CancelAllEvents();
+        }
+        m_endPhyRxEvent.Cancel();
+        m_interference->NotifyRxEnd(Simulator::Now(), GetCurrentFrequencyRange());
+        if (!m_currentEvent)
+        {
+            return;
+        }
+        NotifyRxPpduDrop(m_currentEvent->GetPpdu(), reason);
+        if (reason == OBSS_PD_CCA_RESET)
+        {
+            m_state->SwitchFromRxAbort(GetChannelWidth());
+        }
+        if (reason == RECEPTION_ABORTED_BY_TX)
+        {
+            Reset();
+        }
+        else
+        {
+            for (auto it = m_currentPreambleEvents.begin(); it != m_currentPreambleEvents.end();
+                 ++it)
+            {
+                if (it->second == m_currentEvent)
+                {
+                    it = m_currentPreambleEvents.erase(it);
+                    break;
+                }
+            }
+            m_currentEvent = nullptr;
+        }
+    }
+}
+
+void
+WifiPhy::ResetCca(bool powerRestricted, double txPowerMaxSiso, double txPowerMaxMimo)
+{
+    NS_LOG_FUNCTION(this << powerRestricted << txPowerMaxSiso << txPowerMaxMimo);
+    // This method might be called multiple times when receiving TB PPDUs with a BSS color
+    // different than the one of the receiver. The first time this method is called, the call
+    // to AbortCurrentReception sets m_currentEvent to 0. Therefore, we need to check whether
+    // m_currentEvent is not 0 before executing the instructions below.
+    if (m_currentEvent)
+    {
+        m_powerRestricted = powerRestricted;
+        m_txPowerMaxSiso = txPowerMaxSiso;
+        m_txPowerMaxMimo = txPowerMaxMimo;
+        NS_ASSERT((m_currentEvent->GetEndTime() - Simulator::Now()).IsPositive());
+        Simulator::Schedule(m_currentEvent->GetEndTime() - Simulator::Now(),
+                            &WifiPhy::EndReceiveInterBss,
+                            this);
+        Simulator::ScheduleNow(&WifiPhy::AbortCurrentReception,
+                               this,
+                               OBSS_PD_CCA_RESET); // finish processing field first
+    }
+}
+
+double
+WifiPhy::GetTxPowerForTransmission(Ptr<const WifiPpdu> ppdu) const
+{
+    NS_LOG_FUNCTION(this << m_powerRestricted << ppdu);
+    const auto& txVector = ppdu->GetTxVector();
+    // Get transmit power before antenna gain
+    double txPowerDbm;
+    if (!m_powerRestricted)
+    {
+        txPowerDbm = GetPowerDbm(txVector.GetTxPowerLevel());
+    }
+    else
+    {
+        if (txVector.GetNssMax() > 1 || txVector.GetNssTotal() > 1)
+        {
+            txPowerDbm = std::min(m_txPowerMaxMimo, GetPowerDbm(txVector.GetTxPowerLevel()));
+        }
+        else
+        {
+            txPowerDbm = std::min(m_txPowerMaxSiso, GetPowerDbm(txVector.GetTxPowerLevel()));
+        }
+    }
+
+    // Apply power density constraint on EIRP
+    uint16_t channelWidth = ppdu->GetTxChannelWidth();
+    double txPowerDbmPerMhz =
+        (txPowerDbm + GetTxGain()) - RatioToDb(channelWidth); // account for antenna gain since EIRP
+    NS_LOG_INFO("txPowerDbm=" << txPowerDbm << " with txPowerDbmPerMhz=" << txPowerDbmPerMhz
+                              << " over " << channelWidth << " MHz");
+    txPowerDbm = std::min(txPowerDbmPerMhz, m_powerDensityLimit) + RatioToDb(channelWidth);
+    txPowerDbm -= GetTxGain(); // remove antenna gain since will be added right afterwards
+    NS_LOG_INFO("txPowerDbm=" << txPowerDbm
+                              << " after applying m_powerDensityLimit=" << m_powerDensityLimit);
+    return txPowerDbm;
+}
+
+Ptr<const WifiPsdu>
+WifiPhy::GetAddressedPsduInPpdu(Ptr<const WifiPpdu> ppdu) const
+{
+    // TODO: wrapper. See if still needed
+    return GetPhyEntityForPpdu(ppdu)->GetAddressedPsduInPpdu(ppdu);
+}
+
+int64_t
+WifiPhy::AssignStreams(int64_t stream)
+{
+    NS_LOG_FUNCTION(this << stream);
+    int64_t currentStream = stream;
+    m_random->SetStream(currentStream++);
+    currentStream += m_interference->GetErrorRateModel()->AssignStreams(currentStream);
+    return (currentStream - stream);
+}
+
+std::ostream&
+operator<<(std::ostream& os, RxSignalInfo rxSignalInfo)
+{
+    os << "SNR:" << RatioToDb(rxSignalInfo.snr) << " dB"
+       << ", RSSI:" << rxSignalInfo.rssi << " dBm";
+    return os;
+}
+
+uint8_t
+WifiPhy::GetPrimaryChannelNumber(uint16_t primaryChannelWidth) const
+{
+    return m_operatingChannel.GetPrimaryChannelNumber(primaryChannelWidth, m_standard);
+}
+
+uint32_t
+WifiPhy::GetSubcarrierSpacing() const
+{
+    uint32_t subcarrierSpacing = 0;
+    switch (GetStandard())
+    {
+    case WIFI_STANDARD_80211a:
+    case WIFI_STANDARD_80211g:
+    case WIFI_STANDARD_80211b:
+    case WIFI_STANDARD_80211n:
+    case WIFI_STANDARD_80211ac:
+        subcarrierSpacing = 312500;
+        break;
+    case WIFI_STANDARD_80211p:
+        if (GetChannelWidth() == 5)
+        {
+            subcarrierSpacing = 78125;
+        }
+        else
+        {
+            subcarrierSpacing = 156250;
+        }
+        break;
+    case WIFI_STANDARD_80211ax:
+    case WIFI_STANDARD_80211be:
+        subcarrierSpacing = 78125;
+        break;
+    default:
+        NS_FATAL_ERROR("Standard unknown: " << GetStandard());
+        break;
+    }
+    return subcarrierSpacing;
+}
 
 } // namespace ns3
-
-namespace {
-
-static class Constructor
-{
-public:
-  Constructor ()
-  {
-    ns3::WifiPhy::GetDsssRate1Mbps ();
-    ns3::WifiPhy::GetDsssRate2Mbps ();
-    ns3::WifiPhy::GetDsssRate5_5Mbps ();
-    ns3::WifiPhy::GetDsssRate11Mbps ();
-    ns3::WifiPhy::GetErpOfdmRate6Mbps ();
-    ns3::WifiPhy::GetErpOfdmRate9Mbps ();
-    ns3::WifiPhy::GetErpOfdmRate12Mbps ();
-    ns3::WifiPhy::GetErpOfdmRate18Mbps ();
-    ns3::WifiPhy::GetErpOfdmRate24Mbps ();
-    ns3::WifiPhy::GetErpOfdmRate36Mbps ();
-    ns3::WifiPhy::GetErpOfdmRate48Mbps ();
-    ns3::WifiPhy::GetErpOfdmRate54Mbps ();
-    ns3::WifiPhy::GetOfdmRate6Mbps ();
-    ns3::WifiPhy::GetOfdmRate9Mbps ();
-    ns3::WifiPhy::GetOfdmRate12Mbps ();
-    ns3::WifiPhy::GetOfdmRate18Mbps ();
-    ns3::WifiPhy::GetOfdmRate24Mbps ();
-    ns3::WifiPhy::GetOfdmRate36Mbps ();
-    ns3::WifiPhy::GetOfdmRate48Mbps ();
-    ns3::WifiPhy::GetOfdmRate54Mbps ();
-    ns3::WifiPhy::GetOfdmRate3MbpsBW10MHz ();
-    ns3::WifiPhy::GetOfdmRate4_5MbpsBW10MHz ();
-    ns3::WifiPhy::GetOfdmRate6MbpsBW10MHz ();
-    ns3::WifiPhy::GetOfdmRate9MbpsBW10MHz ();
-    ns3::WifiPhy::GetOfdmRate12MbpsBW10MHz ();
-    ns3::WifiPhy::GetOfdmRate18MbpsBW10MHz ();
-    ns3::WifiPhy::GetOfdmRate24MbpsBW10MHz ();
-    ns3::WifiPhy::GetOfdmRate27MbpsBW10MHz ();
-    ns3::WifiPhy::GetOfdmRate1_5MbpsBW5MHz ();
-    ns3::WifiPhy::GetOfdmRate2_25MbpsBW5MHz ();
-    ns3::WifiPhy::GetOfdmRate3MbpsBW5MHz ();
-    ns3::WifiPhy::GetOfdmRate4_5MbpsBW5MHz ();
-    ns3::WifiPhy::GetOfdmRate6MbpsBW5MHz ();
-    ns3::WifiPhy::GetOfdmRate9MbpsBW5MHz ();
-    ns3::WifiPhy::GetOfdmRate12MbpsBW5MHz ();
-    ns3::WifiPhy::GetOfdmRate13_5MbpsBW5MHz ();
-    ns3::WifiPhy::GetOfdmRate6_5MbpsBW20MHz ();
-    ns3::WifiPhy::GetOfdmRate13MbpsBW20MHz ();
-    ns3::WifiPhy::GetOfdmRate19_5MbpsBW20MHz ();
-    ns3::WifiPhy::GetOfdmRate26MbpsBW20MHz ();
-    ns3::WifiPhy::GetOfdmRate39MbpsBW20MHz ();
-    ns3::WifiPhy::GetOfdmRate52MbpsBW20MHz ();
-    ns3::WifiPhy::GetOfdmRate58_5MbpsBW20MHz ();
-    ns3::WifiPhy::GetOfdmRate65MbpsBW20MHz ();
-    ns3::WifiPhy::GetOfdmRate13_5MbpsBW40MHz ();
-    ns3::WifiPhy::GetOfdmRate27MbpsBW40MHz ();
-    ns3::WifiPhy::GetOfdmRate40_5MbpsBW40MHz ();    
-    ns3::WifiPhy::GetOfdmRate54MbpsBW40MHz ();
-    ns3::WifiPhy::GetOfdmRate81MbpsBW40MHz ();
-    ns3::WifiPhy::GetOfdmRate108MbpsBW40MHz ();
-    ns3::WifiPhy::GetOfdmRate121_5MbpsBW40MHz ();
-    ns3::WifiPhy::GetOfdmRate135MbpsBW40MHz ();
-    ns3::WifiPhy::GetOfdmRate7_2MbpsBW20MHz ();
-    ns3::WifiPhy::GetOfdmRate14_4MbpsBW20MHz ();
-    ns3::WifiPhy::GetOfdmRate21_7MbpsBW20MHz ();
-    ns3::WifiPhy::GetOfdmRate28_9MbpsBW20MHz ();
-    ns3::WifiPhy::GetOfdmRate43_3MbpsBW20MHz ();
-    ns3::WifiPhy::GetOfdmRate57_8MbpsBW20MHz ();
-    ns3::WifiPhy::GetOfdmRate65MbpsBW20MHzShGi ();
-    ns3::WifiPhy::GetOfdmRate72_2MbpsBW20MHz ();
-    ns3::WifiPhy::GetOfdmRate15MbpsBW40MHz ();
-    ns3::WifiPhy::GetOfdmRate30MbpsBW40MHz ();
-    ns3::WifiPhy::GetOfdmRate45MbpsBW40MHz ();
-    ns3::WifiPhy::GetOfdmRate60MbpsBW40MHz ();
-    ns3::WifiPhy::GetOfdmRate90MbpsBW40MHz ();
-    ns3::WifiPhy::GetOfdmRate120MbpsBW40MHz ();
-    ns3::WifiPhy::GetOfdmRate135MbpsBW40MHzShGi ();
-    ns3::WifiPhy::GetOfdmRate150MbpsBW40MHz ();
-  }
-} g_constructor;
-}
