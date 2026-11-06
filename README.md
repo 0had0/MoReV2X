@@ -17,20 +17,17 @@ Should you need any information about the code and how to run it please feel fre
 The upgrade of MoReV2X to the latest version of ns-3 is currently underway, stay tuned!
 
 # Fork notes
-This fork builds and runs natively on Apple Silicon, adds SUMO mobility and per-node scheduler settings.
+This branch runs MoReV2X on ns-3.42, on the CTTC v2x tree used for 5G-LENA sidelink. `develop` stays on ns-3.22.
+It adds SUMO mobility and per-node scheduler settings, and builds natively on Apple Silicon.
 Run `source .env` first. Commands are in [COMMANDS.txt](COMMANDS.txt), the guide is in [docs/notebooks](docs/notebooks/00_start_here.ipynb).
-On macOS use those commands, not the ones below.
 
 # Getting Started
-First, you need to download the MoReV2X simulator on your computer. To do so, run the following command:   
-`git clone https://github.com/LLusvarghi/MoReV2X.git `
-
-## Building with waf
-Before running one of the scripts from the `scratch` folder, configure the build with the following command:   
-`CXXFLAGS="-Wall -g -O0" ./waf configure --disable-python --enable-examples --disable-tests --build-profile=debug`
-
-and then build ns-3 typing   
-`./waf`
+```bash
+source .env
+tools/bootstrap.sh
+ninja -C cmake-cache -j8
+./ns3 run "HIGHWAY --Vehicles=100 --simTime=10 --Periodic --mcs=13"
+```
 
 # About
 List of people who contributed to this project: 

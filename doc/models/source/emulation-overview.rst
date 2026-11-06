@@ -11,7 +11,7 @@ By associating this file descriptor with different things on the host
 system, different capabilities can be provided.  For instance, the
 FdNetDevice can be associated with an underlying packet socket to provide
 emulation capabilities.  This allows |ns3| simulations
-to send data on a "real" network. The second kind, called a ``Tap``
+to send data on a "real" network. The second kind, called a ``TapBridge``
 ``NetDevice`` allows a "real" host to participate in an |ns3| simulation as if
 it were one of the simulated nodes. An |ns3| simulation may be constructed with
 any combination of simulated or emulated devices.
@@ -24,7 +24,7 @@ One of the use-cases we want to support is that of a testbed. A concrete example
 of an environment of this kind is the ORBIT testbed. ORBIT is a laboratory
 emulator/field trial network arranged as a two dimensional grid of 400 802.11
 radio nodes. We integrate with ORBIT by using their "imaging" process to load
-and run |ns3| simulations on the ORBIT array. We can use our 
+and run |ns3| simulations on the ORBIT array. We can use our
 ``EmuFdNetDevice``
 to drive the hardware in the testbed and we can accumulate results either using
 the |ns3| tracing and logging functions, or the native ORBIT data gathering
@@ -36,7 +36,7 @@ A simulation of this kind is shown in the following figure:
 .. _testbed:
 
 .. figure:: figures/testbed.*
-   
+
    Example Implementation of Testbed Emulation.
 
 You can see that there are separate hosts, each running a subset of a "global"
@@ -80,7 +80,16 @@ We expect the typical use case for this environment will be to analyze the
 behavior of native applications and protocol suites in the presence of large
 simulated |ns3| networks.
 
+The basic testbed mode of emulation uses raw sockets.  Two other variants
+(netmap-based and DPDK-based emulation) have been recently added; these
+make use of more recent network interface cards that make use of
+directly-mapped memory capabilities to improve packet processing efficiency.
+
+For more details:
+
 .. toctree::
 
-  fd-net-device
-  tap
+   fd-net-device
+   netmap-net-device
+   dpdk-net-device
+   tap

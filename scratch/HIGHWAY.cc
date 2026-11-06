@@ -1056,7 +1056,7 @@ main (int argc, char *argv[])
   NS_LOG_INFO ("Starting network configuration...");
 
   Config::SetDefault ("ns3::NistLteRlcUm::MaxTxBufferSize", StringValue ("100000"));
-  Config::SetDefault ("ns3::DropTailQueue::MaxPackets", UintegerValue (10000000)); // In order not to run out of packets ;)
+  Config::SetDefault ("ns3::DropTailQueue<Packet>::MaxSize", QueueSizeValue (QueueSize ("10000000p"))); // In order not to run out of packets ;)
  
 
   // Configure the path for storing output files--------------------------------------------------------------------
@@ -1544,7 +1544,6 @@ main (int argc, char *argv[])
   lteHelper->Attach (ueDevs);
 
   BuildingsHelper::Install (ueResponders);
-  BuildingsHelper::MakeMobilityModelConsistent ();
   
   NS_LOG_INFO ("Installing applications...");
   // UDP application: in our case, this is the application that generates CAMs and DENMs

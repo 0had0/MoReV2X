@@ -1,4 +1,3 @@
-/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
  * Copyright (c) 2008 Drexel University
  *
@@ -21,15 +20,16 @@
 #ifndef SQLITE_DATA_OUTPUT_H
 #define SQLITE_DATA_OUTPUT_H
 
-#include "ns3/nstime.h"
-
 #include "data-output-interface.h"
 
-#define STATS_HAS_SQLITE3
+#include "ns3/nstime.h"
 
-struct sqlite3;
+struct sqlite3_stmt;
 
-namespace ns3 {
+namespace ns3
+{
+
+class SQLiteOutput;
 
 //------------------------------------------------------------
 //--------------------------------------------
@@ -38,113 +38,103 @@ namespace ns3 {
  * \class SqliteDataOutput
  * \brief Outputs data in a format compatible with SQLite
  */
-class SqliteDataOutput : public DataOutputInterface {
-public:
-  SqliteDataOutput();
-  virtual ~SqliteDataOutput();
-
-  virtual void Output (DataCollector &dc);
-
-protected:
-  virtual void DoDispose ();
-
-private:
-  /**
-   * \ingroup dataoutput
-   *
-   * \brief Class to generate OMNeT output
-   */
-  class SqliteOutputCallback : public DataOutputCallback {
-public:
-    /**
-     * Constructor
-     * \param owner pointer to the instance this object belongs to
-     * \param run experiment descriptor
-     */
-    SqliteOutputCallback(Ptr<SqliteDataOutput> owner, std::string run);
+class SqliteDataOutput : public DataOutputInterface
+{
+  public:
+    SqliteDataOutput();
+    ~SqliteDataOutput() override;
 
     /**
-     * \brief Generates data statistics
-     * \param key the SQL key to use
-     * \param variable the variable name
-     * \param statSum the stats to print
+     * Register this type.
+     * \return The TypeId.
      */
-    void OutputStatistic (std::string key,
-                          std::string variable,
-                          const StatisticalSummary *statSum);
+    static TypeId GetTypeId();
 
+    void Output(DataCollector& dc) override;
+
+  private:
     /**
-     * \brief Generates a single data output
-     * \param key the SQL key to use
-     * \param variable the variable name
-     * \param val the value
+     * \ingroup dataoutput
+     *
+     * \brief Class to generate OMNeT output
      */
-    void OutputSingleton (std::string key,
-                          std::string variable,
-                          int val);
+    class SqliteOutputCallback : public DataOutputCallback
+    {
+      public:
+        /**
+         * Constructor
+         * \param db pointer to the instance this object belongs to
+         * \param run experiment descriptor
+         */
+        SqliteOutputCallback(const Ptr<SQLiteOutput>& db, std::string run);
 
-    /**
-     * \brief Generates a single data output
-     * \param key the SQL key to use
-     * \param variable the variable name
-     * \param val the value
-     */
-    void OutputSingleton (std::string key,
-                          std::string variable,
-                          uint32_t val);
+        /**
+         * Destructor
+         */
+        ~SqliteOutputCallback() override;
 
-    /**
-     * \brief Generates a single data output
-     * \param key the SQL key to use
-     * \param variable the variable name
-     * \param val the value
-     */
-    void OutputSingleton (std::string key,
-                          std::string variable,
-                          double val);
+        /**
+         * \brief Generates data statistics
+         * \param key the SQL key to use
+         * \param variable the variable name
+         * \param statSum the stats to print
+         */
+        void OutputStatistic(std::string key,
+                             std::string variable,
+                             const StatisticalSummary* statSum) override;
 
-    /**
-     * \brief Generates a single data output
-     * \param key the SQL key to use
-     * \param variable the variable name
-     * \param val the value
-     */
-    void OutputSingleton (std::string key,
-                          std::string variable,
-                          std::string val);
+        /**
+         * \brief Generates a single data output
+         * \param key the SQL key to use
+         * \param variable the variable name
+         * \param val the value
+         */
+        void OutputSingleton(std::string key, std::string variable, int val) override;
 
-    /**
-     * \brief Generates a single data output
-     * \param key the SQL key to use
-     * \param variable the variable name
-     * \param val the value
-     */
-    void OutputSingleton (std::string key,
-                          std::string variable,
-                          Time val);
+        /**
+         * \brief Generates a single data output
+         * \param key the SQL key to use
+         * \param variable the variable name
+         * \param val the value
+         */
+        void OutputSingleton(std::string key, std::string variable, uint32_t val) override;
 
-private:
-    Ptr<SqliteDataOutput> m_owner; //!< the instance this object belongs to
-    std::string m_runLabel; //!< Run label
+        /**
+         * \brief Generates a single data output
+         * \param key the SQL key to use
+         * \param variable the variable name
+         * \param val the value
+         */
+        void OutputSingleton(std::string key, std::string variable, double val) override;
 
-    // end class SqliteOutputCallback
-  };
+        /**
+         * \brief Generates a single data output
+         * \param key the SQL key to use
+         * \param variable the variable name
+         * \param val the value
+         */
+        void OutputSingleton(std::string key, std::string variable, std::string val) override;
 
+        /**
+         * \brief Generates a single data output
+         * \param key the SQL key to use
+         * \param variable the variable name
+         * \param val the value
+         */
+        void OutputSingleton(std::string key, std::string variable, Time val) override;
 
-  sqlite3 *m_db; //!< pointer to the SQL database
+      private:
+        Ptr<SQLiteOutput> m_db; //!< Db
+        std::string m_runLabel; //!< Run label
 
-  /**
-   * \brief Execute a sqlite3 query
-   * \param exe the query to execute
-   * \return sqlite return code.
-   */
-  int Exec (std::string exe);
+        /// Pointer to a Sqlite3 singleton statement
+        sqlite3_stmt* m_insertSingletonStatement;
+    };
 
-  // end class SqliteDataOutput
+    Ptr<SQLiteOutput> m_sqliteOut; //!< Database
 };
 
 // end namespace ns3
-};
-
+} // namespace ns3
 
 #endif /* SQLITE_DATA_OUTPUT_H */

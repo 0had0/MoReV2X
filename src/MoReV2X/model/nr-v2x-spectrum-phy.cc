@@ -391,7 +391,7 @@ NrV2XSpectrumPhy::GetTypeId (void)
 
 
 Ptr<NetDevice>
-NrV2XSpectrumPhy::GetDevice ()
+NrV2XSpectrumPhy::GetDevice () const
 {
   //NS_LOG_FUNCTION (this);
   return m_device;
@@ -399,7 +399,7 @@ NrV2XSpectrumPhy::GetDevice ()
 
 
 Ptr<MobilityModel>
-NrV2XSpectrumPhy::GetMobility ()
+NrV2XSpectrumPhy::GetMobility () const
 {
   //NS_LOG_FUNCTION (this);
   return m_mobility;
@@ -574,7 +574,7 @@ NrV2XSpectrumPhy::SetNistLtePhyUlHarqFeedbackCallback (NistLtePhyUlHarqFeedbackC
 }
 
 
-Ptr<AntennaModel> NrV2XSpectrumPhy::GetRxAntenna ()
+Ptr<Object> NrV2XSpectrumPhy::GetAntenna () const
 {
   return m_antenna;
 }
@@ -766,7 +766,7 @@ NrV2XSpectrumPhy::StartRx (Ptr<SpectrumSignalParameters> spectrumRxParams)
 
   NS_LOG_INFO("UE " << GetDevice()->GetNode()->GetId() << " at (X,Y) = (" << posRX.x << "," << posRX.y << ") receiving packet " << sci_tmp.m_packetID << " from UE " << lteV2XSlRxParams->nodeId);
  
-  if (lteDataRxParams != 0)
+  if (lteDataRxParams != nullptr)
     {
       m_interferenceData->AddSignal (rxPsd, duration);
       m_interferenceSl->AddSignal (rxPsd, duration); //to compute UL/SL interference
@@ -961,7 +961,7 @@ NrV2XSpectrumPhy::StartRx (Ptr<SpectrumSignalParameters> spectrumRxParams)
     {
       Ptr<NistLteSpectrumSignalParametersDlCtrlFrame> lteDlCtrlRxParams = DynamicCast<NistLteSpectrumSignalParametersDlCtrlFrame> (spectrumRxParams);
       Ptr<NistLteSpectrumSignalParametersUlSrsFrame> lteUlSrsRxParams = DynamicCast<NistLteSpectrumSignalParametersUlSrsFrame> (spectrumRxParams);
-      if ((lteDlCtrlRxParams!=0)||(lteUlSrsRxParams!=0))
+      if ((lteDlCtrlRxParams!= nullptr)||(lteUlSrsRxParams!= nullptr))
         {
           m_interferenceCtrl->AddSignal (rxPsd, duration);
           StartRxCtrl (spectrumRxParams);

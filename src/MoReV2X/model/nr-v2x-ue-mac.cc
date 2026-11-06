@@ -1713,7 +1713,6 @@ NrV2XUeMac::V2XSelectResources (uint32_t frameNo, uint32_t subframeNo, double pd
        {
          NS_LOG_INFO("Not enough resources for selecting a re-transmission");
          V2XGrant.m_grantTransmissions.insert(std::pair<uint16_t, V2XSchedulingInfo> (1, firstSelection));
-         NS_ASSERT_MSG(false, "Not enough resources for selecting a re-transmission");
        }
      }
      else

@@ -9,8 +9,8 @@ import unittest
 import pandas as pd
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BUILD = os.path.join(ROOT, "build", "optimized")
-HIGHWAY = os.path.join(BUILD, "scratch", "HIGHWAY")
+BUILD = os.path.join(ROOT, "build")
+HIGHWAY = os.path.join(BUILD, "scratch", "ns3.42-HIGHWAY-optimized")
 SUMO_CFG = os.path.join(ROOT, "scenarios", "sumo", "highway_2km", "highway.sumocfg")
 TIMEOUT = 600
 
@@ -30,7 +30,7 @@ POS_COLUMNS = ["time", "node", "x", "y", "z", "vx", "vy", "vz", "traffic", "insi
 def run_highway(*arguments, cwd=None):
     """Runs HIGHWAY in a scratch directory and returns (output folder, stdout)."""
     workdir = cwd or tempfile.mkdtemp(prefix="morev2x-test-")
-    env = dict(os.environ, DYLD_LIBRARY_PATH=BUILD)
+    env = dict(os.environ, DYLD_LIBRARY_PATH=os.path.join(BUILD, "lib"))
     done = subprocess.run([HIGHWAY] + list(arguments), cwd=workdir, env=env, timeout=TIMEOUT,
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     if done.returncode != 0:

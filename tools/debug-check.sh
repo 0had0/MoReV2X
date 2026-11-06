@@ -1,23 +1,18 @@
 #!/usr/bin/env bash
 # Runs every scheduler mode under the debug profile, where NS_ASSERT is active. The
-# optimized build used by tools/gate.sh ignores assertions. Takes about 10 minutes
-# the first time, and leaves waf configured for the optimized build.
+# optimized build used by tools/gate.sh ignores assertions. Takes about 20 minutes
+# the first time. It builds in cmake-cache-debug and build-debug.
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)"
 # shellcheck disable=SC1091
 source .env
 
-restore () {
-  ./waf configure --disable-python --enable-examples --enable-tests \
-    --build-profile=optimized --out=build/optimized > /dev/null
-}
-trap restore EXIT
+cmake -S . -B cmake-cache-debug -G Ninja -DCMAKE_BUILD_TYPE=debug -DNS3_ASSERT=ON -DNS3_LOG=ON \
+  -DNS3_ENABLED_MODULES="MoReV2X;traci" -DNS3_OUTPUT_DIRECTORY="$MOREV2X_ROOT/build-debug" \
+  -DNS3_WARNINGS_AS_ERRORS=OFF > /dev/null || exit 1
+ninja -C cmake-cache-debug -j"$MOREV2X_JOBS" scratch_HIGHWAY > /dev/null || exit 1
 
-./waf configure --disable-python --disable-examples --disable-tests --build-profile=debug \
-  --out=build/debug --enable-modules=MoReV2X,traci > /dev/null
-./waf build -j"$MOREV2X_JOBS" > /dev/null || exit 1
-
-binary="$MOREV2X_ROOT/build/debug/scratch/HIGHWAY"
+binary="$MOREV2X_ROOT/build-debug/scratch/ns3.42-HIGHWAY-debug"
 sumo_cfg="$MOREV2X_ROOT/scenarios/sumo/highway_2km/highway.sumocfg"
 workdir="$(mktemp -d)"
 common="--Vehicles=15 --simTime=4 --mcs=13"
@@ -25,7 +20,7 @@ failures=0
 
 run () {
   local name="$1"; shift
-  (cd "$workdir" && DYLD_LIBRARY_PATH="$MOREV2X_ROOT/build/debug" "$binary" $common "$@" > out.log 2>&1)
+  (cd "$workdir" && DYLD_LIBRARY_PATH="$MOREV2X_ROOT/build-debug/lib" "$binary" $common "$@" > out.log 2>&1)
   local status=$?
   printf '%-16s %s\n' "$name" "$([ $status -eq 0 ] && echo ok || echo "FAILED: $(grep -aE 'cond=|msg=' "$workdir/out.log" | tail -1 | cut -c1-150)")"
   [ $status -eq 0 ] || failures=$((failures + 1))

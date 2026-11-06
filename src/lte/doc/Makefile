@@ -13,9 +13,12 @@ FIGURES = $(SOURCE)/figures
 IMAGES_DIA = \
 	$(FIGURES)/epc-ctrl-arch.dia \
 	$(FIGURES)/epc-data-flow-dl.dia \
+	$(FIGURES)/epc-data-flow-dl-with-split.dia \
 	$(FIGURES)/epc-data-flow-ul.dia \
+	$(FIGURES)/epc-data-flow-ul-with-split.dia \
 	$(FIGURES)/epc-profiling-scenario.dia \
 	$(FIGURES)/epc-topology.dia \
+	$(FIGURES)/epc-topology-with-split.dia \
 	$(FIGURES)/epc-topology-x2-enhanced.dia \
 	$(FIGURES)/eutran-profiling-scenario.dia \
 	$(FIGURES)/ff-example.dia \
@@ -28,6 +31,8 @@ IMAGES_DIA = \
 	$(FIGURES)/lte-ue-phy.dia \
 	$(FIGURES)/lte-epc-x2-handover-seq-diagram.dia \
 	$(FIGURES)/lte-epc-e2e-data-protocol-stack.dia \
+	$(FIGURES)/lte-epc-e2e-data-protocol-stack-with-split.dia \
+	$(FIGURES)/lte-epc-e2e-control-protocol-stack-with-split.dia \
 	$(FIGURES)/lte-interference-test-scenario.dia \
 	$(FIGURES)/lte-subframe-structure.dia \
 	$(FIGURES)/lte-epc-x2-interface.dia \
@@ -55,7 +60,20 @@ IMAGES_DIA = \
 	$(FIGURES)/lte-rlc-data-retx-dl.dia \
 	$(FIGURES)/lte-rlc-data-txon-ul.dia \
 	$(FIGURES)/lte-rlc-data-retx-ul.dia \
-	$(FIGURES)/lte-epc-x2-entity-saps.dia
+	$(FIGURES)/lte-epc-x2-entity-saps.dia \
+	$(FIGURES)/lte-class-net-phy-relation.dia \
+	$(FIGURES)/lte-arch-enb-ctrl-rrc-phy.dia \
+	$(FIGURES)/lte-ccs-arch.dia \
+	$(FIGURES)/ca-enb-data-plane.dia \
+	$(FIGURES)/ca-enb-ctrl-plane.dia \
+	$(FIGURES)/ca-ue-data-plane.dia \
+	$(FIGURES)/ca-ue-ctrl-plane.dia \
+	$(FIGURES)/ca-rrc-reconf.dia \
+	$(FIGURES)/ca-lte-enb-net-device-changes.dia \
+	$(FIGURES)/ca-lte-ue-net-device-changes.dia \
+	$(FIGURES)/lte-test-rlf-one-enb.dia \
+	$(FIGURES)/lena-radio-link-failure-one-enb.dia \
+	$(FIGURES)/lena-radio-link-failure-two-enb.dia
 
 # specify eps figures from which .png and .pdf figures need to be built
 
@@ -82,7 +100,7 @@ $(FIGURES)/lte-arch-data-rrc-pdcp-rlc.pdf_width = 3in
 $(FIGURES)/lte-epc-e2e-data-protocol-stack.pdf_width = 15cm
 $(FIGURES)/ff-mac-saps.pdf_width = 5in
 $(FIGURES)/ff-example.pdf_width = 5in
-$(FIGURES)/lte-arch-enb-data.pdf_width = 6cm 
+$(FIGURES)/lte-arch-enb-data.pdf_width = 6cm
 $(FIGURES)/lte-arch-enb-ctrl.pdf_width = 10cm
 $(FIGURES)/lte-arch-ue-data.pdf_width = 6cm
 $(FIGURES)/lte-arch-ue-ctrl.pdf_width = 10cm
@@ -104,7 +122,13 @@ IMAGES_SEQDIAG = \
 	$(FIGURES)/rrc-connection-establishment.seqdiag \
 	$(FIGURES)/rrc-connection-reconfiguration.seqdiag \
 	$(FIGURES)/rrc-connection-reconfiguration-handover.seqdiag \
-	$(FIGURES)/nas-attach.seqdiag 
+	$(FIGURES)/nas-attach.seqdiag \
+	$(FIGURES)/ca-downlink-bsr.seqdiag \
+	$(FIGURES)/ca-setup-radio-bearer.seqdiag \
+	$(FIGURES)/ca-uplink-bsr.seqdiag \
+	$(FIGURES)/lte-ue-context-removal-from-epc.seqdiag \
+	$(FIGURES)/lte-ue-context-removal-from-enb-stack.seqdiag \
+	$(FIGURES)/lte-ue-procedures-after-rlf.seqdiag
 
 IMAGES_DOT = \
 	$(FIGURES)/lte-enb-rrc-states.dot \
@@ -157,6 +181,12 @@ IMAGES_NOBUILD = $(FIGURES)/fading_pedestrian.png \
 	$(FIGURES)/miesm_scheme.png \
 	$(FIGURES)/lte-handover-campaign-rem.pdf \
 	$(FIGURES)/lte-handover-campaign-rem.png \
+	$(FIGURES)/carrier-aggregation-impact.png \
+	$(FIGURES)/carrier-aggregation-mac-impact.png \
+	$(FIGURES)/ca-test-example-ul.png \
+	$(FIGURES)/ca-test-example-dl.png \
+	$(FIGURES)/lena-radio-link-failure-one-enb-thrput.png \
+	$(FIGURES)/lena-radio-link-failure-two-enb-thrput.png \
 	${IMAGES_SEQDIAG:.seqdiag=.png} \
 	${IMAGES_SEQDIAG:.seqdiag=.pdf} \
 	${IMAGES_DOT:.dot=.png} \
@@ -168,7 +198,7 @@ IMAGES_BUILD = \
 	${IMAGES_DIA:.dia=.png} \
 	${IMAGES_DIA:.dia=.pdf} \
 	${IMAGES_EPS:.eps=.png} \
-	${IMAGES_EPS:.eps=.pdf} 
+	${IMAGES_EPS:.eps=.pdf}
 
 
 
@@ -178,8 +208,8 @@ RESCALE = ../../../utils/rescale-pdf.sh
 
 %.eps : %.dia; $(DIA) -t eps $< -e $@
 %.png : %.dia; $(DIA) -t png $< -e $@
-%.png : %.seqdiag; $(SEQDIAG) -Tpng --no-transparency -o $@ $< 
-%.png : %.dot; $(DOT) -Tpng -o$@ $< 
+%.png : %.seqdiag; $(SEQDIAG) -Tpng --no-transparency -o $@ $<
+%.png : %.dot; $(DOT) -Tpng -o$@ $<
 %.png : %.eps; $(CONVERT) $< $@
 %.pdf : %.seqdiag
 	$(SEQDIAG) -Tpdf -o $@ $<
@@ -193,7 +223,7 @@ RESCALE = ../../../utils/rescale-pdf.sh
 
 
 # You can set these variables from the command line.
-SPHINXOPTS    =
+SPHINXOPTS    = -W --keep-going
 SPHINXBUILD   = sphinx-build
 PAPER         =
 BUILDDIR      = build
@@ -201,7 +231,7 @@ BUILDDIR      = build
 # Internal variables.
 PAPEROPT_a4     = -D latex_paper_size=a4
 PAPEROPT_letter = -D latex_paper_size=letter
-ALLSPHINXOPTS   = -d $(BUILDDIR)/doctrees $(PAPEROPT_$(PAPER)) $(SPHINXOPTS) $(SOURCE) 
+ALLSPHINXOPTS   = -d $(BUILDDIR)/doctrees $(PAPEROPT_$(PAPER)) $(SPHINXOPTS) $(SOURCE)
 
 .PHONY: help clean html dirhtml singlehtml pickle json htmlhelp qthelp devhelp epub latex latexpdf text man changes linkcheck doctest
 
@@ -236,7 +266,7 @@ frag: pickle
 	pushd $(BUILDDIR)/frag && ../../pickle-to-xml.py ../pickle/index.fpickle  > navigation.xml && popd
 	cp -r $(BUILDDIR)/pickle/_images $(BUILDDIR)/frag
 
-html:  $(IMAGES) 
+html:  $(IMAGES)
 	$(SPHINXBUILD) -b html $(ALLSPHINXOPTS) $(BUILDDIR)/html
 	@echo
 	@echo "Build finished. The HTML pages are in $(BUILDDIR)/html."

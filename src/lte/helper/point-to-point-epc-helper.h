@@ -1,6 +1,5 @@
-/* -*-  Mode: C++; c-file-style: "gnu"; indent-tabs-mode:nil; -*- */
 /*
- * Copyright (c) 2011-2013 Centre Tecnologic de Telecomunicacions de Catalunya (CTTC)
+ * Copyright (c) 2011-2019 Centre Tecnologic de Telecomunicacions de Catalunya (CTTC)
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -15,161 +14,98 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * Author: Jaume Nin <jnin@cttc.es>
- *         Nicola Baldo <nbaldo@cttc.es>
- *         Manuel Requena <manuel.requena@cttc.es>
+ * Authors:
+ *   Jaume Nin <jnin@cttc.es>
+ *   Nicola Baldo <nbaldo@cttc.es>
+ *   Manuel Requena <manuel.requena@cttc.es>
+ *   (most of the code refactored to no-backhaul-epc-helper.h)
  */
 
 #ifndef POINT_TO_POINT_EPC_HELPER_H
 #define POINT_TO_POINT_EPC_HELPER_H
 
-#include <ns3/object.h>
-#include <ns3/ipv4-address-helper.h>
-#include <ns3/data-rate.h>
-#include <ns3/epc-tft.h>
-#include <ns3/eps-bearer.h>
-#include <ns3/epc-helper.h>
+#include "no-backhaul-epc-helper.h"
 
-namespace ns3 {
-
-class Node;
-class NetDevice;
-class VirtualNetDevice;
-class EpcSgwPgwApplication;
-class EpcX2;
-class EpcMme;
+namespace ns3
+{
 
 /**
  * \ingroup lte
- * \brief Create an EPC network with PointToPoint links
+ * \brief Create an EPC network with PointToPoint links in the backhaul network.
  *
- * This Helper will create an EPC network topology comprising of a
- * single node that implements both the SGW and PGW functionality, and
- * an MME node. The S1-U, X2-U and X2-C interfaces are realized over
- * PointToPoint links. 
+ * This Helper extends NoBackhaulEpcHelper creating PointToPoint links in the
+ * backhaul network (i.e. in the S1-U and S1-MME interfaces)
  */
-class PointToPointEpcHelper : public EpcHelper
+class PointToPointEpcHelper : public NoBackhaulEpcHelper
 {
-public:
-  
-  /** 
-   * Constructor
-   */
-  PointToPointEpcHelper ();
+  public:
+    /**
+     * Constructor
+     */
+    PointToPointEpcHelper();
 
-  /** 
-   * Destructor
-   */  
-  virtual ~PointToPointEpcHelper ();
-  
-  // inherited from Object
-  /**
-   *  Register this type.
-   *  \return The object TypeId.
-   */
-  static TypeId GetTypeId (void);
-  virtual void DoDispose ();
+    /**
+     * Destructor
+     */
+    ~PointToPointEpcHelper() override;
 
-  // inherited from EpcHelper
-  virtual void AddEnb (Ptr<Node> enbNode, Ptr<NetDevice> lteEnbNetDevice, uint16_t cellId);
-  virtual void AddUe (Ptr<NetDevice> ueLteDevice, uint64_t imsi);
-  virtual void AddX2Interface (Ptr<Node> enbNode1, Ptr<Node> enbNode2);
-  virtual uint8_t ActivateEpsBearer (Ptr<NetDevice> ueLteDevice, uint64_t imsi, Ptr<EpcTft> tft, EpsBearer bearer);
-  virtual Ptr<Node> GetPgwNode ();
-  virtual Ipv4InterfaceContainer AssignUeIpv4Address (NetDeviceContainer ueDevices);
-  virtual Ipv4Address GetUeDefaultGatewayAddress ();
+    // inherited from Object
+    /**
+     * Register this type.
+     * \return The object TypeId.
+     */
+    static TypeId GetTypeId();
+    TypeId GetInstanceTypeId() const override;
+    void DoDispose() override;
 
+    // inherited from EpcHelper
+    void AddEnb(Ptr<Node> enbNode,
+                Ptr<NetDevice> lteEnbNetDevice,
+                std::vector<uint16_t> cellIds) override;
 
+  private:
+    /**
+     * S1-U interfaces
+     */
 
-private:
+    /**
+     * Helper to assign addresses to S1-U NetDevices
+     */
+    Ipv4AddressHelper m_s1uIpv4AddressHelper;
 
-  /** 
-   * helper to assign addresses to UE devices as well as to the TUN device of the SGW/PGW
-   */
-  Ipv4AddressHelper m_ueAddressHelper; 
-  
-  /**
-   * SGW-PGW network element
-   */
-  Ptr<Node> m_sgwPgw; 
+    /**
+     * The data rate to be used for the next S1-U link to be created
+     */
+    DataRate m_s1uLinkDataRate;
 
-  /**
-   * SGW-PGW application
-   */
-  Ptr<EpcSgwPgwApplication> m_sgwPgwApp;
+    /**
+     * The delay to be used for the next S1-U link to be created
+     */
+    Time m_s1uLinkDelay;
 
-  /**
-   * TUN device implementing tunneling of user data over GTP-U/UDP/IP
-   */
-  Ptr<VirtualNetDevice> m_tunDevice;
+    /**
+     * The MTU of the next S1-U link to be created. Note that,
+     * because of the additional GTP/UDP/IP tunneling overhead,
+     * you need a MTU larger than the end-to-end MTU that you
+     * want to support.
+     */
+    uint16_t m_s1uLinkMtu;
 
-  /**
-   * MME network element
-   */
-  Ptr<EpcMme> m_mme;
+    /**
+     * Helper to assign addresses to S1-MME NetDevices
+     */
+    Ipv4AddressHelper m_s1apIpv4AddressHelper;
 
-  /**
-   * S1-U interfaces
-   */
+    /**
+     * Enable PCAP generation for S1 link
+     */
+    bool m_s1uLinkEnablePcap;
 
-  /** 
-   * helper to assign addresses to S1-U NetDevices 
-   */
-  Ipv4AddressHelper m_s1uIpv4AddressHelper; 
-
-  /**
-   * The data rate to be used for the next S1-U link to be created
-   */
-  DataRate m_s1uLinkDataRate;
-
-  /**
-   * The delay to be used for the next S1-U link to be created
-   */
-  Time     m_s1uLinkDelay;
-
-  /**
-   * The MTU of the next S1-U link to be created. Note that,
-   * because of the additional GTP/UDP/IP tunneling overhead,
-   * you need a MTU larger than the end-to-end MTU that you
-   * want to support.
-   */
-  uint16_t m_s1uLinkMtu;
-
-  /**
-   * UDP port where the GTP-U Socket is bound, fixed by the standard as 2152
-   */
-  uint16_t m_gtpuUdpPort;
-
-  /**
-   * Map storing for each IMSI the corresponding eNB NetDevice
-   */
-  std::map<uint64_t, Ptr<NetDevice> > m_imsiEnbDeviceMap;
-  
-  /** 
-   * helper to assign addresses to X2 NetDevices 
-   */
-  Ipv4AddressHelper m_x2Ipv4AddressHelper;   
-
-  /**
-   * The data rate to be used for the next X2 link to be created
-   */
-  DataRate m_x2LinkDataRate;
-
-  /**
-   * The delay to be used for the next X2 link to be created
-   */
-  Time     m_x2LinkDelay;
-
-  /**
-   * The MTU of the next X2 link to be created. Note that,
-   * because of some big X2 messages, you need a big MTU.
-   */
-  uint16_t m_x2LinkMtu;
-
+    /**
+     * Prefix for the PCAP file for the S1 link
+     */
+    std::string m_s1uLinkPcapPrefix;
 };
-
-
-
 
 } // namespace ns3
 

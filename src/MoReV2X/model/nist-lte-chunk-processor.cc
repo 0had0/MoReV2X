@@ -59,7 +59,7 @@ void
 NistLteChunkProcessor::EvaluateChunk (const SpectrumValue& sinr, Time duration)
 {
   NS_LOG_FUNCTION (this << sinr << duration);
-  if (m_sumValues == 0)
+  if (m_sumValues == nullptr)
     {
       m_sumValues = Create<SpectrumValue> (sinr.GetSpectrumModel ());
     }

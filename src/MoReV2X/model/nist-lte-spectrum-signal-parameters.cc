@@ -44,7 +44,7 @@ NistLteSpectrumSignalParameters::NistLteSpectrumSignalParameters (const NistLteS
 }
 
 Ptr<SpectrumSignalParameters>
-NistLteSpectrumSignalParameters::Copy ()
+NistLteSpectrumSignalParameters::Copy () const
 {
   NS_LOG_FUNCTION (this);
   // Ideally we would use:
@@ -77,7 +77,7 @@ NistLteSpectrumSignalParametersDataFrame::NistLteSpectrumSignalParametersDataFra
 }
 
 Ptr<SpectrumSignalParameters>
-NistLteSpectrumSignalParametersDataFrame::Copy ()
+NistLteSpectrumSignalParametersDataFrame::Copy () const
 {
   NS_LOG_FUNCTION (this);
   // Ideally we would use:
@@ -107,7 +107,7 @@ NistLteSpectrumSignalParametersDlCtrlFrame::NistLteSpectrumSignalParametersDlCtr
 }
 
 Ptr<SpectrumSignalParameters>
-NistLteSpectrumSignalParametersDlCtrlFrame::Copy ()
+NistLteSpectrumSignalParametersDlCtrlFrame::Copy () const
 {
   NS_LOG_FUNCTION (this);
   // Ideally we would use:
@@ -134,7 +134,7 @@ NistLteSpectrumSignalParametersUlSrsFrame::NistLteSpectrumSignalParametersUlSrsF
 }
 
 Ptr<SpectrumSignalParameters>
-NistLteSpectrumSignalParametersUlSrsFrame::Copy ()
+NistLteSpectrumSignalParametersUlSrsFrame::Copy () const
 {
   NS_LOG_FUNCTION (this);
   // Ideally we would use:
@@ -168,7 +168,7 @@ NistLteSpectrumSignalParametersSlFrame::NistLteSpectrumSignalParametersSlFrame (
 }
 
 Ptr<SpectrumSignalParameters>
-NistLteSpectrumSignalParametersSlFrame::Copy ()
+NistLteSpectrumSignalParametersSlFrame::Copy () const
 {
     NS_LOG_FUNCTION (this);
   // Ideally we would use:
@@ -203,7 +203,7 @@ NistLteSpectrumSignalParametersV2XSlFrame::NistLteSpectrumSignalParametersV2XSlF
 }
 
 Ptr<SpectrumSignalParameters>
-NistLteSpectrumSignalParametersV2XSlFrame::Copy ()
+NistLteSpectrumSignalParametersV2XSlFrame::Copy () const
 {
     NS_LOG_FUNCTION (this);
   // Ideally we would use:

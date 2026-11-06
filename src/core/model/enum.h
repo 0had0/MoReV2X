@@ -1,4 +1,3 @@
-/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
  * Copyright (c) 2008 INRIA
  *
@@ -20,17 +19,24 @@
 #ifndef ENUM_VALUE_H
 #define ENUM_VALUE_H
 
-#include "attribute.h"
 #include "attribute-accessor-helper.h"
+#include "attribute.h"
+
+#include <algorithm> // find_if
 #include <list>
+#include <numeric> // std::accumulate
+#include <sstream>
+#include <type_traits>
+#include <typeinfo>
 
 /**
  * \file
  * \ingroup attribute_Enum
- * Enum attribute value declarations.
+ * ns3::EnumValue attribute value declarations.
  */
 
-namespace ns3 {
+namespace ns3
+{
 
 //  Additional docs for class EnumValue:
 /**
@@ -51,75 +57,112 @@ namespace ns3 {
  *                       EnumValue (RipNg::NO_SPLIT_HORIZON));
  * \endcode
  */
+template <typename T>
 class EnumValue : public AttributeValue
 {
-public:
-  EnumValue ();
-  /**
-   * Construct from an explicit value.
-   *
-   * \param [in] value The value to begin with.
-   */
-  EnumValue (int value);
-  void Set (int  value);
-  int Get (void) const;
-  template <typename T>
-  bool GetAccessor (T & value) const;
+  public:
+    EnumValue();
+    EnumValue(const T& value);
+    void Set(T value);
+    T Get() const;
 
-  virtual Ptr<AttributeValue> Copy (void) const;
-  virtual std::string SerializeToString (Ptr<const AttributeChecker> checker) const;
-  virtual bool DeserializeFromString (std::string value, Ptr<const AttributeChecker> checker);
+    bool GetAccessor(T& value) const;
 
-private:
-  int m_value;  //!< The stored integer value.
+    Ptr<AttributeValue> Copy() const override;
+    std::string SerializeToString(Ptr<const AttributeChecker> checker) const override;
+    bool DeserializeFromString(std::string value, Ptr<const AttributeChecker> checker) override;
+
+  private:
+    T m_value{}; //!< The stored value.
 };
 
 template <typename T>
-bool
-EnumValue::GetAccessor (T &value) const
+EnumValue<T>::EnumValue() = default;
+
+template <typename T>
+EnumValue<T>::EnumValue(const T& value)
+    : m_value(value)
 {
-  value = T (m_value);
-  return true;
 }
 
+template <typename T>
+void
+EnumValue<T>::Set(T value)
+{
+    m_value = value;
+}
+
+template <typename T>
+T
+EnumValue<T>::Get() const
+{
+    return m_value;
+}
+
+template <typename T>
+bool
+EnumValue<T>::GetAccessor(T& value) const
+{
+    value = static_cast<T>(m_value);
+    return true;
+}
+
+template <typename T>
+Ptr<AttributeValue>
+EnumValue<T>::Copy() const
+{
+    return Create<EnumValue>(*this);
+}
+
+template <typename T>
 class EnumChecker : public AttributeChecker
 {
-public:
-  EnumChecker ();
+  public:
+    EnumChecker();
 
-  /**
-   * Add a default value.
-   * \param [in] value The value.
-   * \param [in] name Then enum symbol name.
-   */
-  void AddDefault (int value, std::string name);
-  /**
-   * Add a new value.
-   * \param [in] value The value.
-   * \param [in] name Then enum symbol name.
-   */
-  void Add (int value, std::string name);
+    /**
+     * Add a default value.
+     * \param [in] value The value.
+     * \param [in] name Then enum symbol name.
+     */
+    void AddDefault(T value, std::string name);
+    /**
+     * Add a new value.
+     * \param [in] value The value.
+     * \param [in] name The enum symbol name.
+     */
+    void Add(T value, std::string name);
 
-  virtual bool Check (const AttributeValue &value) const;
-  virtual std::string GetValueTypeName (void) const;
-  virtual bool HasUnderlyingTypeInformation (void) const;
-  virtual std::string GetUnderlyingTypeInformation (void) const;
-  virtual Ptr<AttributeValue> Create (void) const;
-  virtual bool Copy (const AttributeValue &src, AttributeValue &dst) const;
+    /**
+     * Get the enum symbol name by value.
+     * \param [in] value The value.
+     * \return The enum symbol name.
+     */
+    std::string GetName(T value) const;
 
-private:
-  friend class EnumValue;
-  /** Type of container for storing Enum values and symbol names. */
-  typedef std::list<std::pair<int,std::string> > ValueSet;
-  /** The stored Enum values and symbol names. */
-  ValueSet m_valueSet;
+    /**
+     * Get the enum value by name.
+     * \param [in] name Then enum symbol name.
+     * \returns The enum value.
+     */
+    T GetValue(const std::string name) const;
+
+    // Inherited
+    bool Check(const AttributeValue& value) const override;
+    std::string GetValueTypeName() const override;
+    bool HasUnderlyingTypeInformation() const override;
+    std::string GetUnderlyingTypeInformation() const override;
+    Ptr<AttributeValue> Create() const override;
+    bool Copy(const AttributeValue& src, AttributeValue& dst) const override;
+
+  private:
+    /** Type for the pair value, name */
+    using Value = std::pair<T, std::string>;
+    /** Type of container for storing Enum values and symbol names. */
+    using ValueSet = std::list<Value>;
+    /** The stored Enum values and symbol names. */
+    ValueSet m_valueSet;
 };
-
-template <typename T1>
-Ptr<const AttributeAccessor> MakeEnumAccessor (T1 a1);
-
-template <typename T1, typename T2>
-Ptr<const AttributeAccessor> MakeEnumAccessor (T1 a1, T2 a2);
 
 /**
  * Make an EnumChecker pre-configured with a set of allowed
@@ -129,92 +172,218 @@ Ptr<const AttributeAccessor> MakeEnumAccessor (T1 a1, T2 a2);
  * with matching names.  For example,
  * \c MakeEnumChecker (RipNg::SPLIT_HORIZON, "ns3::RipNg::SplitHorizon");
  *
+ * As many additional enum value, name pairs as desired can be passed
+ * as arguments.
+ *
  * \see AttributeChecker
  *
+ * \tparam Ts The type list of additional parameters. Additional parameters
+ *            should be T, string pairs.
  * \returns The AttributeChecker
- * \param [in] v1  An enum value
- * \param [in] n1  The corresponding name.
- * \param [in] v2  A enum value
- * \param [in] n2  The corresponding name.
- * \param [in] v3  A enum value
- * \param [in] n3  The corresponding name.
- * \param [in] v4  A enum value
- * \param [in] n4  The corresponding name.
- * \param [in] v5  A enum value
- * \param [in] n5  The corresponding name.
- * \param [in] v6  A enum value
- * \param [in] n6  The corresponding name.
- * \param [in] v7  A enum value
- * \param [in] n7  The corresponding name.
- * \param [in] v8  A enum value
- * \param [in] n8  The corresponding name.
- * \param [in] v9  A enum value
- * \param [in] n9  The corresponding name.
- * \param [in] v10 An enum value
- * \param [in] n10 The enum name.
- * \param [in] v11 An enum value
- * \param [in] n11 The corresponding name.
- * \param [in] v12 A enum value
- * \param [in] n12 The corresponding name.
- * \param [in] v13 A enum value
- * \param [in] n13 The corresponding name.
- * \param [in] v14 A enum value
- * \param [in] n14 The corresponding name.
- * \param [in] v15 A enum value
- * \param [in] n15 The corresponding name.
- * \param [in] v16 A enum value
- * \param [in] n16 The corresponding name.
- * \param [in] v17 A enum value
- * \param [in] n17 The corresponding name.
- * \param [in] v18 A enum value
- * \param [in] n18 The corresponding name.
- * \param [in] v19 A enum value
- * \param [in] n19 The corresponding name.
- * \param [in] v20 An enum value
- * \param [in] n20 The enum name.
- * \param [in] v21 An enum value
- * \param [in] n21 The corresponding name.
- * \param [in] v22 A enum value
- * \param [in] n22 The corresponding name.
- */ 
-Ptr<const AttributeChecker> MakeEnumChecker (int v1, std::string n1,
-                                             int v2 = 0, std::string n2 = "",
-                                             int v3 = 0, std::string n3 = "",
-                                             int v4 = 0, std::string n4 = "",
-                                             int v5 = 0, std::string n5 = "",
-                                             int v6 = 0, std::string n6 = "",
-                                             int v7 = 0, std::string n7 = "",
-                                             int v8 = 0, std::string n8 = "",
-                                             int v9 = 0, std::string n9 = "",
-                                             int v10 = 0, std::string n10 = "",
-                                             int v11 = 0, std::string n11 = "",
-                                             int v12 = 0, std::string n12 = "",
-                                             int v13 = 0, std::string n13 = "",
-                                             int v14 = 0, std::string n14 = "",
-                                             int v15 = 0, std::string n15 = "",
-                                             int v16 = 0, std::string n16 = "",
-                                             int v17 = 0, std::string n17 = "",
-                                             int v18 = 0, std::string n18 = "",
-                                             int v19 = 0, std::string n19 = "",
-                                             int v20 = 0, std::string n20 = "",
-                                             int v21 = 0, std::string n21 = "",
-                                             int v22 = 0, std::string n22 = "");
-
-
-} // namespace ns3
-
-namespace ns3 {
-
-template <typename T1>
-Ptr<const AttributeAccessor> MakeEnumAccessor (T1 a1)
+ * \param [in] v  The default enum value.
+ * \param [in] n  The corresponding name.
+ * \param [in] args Any additional arguments.
+ */
+template <typename T, typename... Ts>
+Ptr<const AttributeChecker>
+MakeEnumChecker(T v, std::string n, Ts... args)
 {
-  return MakeAccessorHelper<EnumValue> (a1);
+    Ptr<EnumChecker<T>> checker = Create<EnumChecker<T>>();
+    checker->AddDefault(v, n);
+    return MakeEnumChecker(checker, args...);
 }
 
-template <typename T1, typename T2>
-Ptr<const AttributeAccessor> MakeEnumAccessor (T1 a1, T2 a2)
+/**
+ * Handler for enum value, name pairs other than the default.
+ *
+ * \tparam Ts The type list of additional parameters. Additional parameters
+ *            should be T, string pairs.
+ * \returns The AttributeChecker
+ * \param [in] checker The AttributeChecker.
+ * \param [in] v  The next enum value.
+ * \param [in] n  The corresponding name.
+ * \param [in] args Any additional arguments.
+ */
+template <typename T, typename... Ts>
+Ptr<const AttributeChecker>
+MakeEnumChecker(Ptr<EnumChecker<T>> checker, T v, std::string n, Ts... args)
 {
-  return MakeAccessorHelper<EnumValue> (a1, a2);
+    checker->Add(v, n);
+    return MakeEnumChecker(checker, args...);
+}
+
+/**
+ * Terminate the recursion of variadic arguments.
+ *
+ * \returns The \p checker
+ * \param [in] checker The AttributeChecker.
+ */
+// inline to allow tail call optimization
+template <typename T>
+inline Ptr<const AttributeChecker>
+MakeEnumChecker(Ptr<EnumChecker<T>> checker)
+{
+    return checker;
+}
+
+template <typename T, typename T1>
+Ptr<const AttributeAccessor>
+MakeEnumAccessor(T1 a1)
+{
+    return MakeAccessorHelper<EnumValue<T>>(a1);
+}
+
+template <typename T, typename T1, typename T2>
+Ptr<const AttributeAccessor>
+MakeEnumAccessor(T1 a1, T2 a2)
+{
+    return MakeAccessorHelper<EnumValue<T>>(a1, a2);
+}
+
+template <typename T>
+std::string
+EnumValue<T>::SerializeToString(Ptr<const AttributeChecker> checker) const
+{
+    const auto p = dynamic_cast<const EnumChecker<T>*>(PeekPointer(checker));
+    NS_ASSERT(p != nullptr);
+    std::string name = p->GetName(m_value);
+    return name;
+}
+
+template <typename T>
+bool
+EnumValue<T>::DeserializeFromString(std::string value, Ptr<const AttributeChecker> checker)
+{
+    const auto p = dynamic_cast<const EnumChecker<T>*>(PeekPointer(checker));
+    NS_ASSERT(p != nullptr);
+    m_value = p->GetValue(value);
+    return true;
+}
+
+template <typename T>
+EnumChecker<T>::EnumChecker()
+{
+}
+
+template <typename T>
+void
+EnumChecker<T>::AddDefault(T value, std::string name)
+{
+    m_valueSet.emplace_front(value, name);
+}
+
+template <typename T>
+void
+EnumChecker<T>::Add(T value, std::string name)
+{
+    m_valueSet.emplace_back(value, name);
+}
+
+template <typename T>
+std::string
+EnumChecker<T>::GetName(T value) const
+{
+    auto it = std::find_if(m_valueSet.begin(), m_valueSet.end(), [value](Value v) {
+        return v.first == value;
+    });
+
+    NS_ASSERT_MSG(it != m_valueSet.end(),
+                  "invalid enum value " << static_cast<int>(value)
+                                        << "! Missed entry in MakeEnumChecker?");
+    return it->second;
+}
+
+template <typename T>
+T
+EnumChecker<T>::GetValue(const std::string name) const
+{
+    auto it = std::find_if(m_valueSet.begin(), m_valueSet.end(), [name](Value v) {
+        return v.second == name;
+    });
+    NS_ASSERT_MSG(
+        it != m_valueSet.end(),
+        "name "
+            << name
+            << " is not a valid enum value. Missed entry in MakeEnumChecker?\nAvailable values: "
+            << std::accumulate(m_valueSet.begin(),
+                               m_valueSet.end(),
+                               std::string{},
+                               [](std::string a, Value v) {
+                                   if (a.empty())
+                                   {
+                                       return v.second;
+                                   }
+                                   else
+                                   {
+                                       return std::move(a) + ", " + v.second;
+                                   }
+                               }));
+    return it->first;
+}
+
+template <typename T>
+bool
+EnumChecker<T>::Check(const AttributeValue& value) const
+{
+    const auto p = dynamic_cast<const EnumValue<T>*>(&value);
+    if (!p)
+    {
+        return false;
+    }
+    auto pvalue = p->Get();
+    auto it = std::find_if(m_valueSet.begin(), m_valueSet.end(), [pvalue](Value v) {
+        return v.first == pvalue;
+    });
+    return (it != m_valueSet.end());
+}
+
+template <typename T>
+std::string
+EnumChecker<T>::GetValueTypeName() const
+{
+    return "ns3::EnumValue<" + std::string(typeid(T).name()) + ">";
+}
+
+template <typename T>
+bool
+EnumChecker<T>::HasUnderlyingTypeInformation() const
+{
+    return true;
+}
+
+template <typename T>
+std::string
+EnumChecker<T>::GetUnderlyingTypeInformation() const
+{
+    std::ostringstream oss;
+    bool moreValues = false;
+    for (const auto& i : m_valueSet)
+    {
+        oss << (moreValues ? "|" : "") << i.second;
+        moreValues = true;
+    }
+    return oss.str();
+}
+
+template <typename T>
+Ptr<AttributeValue>
+EnumChecker<T>::Create() const
+{
+    return ns3::Create<EnumValue<T>>();
+}
+
+template <typename T>
+bool
+EnumChecker<T>::Copy(const AttributeValue& source, AttributeValue& destination) const
+{
+    const auto src = dynamic_cast<const EnumValue<T>*>(&source);
+    auto dst = dynamic_cast<EnumValue<T>*>(&destination);
+    if (!src || !dst)
+    {
+        return false;
+    }
+    *dst = *src;
+    return true;
 }
 
 } // namespace ns3

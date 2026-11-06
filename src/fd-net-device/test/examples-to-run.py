@@ -1,5 +1,4 @@
-#! /usr/bin/env python
-## -*- Mode: python; py-indent-offset: 4; indent-tabs-mode: nil; coding: utf-8; -*-
+#! /usr/bin/env python3
 
 # A list of C++ examples to run in order to ensure that they remain
 # buildable and runnable over time.  Each tuple in the list contains
@@ -13,7 +12,7 @@ cpp_examples = [
     ("fd-emu-onoff", "False", "True"),
     ("fd-emu-udp-echo", "False", "True"),
     ("realtime-dummy-network", "False", "True"),
-    ("fd2fd-onoff", "False", "True"),
+    ("fd2fd-onoff", "True", "True"),
     ("fd-tap-ping", "False", "True"),
     ("realtime-fd2fd-onoff", "False", "True"),
 ]

@@ -22,21 +22,21 @@ mkdir -p "$log_dir"
 step () { printf '\n== %s\n' "$1"; }
 
 step "build"
-./waf build -j"$MOREV2X_JOBS" > "$log_dir/build.log" 2>&1 || { tail -30 "$log_dir/build.log"; exit 1; }
+ninja -C cmake-cache -j"$MOREV2X_JOBS" > "$log_dir/build.log" 2>&1 || { tail -30 "$log_dir/build.log"; exit 1; }
 tail -1 "$log_dir/build.log"
 
 if [ "$mode" != "--quick" ]; then
   step "ns-3 test suites and examples"
   set +e
-  ./test.py --nowaf > "$log_dir/ns3-tests.log" 2>&1
+  ./test.py --no-build > "$log_dir/ns3-tests.log" 2>&1
   status=$?
   set -e
   grep -E 'of [0-9]+ tests passed' "$log_dir/ns3-tests.log" || true
   rm -f ./*.unimo ./[DU]l*Stats.txt ./*.pcap ./*.tr # hundreds of MB written by ns-3 examples
   if [ "$status" -ne 0 ]; then
     # Anything failing that is not listed in tools/known-failures.txt stops the gate
-    failed="$(grep -E '^(FAIL|CRASH|TIMEOUT): ' "$log_dir/ns3-tests.log" | sed -E 's/^[A-Z]+: (TestSuite|Example) //' | sort -u)"
-    known="$(grep -vE '^(#|$)' tools/known-failures.txt | awk '{print $1}' | sort -u)"
+    failed="$(grep -E '\[[0-9]+/[0-9]+\] (FAIL|CRASH|TIMEOUT): |^(FAIL|CRASH|TIMEOUT): ' "$log_dir/ns3-tests.log" | sed -E 's/^.*(FAIL|CRASH|TIMEOUT): (TestSuite|Example) //' | sort -u)"
+    known="$( (grep -vE '^(#|$)' tools/known-failures.txt || true) | awk '{print $1}' | sort -u)"
     unexpected="$(comm -23 <(printf '%s\n' "$failed") <(printf '%s\n' "$known"))"
     printf 'known failures: %s\n' "$(comm -12 <(printf '%s\n' "$failed") <(printf '%s\n' "$known") | tr '\n' ' ')"
     if [ -n "$unexpected" ]; then

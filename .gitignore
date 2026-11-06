@@ -46,3 +46,8 @@ __pycache__/
 /tagFile.txt
 /*.pcap
 /*.tr
+/cmake-cache/
+/cmake-cache-debug/
+/build-debug/
+/.lock-ns3_*
+/testpy-output/
