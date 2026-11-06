@@ -454,6 +454,11 @@ NrV2XUeMac::GetTypeId (void)
                                         BooleanValue (false),
                                         MakeBooleanAccessor (&NrV2XUeMac::m_AdaptiveScheduling),
                                         MakeBooleanChecker ())
+                .AddAttribute ("Pkeep",
+                                        "Probability of keeping the resources when the reselection counter expires",
+                                        DoubleValue (0.0),
+                                        MakeDoubleAccessor (&NrV2XUeMac::m_keepProbability),
+                                        MakeDoubleChecker<double> (0.0, 1.0))
                 .AddAttribute ("LegacyEvenUeOneShot",
                                         "Force Cresel=1 on even RNTIs, as upstream MoReV2X v4.1 did unconditionally",
                                         BooleanValue (false),
@@ -2817,7 +2822,6 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
              if (m_evalKeepProb->GetValue() > (1-m_keepProbability))
              {
                NS_LOG_UNCOND("Keep the same resources");
-               std::cin.get();
                poolIt->second.m_currentV2XGrant.m_Cresel = GetCresel(poolIt->second.m_currentV2XGrant.m_RRI);
              }
              else

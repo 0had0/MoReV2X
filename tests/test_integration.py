@@ -22,6 +22,8 @@ RX_COLUMNS = ["rxTime", "packetID", "distance", "txID", "rxID", "decoded", "loss
               "trigger", "announced", "latency"]
 TX_COLUMNS = ["node", "packet", "genTime", "txIndex", "txTime", "frame", "subframe", "Cresel", "RRI",
               "psschRbStart", "psschRbLen", "psschRbLenTb", "pscchRbStart", "pscchRbLen"]
+RESERVATION_COLUMNS = ["node", "time", "unusedSubchannelRatio", "unusedReservations", "reservations",
+                       "latencyReselections", "sizeReselections", "counterReselections", "transmissions"]
 POS_COLUMNS = ["time", "node", "x", "y", "z", "vx", "vy", "vz", "traffic", "inside"]
 
 
@@ -160,10 +162,26 @@ class PerNodeSchedulers(ScratchRuns):
         folder, _ = self.highway("--Vehicles=4", "--simTime=1", "--Periodic", "--mcs=13",
                                  "--SchedulerMap=2-3:dynamic+retx+rsrp=-110")
         applied = pd.read_csv(os.path.join(folder, "SchedulerMap.txt"), header=None,
-                              names=["node", "dynamic", "retx", "reeval", "rsrp", "mcs"]).set_index("node")
+                              names=["node", "dynamic", "retx", "reeval", "rsrp", "mcs", "pkeep"]).set_index("node")
         self.assertEqual(applied.dynamic.tolist(), [0, 1, 1, 0])
         self.assertEqual(applied.retx.tolist(), [0, 1, 1, 0])
         self.assertEqual(applied.rsrp.tolist(), [-128, -110, -110, -128])
+
+    def counter_reselections(self, *flags):
+        # SSPSlog.txt is only flushed by a later selection, so it can stay empty here
+        folder, _ = self.highway("--Vehicles=12", "--simTime=8", "--Periodic", "--mcs=13", *flags)
+        log = read(folder, "ReservationsLog.txt", RESERVATION_COLUMNS)
+        return log.groupby("node").counterReselections.sum()
+
+    def test_pkeep_holds_grants_past_the_counter(self):
+        selections = self.counter_reselections("--pkeep=1")
+        self.assertEqual(selections.max(), 1, "one selection, then the grant is kept")
+        self.assertGreater(self.counter_reselections("--pkeep=0").mean(), 1)
+
+    def test_pkeep_is_per_node(self):
+        selections = self.counter_reselections("--SchedulerMap=1-6:pkeep=1;7-12:pkeep=0")
+        self.assertEqual(selections[selections.index <= 6].max(), 1)
+        self.assertGreater(selections[selections.index > 6].mean(), 1)
 
     def test_unknown_option_is_refused(self):
         with self.assertRaises(AssertionError):
