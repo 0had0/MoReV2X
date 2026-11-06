@@ -120,6 +120,11 @@ private:
     dynamic->GetAttribute ("SlGrantMcs", mcs);
     NS_TEST_ASSERT_MSG_EQ (mcs.Get (), 7, "SlGrantMcs was not applied");
 
+    dynamic->SetAttribute ("Pkeep", DoubleValue (0.8));
+    DoubleValue keep;
+    sps->GetAttribute ("Pkeep", keep);
+    NS_TEST_ASSERT_MSG_EQ_TOL (keep.Get (), 0.0, 1e-9, "Pkeep leaked to the other MAC");
+
     Ptr<NrV2XUeMac> fresh = CreateObject<NrV2XUeMac> ();
     fresh->GetAttribute ("DynamicScheduling", flag);
     NS_TEST_ASSERT_MSG_EQ (flag.Get (), false, "defaults were modified");

@@ -122,6 +122,8 @@ void ApplySchedulerOption (Ptr<NrV2XUeMac> mac, const std::string &option)
     mac->SetAttribute ("AllSlotsReEvaluation", BooleanValue (true));
   else if (key == "umh")
     mac->SetAttribute ("UMHReEvaluation", BooleanValue (true));
+  else if (key == "pkeep")
+    mac->SetAttribute ("Pkeep", DoubleValue (std::stod (value)));
   else if (key == "rsrp")
     mac->SetAttribute ("RSRPthreshold", DoubleValue (std::stod (value)));
   else if (key == "mcs")
@@ -157,15 +159,16 @@ void ApplySchedulerMap (const std::string &schedulerMap, NodeContainer VehicleUE
   {
     Ptr<NrV2XUeMac> mac = (*L)->GetDevice (0)->GetObject<NistLteUeNetDevice> ()->GetMac ();
     BooleanValue dynamic, reTx, reEvaluation;
-    DoubleValue rsrp;
+    DoubleValue rsrp, pkeep;
     UintegerValue grantMcs;
     mac->GetAttribute ("DynamicScheduling", dynamic);
     mac->GetAttribute ("EnableReTx", reTx);
     mac->GetAttribute ("AllowReEvaluation", reEvaluation);
     mac->GetAttribute ("RSRPthreshold", rsrp);
     mac->GetAttribute ("SlGrantMcs", grantMcs);
+    mac->GetAttribute ("Pkeep", pkeep);
     mapFile << (*L)->GetId () << "," << dynamic.Get () << "," << reTx.Get () << "," << reEvaluation.Get ()
-            << "," << rsrp.Get () << "," << grantMcs.Get () << std::endl;
+            << "," << rsrp.Get () << "," << grantMcs.Get () << "," << pkeep.Get () << std::endl;
   }
 }
 
@@ -667,6 +670,7 @@ main (int argc, char *argv[])
   bool RxCresel = false;
 
   bool LegacyEvenUeOneShot = false;
+  double Pkeep = 0.0;
   bool PositionLog = false;
   std::string SchedulerMap = "";
 
@@ -739,6 +743,7 @@ main (int argc, char *argv[])
   cmd.AddValue ("SchedulerMap", "Per-node scheduler, e.g. 1-10:sps;11-20:dynamic+retx+rsrp=-110", SchedulerMap);
   cmd.AddValue ("UdpFiles", "Write the application layer logs TxFile.txt and RxFile.txt", enableUDPfiles);
   cmd.AddValue ("PosLog", "Write vehicle positions to posFile.txt every 100 ms", PositionLog);
+  cmd.AddValue ("pkeep", "Probability of keeping the resources when Cresel expires", Pkeep);
   cmd.AddValue ("LegacyEvenUeOneShot", "Force Cresel=1 on even UEs, as upstream MoReV2X v4.1 did", LegacyEvenUeOneShot);
 
 
@@ -931,6 +936,7 @@ main (int argc, char *argv[])
 
 
   readme << " - RSRP threshold = " << MAC_RSRPthreshold << " dBm" << std::endl;
+  readme << " - Pkeep = " << Pkeep << std::endl;
   readme << " - RSSI threshold = " << CBR_RSSIthreshold << " dBm" << std::endl;
   readme << " - PHY sensitivity = " << RefSensitivity << " dBm" << std::endl;
 
@@ -996,6 +1002,7 @@ main (int argc, char *argv[])
   Config::SetDefault ("ns3::NrV2XUeMac::UMHReEvaluation", BooleanValue (UMH_ReEvaluation));
   Config::SetDefault ("ns3::NrV2XUeMac::FrequencyReuse", BooleanValue (FrequencyReuse));
   Config::SetDefault ("ns3::NrV2XUeMac::LegacyEvenUeOneShot", BooleanValue (LegacyEvenUeOneShot));
+  Config::SetDefault ("ns3::NrV2XUeMac::Pkeep", DoubleValue (Pkeep));
 
   externalMobility = !MobilityConfig.sumoCfg.empty () || !MobilityConfig.traceCsv.empty ();
   if (externalMobility)
