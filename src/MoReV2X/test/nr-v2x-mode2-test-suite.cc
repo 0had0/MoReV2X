@@ -26,6 +26,29 @@ private:
   }
 };
 
+class SubframeSubtractionTestCase : public TestCase
+{
+public:
+  SubframeSubtractionTestCase () : TestCase ("SubframeInfo subtraction counts slots across the SFN wrap") {}
+
+private:
+  virtual void DoRun (void)
+  {
+    typedef SidelinkCommResourcePool::SubframeInfo Slot;
+    Slot later, earlier;
+
+    later.frameNo = 10; later.subframeNo = 5;
+    earlier.frameNo = 9; earlier.subframeNo = 8;
+    Slot gap = later - earlier;
+    NS_TEST_ASSERT_MSG_EQ (gap.frameNo * 10 + gap.subframeNo, 7, "same SFN cycle");
+
+    later.frameNo = 0; later.subframeNo = 2;
+    earlier.frameNo = 1023; earlier.subframeNo = 9;
+    gap = later - earlier;
+    NS_TEST_ASSERT_MSG_EQ (gap.frameNo * 10 + gap.subframeNo, 3, "across the SFN wrap");
+  }
+};
+
 class SelectionTimersTestCase : public TestCase
 {
 public:
@@ -153,6 +176,7 @@ public:
     : TestSuite ("nr-v2x-mode2", UNIT)
   {
     AddTestCase (new SubtractFramesTestCase, TestCase::QUICK);
+    AddTestCase (new SubframeSubtractionTestCase, TestCase::QUICK);
     AddTestCase (new SelectionTimersTestCase, TestCase::QUICK);
     AddTestCase (new ReselectionCounterTestCase, TestCase::QUICK);
     AddTestCase (new ResidualCsrTestCase, TestCase::QUICK);
