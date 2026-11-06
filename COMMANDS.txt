@@ -1,0 +1,174 @@
+MoReV2X command reference
+=========================
+Everything here runs from the repository root, in a shell that sourced .env.
+
+
+1. EVERY SESSION
+----------------
+source .env                     Python 2 for waf, Python 3 and SUMO from .venv, compiler flags.
+morev2x_env_off                 Undo it in this shell.
+
+The groupcast simulator is not touched: .env replaces SUMO_HOME in this shell only.
+
+
+2. FIRST TIME ON A NEW MACHINE
+------------------------------
+Needs: Xcode command line tools, Python 2.7 (MacPorts python27 here, or set
+MOREV2X_PYTHON2=/path/to/python2.7 before sourcing), uv, sqlite3, gsl, libxml2.
+
+tools/bootstrap.sh              Creates .venv, installs SUMO, configures waf, enables the git hooks.
+./waf build -j8                 About 10 minutes for a full build, about 900 MB in build/.
+
+
+3. BUILD
+--------
+./waf build -j8                 Incremental build.
+./waf clean                     Remove objects, keep the configuration.
+./waf list                      Programs that can be run.
+./waf configure --disable-python --enable-examples --enable-tests --build-profile=optimized --out=build/optimized
+                                Needed after adding a module or changing CXXFLAGS in .env.
+
+Debug build, slower, with NS_ASSERT and NS_LOG active, in its own folder:
+./waf configure --disable-python --enable-examples --enable-tests --build-profile=debug --out=build/debug
+./waf build -j8
+Switch back afterwards by repeating the optimized configure line. No rebuild is needed.
+
+
+4. RUN A SIMULATION
+-------------------
+Results go to results/<scenario name>/ in the current directory.
+
+Default highway, 100 vehicles, 10 s, SPS:
+./waf --run "HIGHWAY --Vehicles=100 --simTime=10 --Periodic --mcs=13"
+
+Faster, without waf checking the build:
+build/optimized/scratch/HIGHWAY --Vehicles=100 --simTime=10 --Periodic --mcs=13
+
+Traffic model, pick exactly one:  --Periodic  --Aperiodic  --Mixed --Percentage=50  --ETSI
+Scheduler:     --Dynamic  --ReTx  --ReEvaluation  --AllSlots  --UMH  --Adaptive
+               --RSRP=-128  --PDB=100  --FreqReuse --ReuseDist=500
+PHY:           --mcs=13  --SubChannel=10  --ChannelBW=10  --Numerology=0  --ueTxPower=23
+Randomness:    --seed=1  --runNo=1
+Extra logs:    --UdpFiles=true  --PosLog=true
+
+Careful:
+  --mcs=0 transmits nothing, the MAC treats 0 as "sidelink off".
+  --noIBE=false turns IBE off. --noIBE on its own turns it on, the name is inverted.
+  All options:  build/optimized/scratch/HIGHWAY --PrintHelp
+
+
+5. DIFFERENT SCHEDULERS ON DIFFERENT NODES
+------------------------------------------
+--SchedulerMap="<first>-<last>:<option>+<option>;..."
+
+Options: sps dynamic retx noretx reeval noreeval allslots umh rsrp=<dBm> mcs=<index>
+UE node ids start at 1. Node 0 is the PGW.
+
+./waf --run "HIGHWAY --Vehicles=20 --simTime=10 --Periodic --mcs=13 --SchedulerMap=1-10:sps;11-20:dynamic+retx"
+
+The result of the map is written to results/<scenario>/SchedulerMap.txt.
+Columns: node,dynamic,retx,reEvaluation,rsrpThreshold,mcs
+
+
+6. SUMO MOBILITY
+----------------
+Live coupling over TraCI, ns-3 starts SUMO itself:
+./waf --run "HIGHWAY --Vehicles=80 --simTime=10 --Periodic --mcs=13 --sumoCfg=scenarios/sumo/highway_2km/highway.sumocfg --sumoWarmup=90 --PosLog=true"
+
+--Vehicles is the size of the node pool, not the number of cars. If the last line of
+the run reports "vehicles without a node" above 0, raise it.
+The <end> time in the .sumocfg must exceed --simTime + --sumoWarmup + 1.
+
+Record once, replay without SUMO, gives identical mobility in every run:
+sumo -c scenarios/sumo/highway_2km/highway.sumocfg --end 120 --fcd-output results/fcd.xml
+tools/fcd2trace.py results/fcd.xml results/trace.csv --begin 90
+./waf --run "HIGHWAY --Vehicles=80 --simTime=10 --Periodic --mcs=13 --mobilityTrace=results/trace.csv"
+
+Rebuild the road network after editing the .nod.xml or .edg.xml:
+cd scenarios/sumo/highway_2km
+netconvert --node-files highway.nod.xml --edge-files highway.edg.xml -o highway.net.xml --no-turnarounds true
+cd -
+
+
+7. TESTS
+--------
+tools/gate.sh                   Everything: build, ns-3 suites and examples, scenario tests.
+tools/gate.sh --quick           Skips the ns-3 suites. Does not unlock a commit.
+tools/debug-check.sh            All scheduler modes with NS_ASSERT on, about 10 minutes the
+                                first time. Run it after changing the MAC: the optimized
+                                build ignores assertions, this one found 2 real bugs.
+./test.py --nowaf               All ns-3 suites and examples.
+./test.py --nowaf -s nr-v2x-mode2       One suite.
+./test.py --nowaf -s sumo-mobility
+.venv/bin/python -m unittest discover -s tests -v       MoReV2X scenario tests.
+.venv/bin/python -m unittest tests.test_integration.SumoMobility -v    One test class.
+
+Logs of the last gate run are in build/gate/.
+lte-x2-handover is an accepted failure, listed in tools/known-failures.txt. Anything else
+that fails stops the gate. The gate refuses to run on a tree with unstaged changes.
+
+
+8. GIT
+------
+The hooks live in tools/hooks and are enabled by tools/bootstrap.sh, or by:
+git config core.hooksPath tools/hooks
+
+pre-commit runs tools/gate.sh unless it already passed for exactly the staged content.
+Stage everything first: the gate tests the working tree, and any later change re-runs it. commit-msg enforces
+Conventional Commits, like "feat(mac): add a per-node RSRP offset".
+
+git checkout -b feature/<short-description>     Never work on main.
+git add <files>
+tools/gate.sh                                   Runs on the staged tree.
+git commit
+git push -u origin feature/<short-description>
+gh pr create -R 0had0/MoReV2X --base main       Without -R, gh targets the upstream repository.
+
+Remotes: origin is 0had0/MoReV2X. upstream and fork-* are read-only, their push URL is
+disabled on purpose.
+git fetch upstream                              See what changed upstream.
+
+
+9. NOTEBOOKS
+------------
+.venv/bin/jupyter lab docs/notebooks            Open the guide.
+
+To run them again from scratch, which also re-runs the simulations they plot:
+.venv/bin/jupyter nbconvert --to notebook --execute --inplace docs/notebooks/*.ipynb
+
+
+10. WHEN SOMETHING BREAKS
+-------------------------
+Thousands of "expected unqualified-id" errors in <version>
+    A file called VERSION is back in the root. On a case-insensitive disk it shadows the
+    C++ header <version>. This repository uses VERSION.txt.
+
+Simulation crawls, memory grows by GB per minute, SSPSlog stays empty
+    The packets carry no V2X tag, so the PDB is garbage. UdpClient::Send and
+    PacketSink::HandleRead must stay __attribute__((weak)) in src/applications/model/.
+    test_v2x_tag_reaches_the_mac catches this.
+
+"Could not open directory=" in a test
+    The test runner finds the source root through VERSION.txt and LICENSE.
+
+"Can not connect to sumo via traci"
+    Run the sumo command shown in the message by hand. Usually a wrong path to the
+    .sumocfg, or `which sumo` is not the one in .venv because .env was not sourced.
+
+"Sumo was closed unexpectedly"
+    SUMO reached the <end> of its .sumocfg before ns-3 finished.
+
+No CBR_OutputFile.txt lines, or a thin ReceivedLog.txt, with custom mobility
+    Both logs only cover a window of x coordinates. HIGHWAY widens it in SUMO mode.
+    Elsewhere set ns3::NrV2XUePhy::CbrMinX/CbrMaxX and
+    ns3::NrV2XSpectrumPhy::MetricsMinX/MetricsMaxX.
+
+Python errors from waf
+    `python --version` must print 2.7. Source .env.
+
+A run reports garbage only with --ETSI
+    It needs numpy, matplotlib and tqdm in `python3`, which .env maps to .venv.
+
+Disk
+    du -sh build results .venv
+    results/ folders grow by about 30 MB per 10 s of 80 vehicles.

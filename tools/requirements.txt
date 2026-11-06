@@ -1,0 +1,11 @@
+eclipse-sumo==1.28.0
+ipykernel
+jupyterlab
+matplotlib
+nbclient
+nbformat
+numpy
+pandas
+sumolib==1.28.0
+traci==1.28.0
+tqdm

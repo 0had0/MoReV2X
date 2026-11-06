@@ -16,6 +16,11 @@ Should you need any information about the code and how to run it please feel fre
 
 The upgrade of MoReV2X to the latest version of ns-3 is currently underway, stay tuned!
 
+# Fork notes
+This fork builds and runs natively on Apple Silicon, adds SUMO mobility and per-node scheduler settings.
+Run `source .env` first. Commands are in [COMMANDS.txt](COMMANDS.txt), the guide is in [docs/notebooks](docs/notebooks/00_start_here.ipynb).
+On macOS use those commands, not the ones below.
+
 # Getting Started
 First, you need to download the MoReV2X simulator on your computer. To do so, run the following command:   
 `git clone https://github.com/LLusvarghi/MoReV2X.git `

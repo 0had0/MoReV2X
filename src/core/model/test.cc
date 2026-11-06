@@ -450,7 +450,7 @@ TestRunnerImpl::IsTopLevelSourceDir (std::string path) const
   std::list<std::string> files = SystemPath::ReadFiles (path);
   for (std::list<std::string>::const_iterator i = files.begin (); i != files.end (); ++i)
     {
-      if (*i == "VERSION")
+      if (*i == "VERSION.txt")
         {
           haveVersion = true;
         }

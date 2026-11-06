@@ -1,0 +1,4 @@
+<edges>
+    <edge id="eastbound" from="west" to="east" numLanes="3" speed="36.11"/>
+    <edge id="westbound" from="east" to="west" numLanes="3" speed="36.11"/>
+</edges>
