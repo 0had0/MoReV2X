@@ -505,7 +505,13 @@ NrV2XUeMac::NrV2XUeMac ()
    m_keepProbability (0.0),
    m_sizeThreshold (0.2),
    m_sensingWindow (1100),
-   m_oneShotGrant (false)
+   m_oneShotGrant (false),
+   m_raPreambleId (0),
+   m_frameNo (0),
+   m_subframeNo (0),
+   m_slHasDataToTx (false),
+   m_validReservation (false),
+   m_updateReservation (false)
 {
    NS_LOG_FUNCTION (this);
    
