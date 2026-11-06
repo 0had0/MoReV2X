@@ -46,7 +46,7 @@ build/optimized/scratch/HIGHWAY --Vehicles=100 --simTime=10 --Periodic --mcs=13
 
 Traffic model, pick exactly one:  --Periodic  --Aperiodic  --Mixed --Percentage=50  --ETSI
 Scheduler:     --Dynamic  --ReTx  --ReEvaluation  --AllSlots  --UMH  --Adaptive
-               --RSRP=-128  --PDB=100  --FreqReuse --ReuseDist=500
+               --RSRP=-128  --PDB=100  --pkeep=0.5  --FreqReuse --ReuseDist=500
 PHY:           --mcs=13  --SubChannel=10  --ChannelBW=10  --Numerology=0  --ueTxPower=23
 Randomness:    --seed=1  --runNo=1
 Extra logs:    --UdpFiles=true  --PosLog=true
@@ -61,13 +61,13 @@ Careful:
 ------------------------------------------
 --SchedulerMap="<first>-<last>:<option>+<option>;..."
 
-Options: sps dynamic retx noretx reeval noreeval allslots umh rsrp=<dBm> mcs=<index>
+Options: sps dynamic retx noretx reeval noreeval allslots umh rsrp=<dBm> mcs=<index> pkeep=<p>
 UE node ids start at 1. Node 0 is the PGW.
 
 ./waf --run "HIGHWAY --Vehicles=20 --simTime=10 --Periodic --mcs=13 --SchedulerMap=1-10:sps;11-20:dynamic+retx"
 
 The result of the map is written to results/<scenario>/SchedulerMap.txt.
-Columns: node,dynamic,retx,reEvaluation,rsrpThreshold,mcs
+Columns: node,dynamic,retx,reEvaluation,rsrpThreshold,mcs,pkeep
 
 
 6. SUMO MOBILITY
