@@ -1,4 +1,3 @@
-/* -*-  Mode: C++; c-file-style: "gnu"; indent-tabs-mode:nil; -*- */
 /*
  * Copyright (c) 2005,2006,2007 INRIA
  *
@@ -18,180 +17,226 @@
  * Author: Mathieu Lacage <mathieu.lacage@sophia.inria.fr>
  */
 
-
-#include "ns3/core-module.h"
-#include "ns3/network-module.h"
-#include "ns3/applications-module.h"
-#include "ns3/mobility-module.h"
-#include "ns3/config-store-module.h"
-#include "ns3/wifi-module.h"
 #include "ns3/athstats-helper.h"
-
-#include <iostream>
+#include "ns3/boolean.h"
+#include "ns3/command-line.h"
+#include "ns3/config.h"
+#include "ns3/mobility-helper.h"
+#include "ns3/mobility-model.h"
+#include "ns3/on-off-helper.h"
+#include "ns3/packet-socket-address.h"
+#include "ns3/packet-socket-helper.h"
+#include "ns3/ssid.h"
+#include "ns3/string.h"
+#include "ns3/yans-wifi-channel.h"
+#include "ns3/yans-wifi-helper.h"
 
 using namespace ns3;
 
+/// True for verbose output.
 static bool g_verbose = true;
 
+/**
+ * MAC-level TX trace.
+ *
+ * \param context The context.
+ * \param p The packet.
+ */
 void
-DevTxTrace (std::string context, Ptr<const Packet> p)
+DevTxTrace(std::string context, Ptr<const Packet> p)
 {
-  if (g_verbose)
+    if (g_verbose)
     {
-      std::cout << " TX p: " << *p << std::endl;
-    }
-}
-void
-DevRxTrace (std::string context, Ptr<const Packet> p)
-{
-  if (g_verbose)
-    {
-      std::cout << " RX p: " << *p << std::endl;
-    }
-}
-void
-PhyRxOkTrace (std::string context, Ptr<const Packet> packet, double snr, WifiMode mode, enum WifiPreamble preamble)
-{
-  if (g_verbose)
-    {
-      std::cout << "PHYRXOK mode=" << mode << " snr=" << snr << " " << *packet << std::endl;
-    }
-}
-void
-PhyRxErrorTrace (std::string context, Ptr<const Packet> packet, double snr)
-{
-  if (g_verbose)
-    {
-      std::cout << "PHYRXERROR snr=" << snr << " " << *packet << std::endl;
-    }
-}
-void
-PhyTxTrace (std::string context, Ptr<const Packet> packet, WifiMode mode, WifiPreamble preamble, uint8_t txPower)
-{
-  if (g_verbose)
-    {
-      std::cout << "PHYTX mode=" << mode << " " << *packet << std::endl;
-    }
-}
-void
-PhyStateTrace (std::string context, Time start, Time duration, enum WifiPhy::State state)
-{
-  if (g_verbose)
-    {
-      std::cout << " state=" << state << " start=" << start << " duration=" << duration << std::endl;
+        std::cout << " TX p: " << *p << std::endl;
     }
 }
 
+/**
+ * MAC-level RX trace.
+ *
+ * \param context The context.
+ * \param p The packet.
+ */
+void
+DevRxTrace(std::string context, Ptr<const Packet> p)
+{
+    if (g_verbose)
+    {
+        std::cout << " RX p: " << *p << std::endl;
+    }
+}
+
+/**
+ * PHY-level RX OK trace
+ *
+ * \param context The context.
+ * \param packet The packet.
+ * \param snr The SNR.
+ * \param mode The wifi mode.
+ * \param preamble The preamble.
+ */
+void
+PhyRxOkTrace(std::string context,
+             Ptr<const Packet> packet,
+             double snr,
+             WifiMode mode,
+             WifiPreamble preamble)
+{
+    if (g_verbose)
+    {
+        std::cout << "PHYRXOK mode=" << mode << " snr=" << snr << " " << *packet << std::endl;
+    }
+}
+
+/**
+ * PHY-level RX error trace
+ *
+ * \param context The context.
+ * \param packet The packet.
+ * \param snr The SNR.
+ */
+void
+PhyRxErrorTrace(std::string context, Ptr<const Packet> packet, double snr)
+{
+    if (g_verbose)
+    {
+        std::cout << "PHYRXERROR snr=" << snr << " " << *packet << std::endl;
+    }
+}
+
+/**
+ * PHY-level TX trace.
+ *
+ * \param context The context.
+ * \param packet The packet.
+ * \param mode The wifi mode.
+ * \param preamble The preamble.
+ * \param txPower The TX power.
+ */
+void
+PhyTxTrace(std::string context,
+           Ptr<const Packet> packet,
+           WifiMode mode,
+           WifiPreamble preamble,
+           uint8_t txPower)
+{
+    if (g_verbose)
+    {
+        std::cout << "PHYTX mode=" << mode << " " << *packet << std::endl;
+    }
+}
+
+/**
+ * PHY state trace.
+ *
+ * \param context The context.
+ * \param start Start time of the state.
+ * \param duration Duration of the state.
+ * \param state The state.
+ */
+void
+PhyStateTrace(std::string context, Time start, Time duration, WifiPhyState state)
+{
+    if (g_verbose)
+    {
+        std::cout << " state=" << state << " start=" << start << " duration=" << duration
+                  << std::endl;
+    }
+}
+
+/**
+ * Move a node position by 5m on the x axis every second, up to 210m.
+ *
+ * \param node The node.
+ */
 static void
-SetPosition (Ptr<Node> node, Vector position)
+AdvancePosition(Ptr<Node> node)
 {
-  Ptr<MobilityModel> mobility = node->GetObject<MobilityModel> ();
-  mobility->SetPosition (position);
-}
-
-static Vector
-GetPosition (Ptr<Node> node)
-{
-  Ptr<MobilityModel> mobility = node->GetObject<MobilityModel> ();
-  return mobility->GetPosition ();
-}
-
-static void 
-AdvancePosition (Ptr<Node> node) 
-{
-  Vector pos = GetPosition (node);
-  pos.x += 5.0;
-  if (pos.x >= 210.0) 
+    Ptr<MobilityModel> mobility = node->GetObject<MobilityModel>();
+    Vector pos = mobility->GetPosition();
+    pos.x += 5.0;
+    if (pos.x >= 210.0)
     {
-      return;
+        return;
     }
-  SetPosition (node, pos);
+    mobility->SetPosition(pos);
 
-  if (g_verbose)
-    {
-      //std::cout << "x="<<pos.x << std::endl;
-    }
-  Simulator::Schedule (Seconds (1.0), &AdvancePosition, node);
+    Simulator::Schedule(Seconds(1.0), &AdvancePosition, node);
 }
 
-int main (int argc, char *argv[])
+int
+main(int argc, char* argv[])
 {
-  CommandLine cmd;
-  cmd.AddValue ("verbose", "Print trace information if true", g_verbose);
+    CommandLine cmd(__FILE__);
+    cmd.AddValue("verbose", "Print trace information if true", g_verbose);
+    cmd.Parse(argc, argv);
 
-  cmd.Parse (argc, argv);
+    Packet::EnablePrinting();
 
-  Packet::EnablePrinting ();
+    WifiHelper wifi;
+    MobilityHelper mobility;
+    NodeContainer stas;
+    NodeContainer ap;
+    NetDeviceContainer staDevs;
+    PacketSocketHelper packetSocket;
 
-  // enable rts cts all the time.
-  Config::SetDefault ("ns3::WifiRemoteStationManager::RtsCtsThreshold", StringValue ("0"));
-  // disable fragmentation
-  Config::SetDefault ("ns3::WifiRemoteStationManager::FragmentationThreshold", StringValue ("2200"));
+    stas.Create(2);
+    ap.Create(1);
 
-  WifiHelper wifi = WifiHelper::Default ();
-  MobilityHelper mobility;
-  NodeContainer stas;
-  NodeContainer ap;
-  NetDeviceContainer staDevs;
-  PacketSocketHelper packetSocket;
+    // give packet socket powers to nodes.
+    packetSocket.Install(stas);
+    packetSocket.Install(ap);
 
-  stas.Create (2);
-  ap.Create (1);
+    WifiMacHelper wifiMac;
+    YansWifiPhyHelper wifiPhy;
+    YansWifiChannelHelper wifiChannel = YansWifiChannelHelper::Default();
+    wifiPhy.SetChannel(wifiChannel.Create());
+    Ssid ssid = Ssid("wifi-default");
+    // setup stas.
+    wifiMac.SetType("ns3::StaWifiMac",
+                    "ActiveProbing",
+                    BooleanValue(true),
+                    "Ssid",
+                    SsidValue(ssid));
+    staDevs = wifi.Install(wifiPhy, wifiMac, stas);
+    // setup ap.
+    wifiMac.SetType("ns3::ApWifiMac", "Ssid", SsidValue(ssid));
+    wifi.Install(wifiPhy, wifiMac, ap);
 
-  // give packet socket powers to nodes.
-  packetSocket.Install (stas);
-  packetSocket.Install (ap);
+    // mobility.
+    mobility.Install(stas);
+    mobility.Install(ap);
 
-  NqosWifiMacHelper wifiMac = NqosWifiMacHelper::Default ();
-  YansWifiPhyHelper wifiPhy = YansWifiPhyHelper::Default ();
-  YansWifiChannelHelper wifiChannel = YansWifiChannelHelper::Default ();
-  wifiPhy.SetChannel (wifiChannel.Create ());
-  Ssid ssid = Ssid ("wifi-default");
-  wifi.SetRemoteStationManager ("ns3::ArfWifiManager");
-  // setup stas.
-  wifiMac.SetType ("ns3::StaWifiMac",
-                   "Ssid", SsidValue (ssid),
-                   "ActiveProbing", BooleanValue (false));
-  staDevs = wifi.Install (wifiPhy, wifiMac, stas);
-  // setup ap.
-  wifiMac.SetType ("ns3::ApWifiMac",
-                   "Ssid", SsidValue (ssid));
-  wifi.Install (wifiPhy, wifiMac, ap);
+    Simulator::Schedule(Seconds(1.0), &AdvancePosition, ap.Get(0));
 
-  // mobility.
-  mobility.Install (stas);
-  mobility.Install (ap);
+    PacketSocketAddress socket;
+    socket.SetSingleDevice(staDevs.Get(0)->GetIfIndex());
+    socket.SetPhysicalAddress(staDevs.Get(1)->GetAddress());
+    socket.SetProtocol(1);
 
-  Simulator::Schedule (Seconds (1.0), &AdvancePosition, ap.Get (0));
+    OnOffHelper onoff("ns3::PacketSocketFactory", Address(socket));
+    onoff.SetConstantRate(DataRate("500kb/s"));
 
-  PacketSocketAddress socket;
-  socket.SetSingleDevice (staDevs.Get (0)->GetIfIndex ());
-  socket.SetPhysicalAddress (staDevs.Get (1)->GetAddress ());
-  socket.SetProtocol (1);
+    ApplicationContainer apps = onoff.Install(stas.Get(0));
+    apps.Start(Seconds(0.5));
+    apps.Stop(Seconds(43.0));
 
-  OnOffHelper onoff ("ns3::PacketSocketFactory", Address (socket));
-  onoff.SetConstantRate (DataRate ("500kb/s"));
+    Simulator::Stop(Seconds(44.0));
 
-  ApplicationContainer apps = onoff.Install (stas.Get (0));
-  apps.Start (Seconds (0.5));
-  apps.Stop (Seconds (43.0));
+    Config::Connect("/NodeList/*/DeviceList/*/Mac/MacTx", MakeCallback(&DevTxTrace));
+    Config::Connect("/NodeList/*/DeviceList/*/Mac/MacRx", MakeCallback(&DevRxTrace));
+    Config::Connect("/NodeList/*/DeviceList/*/Phy/State/RxOk", MakeCallback(&PhyRxOkTrace));
+    Config::Connect("/NodeList/*/DeviceList/*/Phy/State/RxError", MakeCallback(&PhyRxErrorTrace));
+    Config::Connect("/NodeList/*/DeviceList/*/Phy/State/Tx", MakeCallback(&PhyTxTrace));
+    Config::Connect("/NodeList/*/DeviceList/*/Phy/State/State", MakeCallback(&PhyStateTrace));
 
-  Simulator::Stop (Seconds (44.0));
+    AthstatsHelper athstats;
+    athstats.EnableAthstats("athstats-sta", stas);
+    athstats.EnableAthstats("athstats-ap", ap);
 
-  Config::Connect ("/NodeList/*/DeviceList/*/Mac/MacTx", MakeCallback (&DevTxTrace));
-  Config::Connect ("/NodeList/*/DeviceList/*/Mac/MacRx", MakeCallback (&DevRxTrace));
-  Config::Connect ("/NodeList/*/DeviceList/*/Phy/State/RxOk", MakeCallback (&PhyRxOkTrace));
-  Config::Connect ("/NodeList/*/DeviceList/*/Phy/State/RxError", MakeCallback (&PhyRxErrorTrace));
-  Config::Connect ("/NodeList/*/DeviceList/*/Phy/State/Tx", MakeCallback (&PhyTxTrace));
-  Config::Connect ("/NodeList/*/DeviceList/*/Phy/State/State", MakeCallback (&PhyStateTrace));
+    Simulator::Run();
 
-  AthstatsHelper athstats;
-  athstats.EnableAthstats ("athstats-sta", stas);
-  athstats.EnableAthstats ("athstats-ap", ap);
+    Simulator::Destroy();
 
-  Simulator::Run ();
-
-  Simulator::Destroy ();
-
-  return 0;
+    return 0;
 }

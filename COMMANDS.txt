@@ -1,11 +1,13 @@
-MoReV2X command reference
-=========================
+MoReV2X command reference, ns-3.42 branch
+========================================
+This branch runs on the CTTC ns-3 v2x tree, ns-3.42, the groupcast base. develop stays on ns-3.22.
+
 Everything here runs from the repository root, in a shell that sourced .env.
 
 
 1. EVERY SESSION
 ----------------
-source .env                     Python 2 for waf, Python 3 and SUMO from .venv, compiler flags.
+source .env                     Python 3 and SUMO from .venv, compiler flags.
 morev2x_env_off                 Undo it in this shell.
 
 The groupcast simulator is not touched: .env replaces SUMO_HOME in this shell only.
@@ -13,25 +15,24 @@ The groupcast simulator is not touched: .env replaces SUMO_HOME in this shell on
 
 2. FIRST TIME ON A NEW MACHINE
 ------------------------------
-Needs: Xcode command line tools, Python 2.7 (MacPorts python27 here, or set
-MOREV2X_PYTHON2=/path/to/python2.7 before sourcing), uv, sqlite3, gsl, libxml2.
+Needs: Xcode command line tools, cmake, ninja, uv, sqlite3, gsl, libxml2.
 
-tools/bootstrap.sh              Creates .venv, installs SUMO, configures waf, enables the git hooks.
-./waf build -j8                 About 10 minutes for a full build, about 900 MB in build/.
+tools/bootstrap.sh              Creates .venv, installs SUMO, configures ns-3, enables the git hooks.
+ninja -C cmake-cache -j8         About 30 minutes for a full build, about 1 GB.
 
 
 3. BUILD
 --------
-./waf build -j8                 Incremental build.
-./waf clean                     Remove objects, keep the configuration.
-./waf list                      Programs that can be run.
-./waf configure --disable-python --enable-examples --enable-tests --build-profile=optimized --out=build/optimized
-                                Needed after adding a module or changing CXXFLAGS in .env.
+ninja -C cmake-cache -j8        Incremental build.
+./ns3 clean                     Remove the build.
+./ns3 configure --build-profile=optimized --enable-tests --enable-modules='MoReV2X;traci' --disable-werror
+                                Needed after changing CXXFLAGS in .env, or to add modules.
 
-Debug build, slower, with NS_ASSERT and NS_LOG active, in its own folder:
-./waf configure --disable-python --enable-examples --enable-tests --build-profile=debug --out=build/debug
-./waf build -j8
-Switch back afterwards by repeating the optimized configure line. No rebuild is needed.
+Only MoReV2X, traci and their dependencies are enabled. Adding a source file means adding it to
+src/MoReV2X/CMakeLists.txt.
+
+tools/debug-check.sh builds a debug copy in cmake-cache-debug and build-debug, with NS_ASSERT
+and NS_LOG on. Its binary is build-debug/scratch/ns3.42-HIGHWAY-debug.
 
 
 4. RUN A SIMULATION
@@ -39,10 +40,10 @@ Switch back afterwards by repeating the optimized configure line. No rebuild is 
 Results go to results/<scenario name>/ in the current directory.
 
 Default highway, 100 vehicles, 10 s, SPS:
-./waf --run "HIGHWAY --Vehicles=100 --simTime=10 --Periodic --mcs=13"
+./ns3 run "HIGHWAY --Vehicles=100 --simTime=10 --Periodic --mcs=13"
 
-Faster, without waf checking the build:
-build/optimized/scratch/HIGHWAY --Vehicles=100 --simTime=10 --Periodic --mcs=13
+Faster, without checking the build:
+build/scratch/ns3.42-HIGHWAY-optimized --Vehicles=100 --simTime=10 --Periodic --mcs=13
 
 Traffic model, pick exactly one:  --Periodic  --Aperiodic  --Mixed --Percentage=50  --ETSI
 Scheduler:     --Dynamic  --ReTx  --ReEvaluation  --AllSlots  --UMH  --Adaptive  --AdaptiveRRI
@@ -56,7 +57,7 @@ Careful:
   --noIBE=false turns IBE off. --noIBE on its own turns it on, the name is inverted.
   --Adaptive and --AdaptiveRRI are different. --Adaptive picks SPS or dynamic by traffic type.
   --AdaptiveRRI changes the RRI and the packet rate from the sensed load.
-  All options:  build/optimized/scratch/HIGHWAY --PrintHelp
+  All options:  build/scratch/ns3.42-HIGHWAY-optimized --PrintHelp
   Any attribute:  --ns3::NrV2XUeMac::AdaptiveRriMin=50
 
 
@@ -73,7 +74,7 @@ Options: sps dynamic retx noretx reeval noreeval allslots umh rsrp=<dBm> mcs=<in
          adaptive noadaptive
 UE node ids start at 1. Node 0 is the PGW.
 
-./waf --run "HIGHWAY --Vehicles=20 --simTime=10 --Periodic --mcs=13 --SchedulerMap=1-10:sps;11-20:dynamic+retx"
+./ns3 run "HIGHWAY --Vehicles=20 --simTime=10 --Periodic --mcs=13 --SchedulerMap=1-10:sps;11-20:dynamic+retx"
 
 The result of the map is written to results/<scenario>/SchedulerMap.txt.
 Columns: node,dynamic,retx,reEvaluation,rsrpThreshold,mcs,pkeep,adaptive
@@ -82,7 +83,7 @@ Columns: node,dynamic,retx,reEvaluation,rsrpThreshold,mcs,pkeep,adaptive
 6. SUMO MOBILITY
 ----------------
 Live coupling over TraCI, ns-3 starts SUMO itself:
-./waf --run "HIGHWAY --Vehicles=80 --simTime=10 --Periodic --mcs=13 --sumoCfg=scenarios/sumo/highway_2km/highway.sumocfg --sumoWarmup=90 --PosLog=true"
+./ns3 run "HIGHWAY --Vehicles=80 --simTime=10 --Periodic --mcs=13 --sumoCfg=scenarios/sumo/highway_2km/highway.sumocfg --sumoWarmup=90 --PosLog=true"
 
 --Vehicles is the size of the node pool, not the number of cars. If the last line of
 the run reports "vehicles without a node" above 0, raise it.
@@ -91,7 +92,7 @@ The <end> time in the .sumocfg must exceed --simTime + --sumoWarmup + 1.
 Record once, replay without SUMO, gives identical mobility in every run:
 sumo -c scenarios/sumo/highway_2km/highway.sumocfg --end 120 --fcd-output results/fcd.xml
 tools/fcd2trace.py results/fcd.xml results/trace.csv --begin 90
-./waf --run "HIGHWAY --Vehicles=80 --simTime=10 --Periodic --mcs=13 --mobilityTrace=results/trace.csv"
+./ns3 run "HIGHWAY --Vehicles=80 --simTime=10 --Periodic --mcs=13 --mobilityTrace=results/trace.csv"
 
 Rebuild the road network after editing the .nod.xml or .edg.xml:
 cd scenarios/sumo/highway_2km
@@ -103,22 +104,24 @@ cd -
 --------
 tools/gate.sh                   Everything: build, ns-3 suites and examples, scenario tests.
 tools/gate.sh --quick           Skips the ns-3 suites. Does not unlock a commit.
-tools/debug-check.sh            All 22 scheduler modes with NS_ASSERT on, about 10 minutes the
+tools/debug-check.sh            All 22 scheduler modes with NS_ASSERT on, about 20 minutes the
                                 first time. Run it after changing the MAC: the optimized
                                 build ignores assertions, this one found 2 real bugs.
-./test.py --nowaf               All ns-3 suites and examples.
-./test.py --nowaf -s nr-v2x-mode2       One suite.
-./test.py --nowaf -s sumo-mobility
+./test.py --no-build            All ns-3 suites.
+./test.py --no-build -s nr-v2x-mode2       One suite.
+./test.py --no-build -s sumo-mobility
 .venv/bin/python -m unittest discover -s tests -v       MoReV2X scenario tests.
 .venv/bin/python -m unittest tests.test_integration.SumoMobility -v    One test class.
 
+tools/compare_sweeps.py BEFORE AFTER   Compare two sweeps over seeds. To compare two versions or
+                                schedulers fairly, give both the same --mobilityTrace.
 tools/fingerprint.sh            Hash of the sorted Mode 2 logs of 3 fixed runs. Same output before and
                                 after a change proves default behaviour did not move. Valid on
                                 one machine and one ns-3 version only.
 
 Logs of the last gate run are in build/gate/.
-lte-x2-handover is an accepted failure, listed in tools/known-failures.txt. Anything else
-that fails stops the gate. The gate refuses to run on a tree with unstaged changes.
+Anything that fails and is not listed in tools/known-failures.txt stops the gate.
+The gate refuses to run on a tree with unstaged changes.
 
 
 8. GIT
@@ -158,17 +161,10 @@ tools/ns3_compile_trial.py is the compile-only ns-3 migration trial of notebook 
 
 10. WHEN SOMETHING BREAKS
 -------------------------
-Thousands of "expected unqualified-id" errors in <version>
-    A file called VERSION is back in the root. On a case-insensitive disk it shadows the
-    C++ header <version>. This repository uses VERSION.txt.
-
 Simulation crawls, memory grows by GB per minute, SSPSlog stays empty
     The packets carry no V2X tag, so the PDB is garbage. UdpClient::Send and
     PacketSink::HandleRead must stay __attribute__((weak)) in src/applications/model/.
     test_v2x_tag_reaches_the_mac catches this.
-
-"Could not open directory=" in a test
-    The test runner finds the source root through VERSION.txt and LICENSE.
 
 "Can not connect to sumo via traci"
     Run the sumo command shown in the message by hand. Usually a wrong path to the
@@ -182,8 +178,12 @@ No CBR_OutputFile.txt lines, or a thin ReceivedLog.txt, with custom mobility
     Elsewhere set ns3::NrV2XUePhy::CbrMinX/CbrMaxX and
     ns3::NrV2XSpectrumPhy::MetricsMinX/MetricsMaxX.
 
-Python errors from waf
-    `python --version` must print 2.7. Source .env.
+Delivery looks too good at long range
+    NrV2XPropagationLossModel::DoCalcRxPower must stay. Without it stock ns-3 skips the
+    NLOSv shadowing of this model.
+
+Crash in NrV2XSpectrumPhy::StartRx
+    Signal parameter classes must override Copy() const, or they are sliced.
 
 A run reports garbage only with --ETSI
     It needs numpy, matplotlib and tqdm in `python3`, which .env maps to .venv.

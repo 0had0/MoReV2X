@@ -14,7 +14,7 @@ The API documentation is generated from the source code itself,
 using Doxygen_, to generate cross-linked web pages.
 Both of these are important:  the Sphinx chapters explain the *why*
 and overview of using a model; the API documentation explains the
-*how* details.  
+*how* details.
 
 This chapter gives a quick overview of these
 tools, emphasizing preferred usage and customizations for |ns3|.
@@ -23,7 +23,7 @@ To build all the standard documentation:
 
 .. sourcecode:: bash
 
-   $ ./waf docs
+   $ ./ns3 docs
 
 For more specialized options, read on.
 
@@ -38,7 +38,8 @@ Documenting with Sphinx
 We use Sphinx_ to generate expository chapters describing
 the design and usage of each module.  Right now you are reading the
 :doc:`Documentation <documentation>` Chapter.
-The `Show Source <_sources/documentation.txt>`_ link in the sidebar
+If you are reading the html version, the
+`Show Source <_sources/documentation.txt>`_ link in the sidebar
 will show you the reStructuredText source for this chapter.
 
 Adding New Chapters
@@ -55,15 +56,15 @@ Where?
 
 Documentation for a specific module, ``foo``, should normally go in
 ``src/foo/doc/``.  For example ``src/foo/doc/foo.rst`` would be the
-top-level document for the module.  The ``src/create-module.py`` script
+top-level document for the module.  The ``utils/create-module.py`` script
 will create this file for you.
 
 Some models require several ``.rst`` files, and figures; these should
-all go in the ``src/foo/doc/`` directory.  The docs are actually build
+all go in the ``src/foo/doc/`` directory.  The docs are actually built
 by a Sphinx Makefile.  For especially involved
 documentation, it may be helpful to have a local ``Makefile``
 in the ``src/foo/doc/`` directory to
-simplify building the documentation for this module 
+simplify building the documentation for this module
 (`Antenna`_ is an example).  Setting this up
 is not particularly hard, but is beyond the scope of this chapter.
 
@@ -86,7 +87,7 @@ To add your chapter there, edit ``doc/models/source/index.rst``
 
    .. toctree::
       :maxdepth: 1
- 
+
      organization
      animation
      antenna
@@ -126,18 +127,18 @@ your image files.  Again, please keep these in alphabetical order.
 Building Sphinx Docs
 ====================
 
-Building the Sphinx documentation is pretty simple.  
+Building the Sphinx documentation is pretty simple.
 To build all the Sphinx documentation:
 
 .. sourcecode:: bash
 
-   $ ./waf sphinx
+   $ ./ns3 sphinx
 
 To build just the Models documentation:
 
 .. sourcecode:: bash
 
-   $ make -C doc/models
+   $ make -C doc/models html
 
 To see the generated documentation point your browser at
 ``doc/models/build/html``.
@@ -174,12 +175,12 @@ the basics here, instead focusing on preferred usage for |ns3|.
 
 
 * Start documents with these two lines:
-   
+
   .. sourcecode:: rest
-     
+
      .. include:: replace.txt
      .. highlight:: cpp
-   
+
   The first line enables some simple replacements.  For example,
   typing ``|ns3|`` renders as |ns3|.
   The second sets the default source code highlighting language explicitly
@@ -188,12 +189,12 @@ the basics here, instead focusing on preferred usage for |ns3|.
   see below.)
 
 * Sections:
-  
+
   Sphinx is pretty liberal about marking section headings.  By convention,
   we prefer this hierarchy:
-  
+
   .. sourcecode:: rest
-      
+
      .. heading hierarchy:
         ------------- Chapter
         ************* Section (#.#)
@@ -201,7 +202,7 @@ the basics here, instead focusing on preferred usage for |ns3|.
         ############# Sub-subsection
 
 * Syntax Highlighting:
-  
+
   To use the default syntax highlighter, simply start a sourcecode block:
 
   +--------------------------------------+------------------------------------+
@@ -212,7 +213,7 @@ the basics here, instead focusing on preferred usage for |ns3|.
   |   The ``Frobnitz`` is accessed by::  | The ``Frobnitz`` is accessed by::  |
   |                                      |                                    |
   |     Foo::Frobnitz frob;              |   Foo::Frobnitz frob;              |
-  |     frob.Set (...);                  |   frob.Set (...);                  |
+  |     frob.Set(...);                   |   frob.Set(...);                   |
   +--------------------------------------+------------------------------------+
 
   To use a specific syntax highlighter, for example, ``bash`` shell commands:
@@ -224,9 +225,9 @@ the basics here, instead focusing on preferred usage for |ns3|.
   |                                      |                                    |
   |   .. sourcecode:: bash               | .. sourcecode:: bash               |
   |                                      |                                    |
-  |      $ ls                            |    $ ls		              |
+  |      $ ls                            |    $ ls                            |
   +--------------------------------------+------------------------------------+
-  
+
 * Shorthand Notations:
 
   These shorthands are defined:
@@ -258,23 +259,24 @@ Documenting with Doxygen
 We use Doxygen_ to generate browsable_ API documentation.  Doxygen
 provides a number of useful features:
 
-  * Summary table of all class members.
-  * Graphs of inheritance and collaboration for all classes.
-  * Links to the source code imlementing each function.
-  * Links to every place a member is used.
-  * Links to every object used in implementing a function.
-  * Grouping of related classes, such as all the classes related to
-    a specific protocol.
+* Summary table of all class members.
+* Graphs of inheritance and collaboration for all classes.
+* Links to the source code implementing each function.
+* Links to every place a member is used.
+* Links to every object used in implementing a function.
+* Grouping of related classes, such as all the classes related to
+  a specific protocol.
 
 In addition, we use the ``TypeId`` system to add to the documentation
 for every class
 
-  * The ``Config`` paths by which such objects can be reached.
-  * Documentation for any ``Attributes``, including ``Attributes``
-    defined in parent classes.
-  * Documentation for any ``Trace`` sources defined by the class.
+* The ``Config`` paths by which such objects can be reached.
+* Documentation for any ``Attributes``, including ``Attributes``
+  defined in parent classes.
+* Documentation for any ``Trace`` sources defined by the class.
+* The memory footprint for each class.
 
-Doxygen operates by scaning the source code, looking for
+Doxygen operates by scanning the source code, looking for
 specially marked comments.  It also creates a cross reference,
 indicating *where* each file, class, method, and variable is used.
 
@@ -300,8 +302,11 @@ The preferred style for Doxygen comments is the JavaDoc style::
    *  \note Note any limitations or gotchas.
    *
    *  (For functions with arguments or return valued:)
-   *  \param foo Brief noun phrase describing this argument.
-   *  \param bar Note Sentence case, and terminating period.
+   *  \param [in] foo Brief noun phrase describing this argument. Note
+   *                  that we indicate if the argument is input,
+   *                  output, or both.
+   *  \param [in,out] bar Note Sentence case, and terminating period.
+   *  \param [in] baz Indicate boolean values with \c true or \c false.
    *  \return Brief noun phrase describing the value.
    *
    *  \internal
@@ -310,7 +315,7 @@ The preferred style for Doxygen comments is the JavaDoc style::
    *  Understanding this material shouldn't be necessary to using
    *  the class or method.
    */
-   class Example
+   void ExampleFunction(const int foo, double & bar, const bool baz);
 
 In this style the Doxygen comment block begins with two \`*' characters:
 ``/**``, and precedes the item being documented.
@@ -319,7 +324,7 @@ For items needing only a brief description, either of these short forms
 is appropriate::
 
   /** Destructor implementation. */
-  void DoDispose ();
+  void DoDispose();
 
   int m_count;  //!< Count of ...
 
@@ -328,9 +333,9 @@ that it refers to the *preceding* item.
 
 Some items to note:
 
-  * Use sentence case, including the initial capital.
-  * Use punctuation, especially \`.'s at the end of sentences or phrases.
-  * The ``\brief`` tag is not needed; the first sentence will be
+* Use sentence case, including the initial capital.
+* Use punctuation, especially \`.'s at the end of sentences or phrases.
+* The ``\brief`` tag is not needed; the first sentence will be
     used as the brief description.
 
 Every class, method, typedef, member variable, function argument
@@ -350,11 +355,8 @@ Useful Features
   #. In the sub class mark inherited functions with an ordinary comment::
 
        // Inherited methods
-       virtual void FooBar (void);
-       virtual int BarFoo (double baz);
-
-     Note that the signatures have to match exactly, so include the formal
-     argument ``(void)``
+       virtual void FooBar();
+       virtual int BarFoo(double baz);
 
      This doesn't work for static functions; see ``GetTypeId``, below, for an
      example.
@@ -366,93 +368,102 @@ Building the Doxygen documentation is pretty simple:
 
 .. sourcecode:: bash
 
-   $ ./waf doxygen
+   $ ./ns3 doxygen
 
-This builds using the default configuration, which generates documentation
-sections for *all* items, even if they do not have explicit comment
-documentation blocks.  This has the effect of suppressing warnings for
-undocumented items, but makes sure everything appears in the generated
-output.
+This builds using the default configuration, which generates
+documentation sections for *all* items, even if they do not have
+explicit comment documentation blocks.  This has the effect of
+suppressing warnings for undocumented items, but makes sure everything
+appears in the generated output, which is usually what you want for
+general use.  Note that we generate documentation even for modules
+which are disabled, to make it easier to see all the features
+available in |ns3|.
 
 When writing documentation, it's often more useful to see which items
-are generating warnings, typically about missing documentation.
-To see the full warnings list, use the ``doc/doxygen.warnings.report.sh``
+are generating warnings, typically about missing documentation.  To
+see the full warnings list, use the ``doc/doxygen.warnings.report.sh``
 script:
 
 .. sourcecode:: bash
 
-   $ doc/doxygen.warnings.report.sh
-   Waf: Entering directory `build'
-   ...
-   Waf: Leaving directory `build'
-   'build' finished successfully (3m24.094s)
+    $ doc/doxygen.warnings.report.sh
 
-   Rebuilding doxygen docs with full errors...Done.
+    doxygen.warnings.report.sh:
+    Building and running print-introspected-doxygen...done.
+    Rebuilding doxygen (v1.8.10) docs with full errors...done.
 
 
-   Report of Doxygen warnings
-   ----------------------------------------
+    Report of Doxygen warnings
+    ----------------------------------------
 
-   (All counts are lower bounds.)
+    (All counts are lower bounds.)
 
-   Warnings by module/directory:
+    Warnings by module/directory:
 
-   Count Directory
-   ----- ----------------------------------
-   3844 src/lte/model
-   1718 src/wimax/model
-   1423 src/core/model
-   ....
-    138 additional undocumented parameters.
-   ----------------------------------------
-    15765 total warnings
-      126 directories with warnings
-
-
-   Warnings by file (alphabetical)
-
-   Count File
-   ----- ----------------------------------
-     17 doc/introspected-doxygen.h
-     15 examples/routing/manet-routing-compare.cc
-     26 examples/stats/wifi-example-apps.h
-   ....
-   ----------------------------------------
-      967 files with warnings
+    Count Directory
+    ----- ----------------------------------
+    3414 src/lte/model
+    1532 src/wimax/model
+     825 src/lte/test
+    ....
+       1 src/applications/test
+     97 additional undocumented parameters.
+    ----------------------------------------
+     12460 total warnings
+       100 directories with warnings
 
 
-   Warnings by file (numerical)
+    Warnings by file (alphabetical)
 
-   Count File
-   ----- ----------------------------------
-    374 src/lte/model/lte-asn1-header.h
-    280 src/lte/model/lte-rrc-sap.h
-    262 src/lte/model/lte-rrc-header.h
-   ....
-   ----------------------------------------
-      967 files with warnings
+    Count File
+    ----- ----------------------------------
+      15 examples/routing/manet-routing-compare.cc
+      26 examples/stats/wifi-example-apps.h
+      12 examples/tutorial/fifth.cc
+    ....
+      17 utils/python-unit-tests.py
+    ----------------------------------------
+       771 files with warnings
 
 
-   Doxygen Warnings Summary
-   ----------------------------------------
-      126 directories
-      967 files
-    15765 warnings
+    Warnings by file (numerical)
 
-The script modifies the configuration to show all warnings, and
-to shorten the run time.  As you can see, at this writing we have
-*a lot* of undocumented items.  The report summarizes warnings
-by module ``src/*/*``, and by file, in alphabetically and numerical
-order.
+    Count File
+    ----- ----------------------------------
+     273 src/lte/model/lte-rrc-sap.h
+     272 src/core/model/simulator.h
+     221 src/netanim/model/animation-interface.h
+    ....
+       1 src/wimax/model/ul-job.cc
+    ----------------------------------------
+       771 files with warnings
 
-The script has a few options to pare things down and make this more
+
+    Doxygen Warnings Summary
+    ----------------------------------------
+       100 directories
+       771 files
+     12460 warnings
+
+(This snippet has *a lot* of lines suppressed!)
+
+The script modifies the configuration to show all warnings, and to
+shorten the run time.  (It shortens the run time primarily by
+disabling creation of diagrams, such as call trees, and doesn't
+generate documentation for undocumented items, in order to trigger the
+warnings.)  As you can see, at this writing we have *a lot* of
+undocumented items.  The report summarizes warnings by module
+``src/*/*``, and by file, in alphabetically and numerical order.
+
+The script has a few options to pare things down and make the output more
 manageable.  For help, use the ``-h`` option.  Having run it once
 to do the Doxygen build and generate the full warnings log,
 you can reprocess the log file with various "filters,"
-without having to do the full Doxygen build by,
-again using the ``-s`` option.  You can exclude warnings
+without having to do the full Doxygen build again by
+using the ``-s`` option.  You can exclude warnings
 from ``*/examples/*`` files (``-e`` option), and/or ``*/test/*`` files
-(``-t``).
+(``-t``).  Just to be clear, all of the filter options do the complete
+fast doxygen build; they just filter doxygen log and warnings output.
 
 Perhaps the most useful option when writing documentation comments
 is ``-m <module>``, which will limit the report to just files matching
@@ -486,6 +497,13 @@ urgent in a single module:
    src/mesh/helper/mesh-helper.h:119: warning: parameters of member ns3::MeshHelper::SetStandard are not (all) documented
 
 
+Finally, note that undocumented items (classes, methods, functions,
+typedefs, *etc.* won't produce documentation when you build with
+``doxygen.warnings.report.sh``, and only the outermost item
+will produce a warning.  As a result, if you don't see documentation
+for a class method in the generated documentation, the class itself
+probably needs documentation.
+
 Now it's just a matter of understanding the code, and writing some
 docs!
 
@@ -498,8 +516,8 @@ As for Sphinx, the Doxygen docs_ and reference_ are pretty good.
 We won't duplicate the basics here, instead focusing on preferred
 usage for |ns3|.
 
-.. _docs:       http://www.stack.nl/~dimitri/doxygen/index.html
-.. _reference:  http://www.stack.nl/~dimitri/doxygen/manual/commands.html
+.. _docs:       https://www.doxygen.nl/index.html
+.. _reference:  https://www.doxygen.nl/manual/commands.html
 
 
 * Use Doxygen ``Modules`` to group related items.
@@ -508,37 +526,85 @@ usage for |ns3|.
 
     /**
      *  \defgroup foo Foo protocol.
+     *  Implementation of the Foo protocol.
      */
 
-  Mark each associated class as belonging to the group::
+  The symbol ``foo`` is how other items can add themselves to this group.
+  The string following that will be the title for the group.  Any further
+  text will be the detailed description for the group page.
+
+* Document each file, assigning it to the relevant group.  In a header file::
+
+    /**
+     *  \file
+     *  \ingroup foo
+     *  Class Foo declaration.
+     */
+
+  or in the corresponding ``.cc`` file::
+
+    /**
+     *  \file
+     *  \ingroup foo
+     *  Class FooBar implementation.
+     */
+
+* Mark each associated class as belonging to the group::
 
     /**
      *  \ingroup foo
      *
-     *  Foo packet type.
+     *  FooBar packet type.
     */
-    class Foo
+    class FooBar
 
 * Did you know ``typedefs`` can have formal arguments?  This enables
   documentation of function pointer signatures::
 
     /**
-     * Bar callback function signature.
+     *  Bar callback function signature.
      *
-     * \param ale The size of a pint of ale, in Imperial ounces.
+     *  \param ale The size of a pint of ale, in Imperial ounces.
      */
     typedef void (* BarCallback)(const int ale);
-    
+
 * Copy the ``Attribute`` help strings from the ``GetTypeId`` method to use
   as the brief descriptions of associated members.
 
 * ``\bugid{298}`` will create a link to bug 298 in our Bugzilla.
 
-* ``\pname{foo}`` in a description will format ``foo``
-  as a ``\param foo`` parameter, making it clear that you
+* ``\p foo`` in a description will format ``foo``
+  the same as the ``\param foo`` parameter, making it clear that you
   are referring to an actual argument.
 
 * ``\RFC{301}`` will create a link to RFC 301.
+
+* Document the direction of function arguments with ``\param [in]``, *etc*.
+  The allowed values of the direction token are ``[in]``, ``[out]``, and
+  ``[in,out]`` (note the explicit square brackets), as discussed in the
+  Doxygen docs for ``\param``.
+
+* Document template arguments with ``\tparam``, just as you use ``\param``
+  for function arguments.
+
+* For template arguments, indicate if they will be deduced or must be given
+  explicitly::
+
+    /**
+     * A templated function.
+     * \tparam T \explicit The return type.
+     * \tparam U \deduced The argument type.
+     * \param [in] a The argument.
+     */
+    template <typename T, typename U> T Function(U a);
+
+  * Use ``\tparam U \deduced`` because the type ``U`` can be deduced at
+    the site where the template is invoked.  Basically deduction can only
+    be done for function arguments.
+
+  * Use ``\tparam T \explicit`` because the type ``T`` can't be deduced;
+    it must be given explicitly at the invocation site, as in
+    ``Create<MyObject>(...)``
 
 * ``\internal`` should be used only to set off a discussion of implementation
   details, not to mark ``private`` functions (they are already marked,
@@ -548,32 +614,28 @@ usage for |ns3|.
   even in test suites.  These cause all instances of the class name
   literal \`A' to be rendered as links.
 
-
 As noted above, static functions don't inherit the documentation
 of the same functions in the parent class.  |ns3| uses a few static
 functions ubiquitously; the suggested documentation block for these
 cases is:
 
-  * Default constructor/destructor::
+* Default constructor/destructor::
 
-      MyClass ();   //!< Default constructor
-      ~MyClass ();  //!< Destructor
+    MyClass();   //!< Default constructor
+    ~MyClass();  //!< Destructor
 
-  * Dummy destructor and DoDispose::
+* Dummy destructor and DoDispose::
 
-      /** Dummy destructor, see DoDispose. */
-      ~MyClass ();
+    /** Dummy destructor, see DoDispose. */
+    ~MyClass();
 
-      /** Destructor implementation */
-      virtual void DoDispose ();
+    /** Destructor implementation */
+    virtual void DoDispose();
 
-  * GetTypeId::
+* GetTypeId::
 
-      /**
-       *  Register this type.
-       *  \return The object TypeId.
-       */
-      static TypeId GetTypeId (void);
-
-
-
+    /**
+     *  Register this type.
+     *  \return The object TypeId.
+     */
+    static TypeId GetTypeId();

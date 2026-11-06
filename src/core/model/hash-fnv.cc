@@ -1,4 +1,3 @@
-/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
  * Copyright (c) 2012 Lawrence Livermore National Laboratory
  *
@@ -30,11 +29,12 @@
  * In addition comment blocks have been converted to Doxygen format.
  */
 
-#include <sys/types.h>
-#include <stdlib.h>
+#include "hash-fnv.h"
 
 #include "log.h"
-#include "hash-fnv.h"
+
+#include <stdlib.h>
+#include <sys/types.h>
 
 /**
  * \file
@@ -42,17 +42,20 @@
  * \brief ns3::Hash::Function::Fnv1a implementation.
  */
 
+namespace ns3
+{
 
-namespace ns3 {
+NS_LOG_COMPONENT_DEFINE("Hash-Fnv");
 
-NS_LOG_COMPONENT_DEFINE ("Hash-Fnv");
+namespace Hash
+{
 
-namespace Hash {
+namespace Function
+{
 
-namespace Function {
-
-/** FNV hash implementation details. */  
-namespace Fnv1aImplementation {
+/** FNV hash implementation details. */
+namespace Fnv1aImplementation
+{
 
 /*************************************************
  **  class FnvHashImplementation
@@ -63,13 +66,16 @@ namespace Fnv1aImplementation {
  * \defgroup hash_fnv FNV Hash Implementation
  */
 /**@{*/
-  
-extern "C" {
+
+extern "C"
+{
+    // NOLINTBEGIN
+    // clang-format off
 
 // Changes from FNV distribution are marked with `//PDB'
 //
 
-// Begin fnv.h ----------------------------------->
+/* Begin fnv.h ----------------------------------------> */
 
 /*
  * fnv - Fowler/Noll/Vo- hash code
@@ -159,7 +165,7 @@ extern "C" {
 /**
  * 32 bit FNV-0 hash type
  */
-typedef u_int32_t Fnv32_t;
+typedef uint32_t Fnv32_t;  //PDB
 
 
 /**
@@ -194,18 +200,18 @@ typedef u_int32_t Fnv32_t;
  * Determine how 64 bit unsigned values are represented
  */
 //#include "longlong.h"  //PDB - assume `unsigned long long' is 64 bit
-#define HAVE_64BIT_LONG_LONG  
-  
+#define HAVE_64BIT_LONG_LONG
 
 
-/** 
+
+/**
  * 64 bit FNV-0 hash
  */
 #if defined(HAVE_64BIT_LONG_LONG)
-typedef u_int64_t Fnv64_t;
+typedef uint64_t Fnv64_t;  //PDB
 #else /* HAVE_64BIT_LONG_LONG */
 typedef struct {
-    u_int32_t w32[2]; /* w32[0] is low order, w32[1] is high order word */
+    uint32_t w32[2]; /* w32[0] is low order, w32[1] is high order word */  //PDB
 } Fnv64_t;
 #endif /* HAVE_64BIT_LONG_LONG */
 
@@ -229,7 +235,7 @@ extern const Fnv64_t fnv0_64_init;
  * 64 bit FNV-1 non-zero initial basis
  *
  * The FNV-1 initial basis is the FNV-0 hash of the following 32 octets:
- * 
+ *
  *              chongo <Landon Curt Noll> /\../\
  *
  * \note The \'s above are not back-slashing escape characters.
@@ -268,9 +274,7 @@ enum fnv_type {
 /*
  * external functions  //PDB converted to forward declarations
  */
-/**
- * \copydoc fnv_32a_buf()
- */
+/** \copydoc fnv_32a_buf() */
 /* extern */ Fnv32_t fnv_32_buf(void *buf, size_t len, Fnv32_t hval);
 /** \copydoc fnv_32a_str() */
 /* extern */ Fnv32_t fnv_32_str(char *str, Fnv32_t hval);
@@ -294,9 +298,9 @@ enum fnv_type {
 
 #endif /* __FNV_H__ */
 
-// End fnv.h ------------------------------->
+/* End fnv.h ------------------------------------------> */
 
-// Begin hash_32a.c ------------------------------>
+/* Begin hash_32a.c -----------------------------------> */
 
 /*
  * hash_32 - 32 bit Fowler/Noll/Vo FNV-1a hash code
@@ -368,9 +372,9 @@ enum fnv_type {
  * fnv_32a_buf - perform a 32 bit Fowler/Noll/Vo FNV-1a hash on a buffer
  *
  * input:
- * \param	buf	start of buffer to hash
- * \param	len	length of buffer in octets
- * \param	hval	previous hash value or 0 if first call
+ * \param  [in] buf	start of buffer to hash
+ * \param  [in] len	length of buffer in octets
+ * \param  [in] hval	previous hash value or 0 if first call
  *
  * \returns		32 bit hash as a static hash type.
  *
@@ -408,8 +412,8 @@ fnv_32a_buf(void *buf, size_t len, Fnv32_t hval)
  * fnv_32a_str - perform a 32 bit Fowler/Noll/Vo FNV-1a hash on a string
  *
  * input:
- * \param	str	string to hash
- * \param	hval	previous hash value or 0 if first call
+ * \param  [in] str	string to hash
+ * \param  [in] hval	previous hash value or 0 if first call
  *
  * \returns		32 bit hash as a static hash type
  *
@@ -440,10 +444,10 @@ fnv_32a_str(char *str, Fnv32_t hval)
     /* return our new hash value */
     return hval;
 }
-  
-// End hash_32a.c -------------------------->
 
-// Begin hash_64a.c------------------------------->
+/* End hash_32a.c -------------------------------------> */
+
+/* Begin hash_64a.c -----------------------------------> */
 
 /*
  * hash_64 - 64 bit Fowler/Noll/Vo-0 FNV-1a hash code
@@ -531,9 +535,9 @@ const Fnv64_t fnv1a_64_init = { 0x84222325, 0xcbf29ce4 };
  * fnv_64a_buf - perform a 64 bit Fowler/Noll/Vo FNV-1a hash on a buffer
  *
  * input:
- * \param	buf	start of buffer to hash
- * \param	len	length of buffer in octets
- * \param	hval	previous hash value or 0 if first call
+ * \param  [in] buf	start of buffer to hash
+ * \param  [in] len	length of buffer in octets
+ * \param  [in] hval	previous hash value or 0 if first call
  *
  * \returns		64 bit hash as a static hash type
  *
@@ -637,8 +641,8 @@ fnv_64a_buf(void *buf, size_t len, Fnv64_t hval)
  * fnv_64a_str - perform a 64 bit Fowler/Noll/Vo FNV-1a hash on a buffer
  *
  * input:
- * \param	str	string to hash
- * \param	hval	previous hash value or 0 if first call
+ * \param  [in] str	string to hash
+ * \param  [in] hval	previous hash value or 0 if first call
  *
  * \returns		64 bit hash as a static hash type
  *
@@ -736,48 +740,48 @@ fnv_64a_str(char *str, Fnv64_t hval)
     /* return our new hash value */
     return hval;
 }
-  
-// End hash_64a.c--------------------------->
 
-}  /* extern "C" */
+/* End hash_64a.c -------------------------------------> */
+
+    // clang-format on
+    // NOLINTEND
+
+} /* extern "C" */
 
 //-----------------------------------------------------------------------------
 
-/**@}*/  // \defgroup hash_fnv
+/**@}*/ // \defgroup hash_fnv
 
-}  // namespace Fnv1aImplementation
+} // namespace Fnv1aImplementation
 
-
-Fnv1a::Fnv1a ()
+Fnv1a::Fnv1a()
 {
-  clear ();
+    clear();
 }
 
 uint32_t
-Fnv1a::GetHash32  (const char * buffer, const size_t size)
+Fnv1a::GetHash32(const char* buffer, const std::size_t size)
 {
-  m_hash32 =
-    Fnv1aImplementation::fnv_32a_buf ((void *)buffer, size, m_hash32);
-  return m_hash32;
+    m_hash32 = Fnv1aImplementation::fnv_32a_buf((void*)buffer, size, m_hash32);
+    return m_hash32;
 }
 
 uint64_t
-Fnv1a::GetHash64  (const char * buffer, const size_t size)
+Fnv1a::GetHash64(const char* buffer, const std::size_t size)
 {
-  m_hash64 =
-    Fnv1aImplementation::fnv_64a_buf ((void *)buffer, size, m_hash64);
-  return m_hash64;
+    m_hash64 = Fnv1aImplementation::fnv_64a_buf((void*)buffer, size, m_hash64);
+    return m_hash64;
 }
 
 void
-Fnv1a::clear (void)
+Fnv1a::clear()
 {
-  m_hash32 = FNV1_32A_INIT;
-  m_hash64 = FNV1A_64_INIT;
+    m_hash32 = FNV1_32A_INIT;
+    m_hash64 = FNV1A_64_INIT;
 }
 
-}  // namespace Function
+} // namespace Function
 
-}  // namespace Hash
+} // namespace Hash
 
-}  // namespace ns3
+} // namespace ns3

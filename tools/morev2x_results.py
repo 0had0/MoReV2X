@@ -79,9 +79,9 @@ def simulate(tag, *arguments, workdir=None):
     finished = (os.path.exists(marker) and os.path.exists(identity_file)
                 and open(identity_file).read() == identity)
     if not finished:
-        environment = dict(os.environ, DYLD_LIBRARY_PATH=os.path.join(ROOT, "build", "optimized"))
+        environment = dict(os.environ, DYLD_LIBRARY_PATH=os.path.join(ROOT, "build", "lib"))
         with open(marker, "w") as log:
-            subprocess.run([os.path.join(ROOT, "build", "optimized", "scratch", "HIGHWAY")] + arguments,
+            subprocess.run([os.path.join(ROOT, "build", "scratch", "ns3.42-HIGHWAY-optimized")] + arguments,
                            cwd=workdir, env=environment, stdout=log, stderr=subprocess.STDOUT, check=True)
         with open(identity_file, "w") as out:
             out.write(identity)

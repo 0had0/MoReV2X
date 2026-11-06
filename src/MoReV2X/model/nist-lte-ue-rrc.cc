@@ -926,7 +926,7 @@ NistLteUeRrc::DoActivateSidelinkRadioBearer (uint32_t group, bool tx, bool rx)
 {
   NS_LOG_FUNCTION (this);
 
-  NS_ASSERT (m_sidelinkConfiguration->GetSidelinkRadioBearer (m_sidelinkConfiguration->m_sourceL2Id, group) == NULL);
+  NS_ASSERT (m_sidelinkConfiguration->GetSidelinkRadioBearer (m_sidelinkConfiguration->m_sourceL2Id, group) == nullptr);
   
   switch (m_state)
     {
@@ -1614,7 +1614,7 @@ NistLteUeRrc::DoRecvNistSystemInformation (NistLteRrcSap::NistSystemInformation 
           break;
         }
     }
-  if (msg.haveSib18 && m_sidelinkConfiguration != NULL && m_sidelinkConfiguration->IsSlEnabled())
+  if (msg.haveSib18 && m_sidelinkConfiguration != nullptr && m_sidelinkConfiguration->IsSlEnabled())
     {
       switch (m_state)
         {
@@ -1643,7 +1643,7 @@ NistLteUeRrc::DoRecvNistSystemInformation (NistLteRrcSap::NistSystemInformation 
               for (int i = 0 ; i < msg.sib18.commConfig.commRxPool.nbPools; i++)
                 {
                   Ptr<SidelinkRxCommResourcePool> pool = NULL;
-                  for (uint32_t j = 0 ; j < m_sidelinkConfiguration->rxPools.size() && pool == NULL; j++)
+                  for (uint32_t j = 0 ; j < m_sidelinkConfiguration->rxPools.size() && pool == nullptr; j++)
                     {
                       
                       if (msg.sib18.commConfig.commRxPool.pools[i]== m_sidelinkConfiguration->rxPools.at(j).first)
@@ -1651,7 +1651,7 @@ NistLteUeRrc::DoRecvNistSystemInformation (NistLteRrcSap::NistSystemInformation 
                           pool = m_sidelinkConfiguration->rxPools.at(j).second;
                         }
                     }
-                  if (pool == NULL)
+                  if (pool == nullptr)
                     {
                       pool = CreateObject <SidelinkRxCommResourcePool> ();
                       pool->SetPool (msg.sib18.commConfig.commRxPool.pools[i]);
@@ -1671,7 +1671,7 @@ NistLteUeRrc::DoRecvNistSystemInformation (NistLteRrcSap::NistSystemInformation 
 
     }
 
-    if (msg.haveSib19 && m_sidelinkConfiguration != NULL && m_sidelinkConfiguration->IsDiscEnabled())
+    if (msg.haveSib19 && m_sidelinkConfiguration != nullptr && m_sidelinkConfiguration->IsDiscEnabled())
   {
       switch (m_state)
       {
@@ -1702,14 +1702,14 @@ NistLteUeRrc::DoRecvNistSystemInformation (NistLteRrcSap::NistSystemInformation 
             for (int i = 0 ; i < msg.sib19.discConfig.discRxPool.nbPools; i++)
             {
               Ptr<SidelinkRxDiscResourcePool> pool = NULL;
-              for (uint32_t j = 0 ; j < m_sidelinkConfiguration->monitorPools.size() && pool == NULL; j++)
+              for (uint32_t j = 0 ; j < m_sidelinkConfiguration->monitorPools.size() && pool == nullptr; j++)
               {
                 if (msg.sib19.discConfig.discRxPool.pools[i]== m_sidelinkConfiguration->monitorPools.at(j).first)
                 {
                   pool = m_sidelinkConfiguration->monitorPools.at(j).second;
                 }
               }                
-              if (pool == NULL)
+              if (pool == nullptr)
               {
                 pool = CreateObject <SidelinkRxDiscResourcePool> ();
                 pool->SetPool (msg.sib19.discConfig.discRxPool.pools[i]);
@@ -2050,7 +2050,7 @@ NistLteUeRrc::ApplyNistRadioResourceConfigDedicated (NistLteRrcSap::NistRadioRes
   std::list<NistLteRrcSap::NistSrbToAddMod>::const_iterator stamIt = rrcd.srbToAddModList.begin ();
   if (stamIt != rrcd.srbToAddModList.end ())
     {
-      if (m_srb1 == 0)
+      if (m_srb1 == nullptr)
         {
           // SRB1 not setup yet        
           NS_ASSERT_MSG ((m_state == IDLE_CONNECTING) || (m_state == CONNECTED_HANDOVER), 

@@ -1,0 +1,25 @@
+build_lib(
+  LIBNAME traci
+  SOURCE_FILES
+    model/traci-client.cc
+    model/sumo-socket.cc
+    model/sumo-storage.cc
+    model/sumo-TraCIAPI.cc
+    helper/sumo-mobility-helper.cc
+  HEADER_FILES
+    model/traci-client.h
+    model/sumo-TraCIAPI.h
+    model/sumo-config.h
+    model/sumo-socket.h
+    model/sumo-storage.h
+    model/sumo-TraCIConstants.h
+    model/sumo-TraCIDefs.h
+    model/StationType.h
+    helper/sumo-mobility-helper.h
+  LIBRARIES_TO_LINK
+    ${libcore}
+    ${libnetwork}
+    ${libmobility}
+  TEST_SOURCES
+    test/sumo-mobility-test-suite.cc
+)

@@ -109,6 +109,12 @@ public:
    */
   double GetShadowing (Ptr<MobilityModel> a, Ptr<MobilityModel> b) const;
 
+  /**
+   * BuildingsPropagationLossModel::GetShadowing is not virtual, so the base version of
+   * this method would apply its own shadowing and drop the NLOSv loss of GetShadowing.
+   */
+  double DoCalcRxPower (double txPowerDbm, Ptr<MobilityModel> a, Ptr<MobilityModel> b) const override;
+
 
   struct ChannelModel
   {

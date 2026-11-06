@@ -1,4 +1,3 @@
-/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
  * Copyright (c) 2012 Mathieu Lacage
  *
@@ -18,15 +17,23 @@
  */
 
 #include "rng-seed-manager.h"
-#include "global-value.h"
+
 #include "attribute-helper.h"
-#include "integer.h"
 #include "config.h"
+#include "global-value.h"
 #include "log.h"
+#include "uinteger.h"
 
-namespace ns3 {
+/**
+ * \file
+ * \ingroup randomvariable
+ * ns3::RngSeedManager implementation.
+ */
 
-NS_LOG_COMPONENT_DEFINE ("RngSeedManager");
+namespace ns3
+{
+
+NS_LOG_COMPONENT_DEFINE("RngSeedManager");
 
 /**
  * \relates RngSeedManager
@@ -36,61 +43,73 @@ NS_LOG_COMPONENT_DEFINE ("RngSeedManager");
 static uint64_t g_nextStreamIndex = 0;
 /**
  * \relates RngSeedManager
- * The random number generator seed number global value.
+ * \anchor GlobalValueRngSeed
+ * The random number generator seed number global value.  This is used to
+ * generate an new master PRNG sequence.  It is typically not modified
+ * by user programs; the variable RngRun is preferred for independent
+ * replications.
  *
  * This is accessible as "--RngSeed" from CommandLine.
  */
-static ns3::GlobalValue g_rngSeed ("RngSeed", 
-                                   "The global seed of all rng streams",
-                                   ns3::IntegerValue(1),
-                                   ns3::MakeIntegerChecker<uint32_t> ());
+static ns3::GlobalValue g_rngSeed("RngSeed",
+                                  "The global seed of all rng streams",
+                                  ns3::UintegerValue(1),
+                                  ns3::MakeUintegerChecker<uint32_t>());
 /**
  * \relates RngSeedManager
- * The random number generator run number global value.
+ * \anchor GlobalValueRngRun
+ * The random number generator substream index.  This is used to generate
+ * new PRNG sequences for all streams (random variables) in such a manner
+ * that the streams remain uncorrelated.  Incrementing this variable can
+ * be used for independent replications.
  *
  * This is accessible as "--RngRun" from CommandLine.
  */
-static ns3::GlobalValue g_rngRun ("RngRun", 
-                                  "The run number used to modify the global seed",
-                                  ns3::IntegerValue (1),
-                                  ns3::MakeIntegerChecker<int64_t> ());
+static ns3::GlobalValue g_rngRun("RngRun",
+                                 "The substream index used for all streams",
+                                 ns3::UintegerValue(1),
+                                 ns3::MakeUintegerChecker<uint64_t>());
 
-
-uint32_t RngSeedManager::GetSeed (void)
+uint32_t
+RngSeedManager::GetSeed()
 {
-  NS_LOG_FUNCTION_NOARGS ();
-  IntegerValue seedValue;
-  g_rngSeed.GetValue (seedValue);
-  return seedValue.Get ();
-}
-void 
-RngSeedManager::SetSeed (uint32_t seed)
-{
-  NS_LOG_FUNCTION (seed);
-  Config::SetGlobal ("RngSeed", IntegerValue(seed));
+    NS_LOG_FUNCTION_NOARGS();
+    UintegerValue seedValue;
+    g_rngSeed.GetValue(seedValue);
+    return static_cast<uint32_t>(seedValue.Get());
 }
 
-void RngSeedManager::SetRun (uint64_t run)
+void
+RngSeedManager::SetSeed(uint32_t seed)
 {
-  NS_LOG_FUNCTION (run);
-  Config::SetGlobal ("RngRun", IntegerValue (run));
+    NS_LOG_FUNCTION(seed);
+    Config::SetGlobal("RngSeed", UintegerValue(seed));
 }
 
-uint64_t RngSeedManager::GetRun ()
+void
+RngSeedManager::SetRun(uint64_t run)
 {
-  NS_LOG_FUNCTION_NOARGS ();
-  IntegerValue value;
-  g_rngRun.GetValue (value);
-  int run = value.Get();
-  return run;
+    NS_LOG_FUNCTION(run);
+    Config::SetGlobal("RngRun", UintegerValue(run));
 }
 
-uint64_t RngSeedManager::GetNextStreamIndex (void)
+uint64_t
+RngSeedManager::GetRun()
 {
-  NS_LOG_FUNCTION_NOARGS ();
-  uint64_t next = g_nextStreamIndex;
-  g_nextStreamIndex++;
-  return next;
+    NS_LOG_FUNCTION_NOARGS();
+    UintegerValue value;
+    g_rngRun.GetValue(value);
+    uint64_t run = value.Get();
+    return run;
+}
+
+uint64_t
+RngSeedManager::GetNextStreamIndex()
+{
+    NS_LOG_FUNCTION_NOARGS();
+    uint64_t next = g_nextStreamIndex;
+    g_nextStreamIndex++;
+    return next;
 }
 
 } // namespace ns3

@@ -1,4 +1,3 @@
-/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
  * Copyright (c) 2013 Universita' di Firenze, Italy
  *
@@ -18,97 +17,127 @@
  * Author: Tommaso Pecorella <tommaso.pecorella@unifi.it>
  */
 
+#include "ns3/core-module.h"
+#include "ns3/internet-apps-module.h"
+#include "ns3/internet-module.h"
+#include "ns3/lr-wpan-module.h"
+#include "ns3/mobility-module.h"
+#include "ns3/propagation-module.h"
+#include "ns3/sixlowpan-module.h"
+#include "ns3/spectrum-module.h"
 
 #include <fstream>
-#include "ns3/core-module.h"
-#include "ns3/internet-module.h"
-#include "ns3/applications-module.h"
-#include "ns3/ipv6-static-routing-helper.h"
-#include "ns3/mobility-module.h"
-#include "ns3/spectrum-module.h"
-#include "ns3/propagation-loss-model.h"
-#include "ns3/log.h"
-#include "ns3/ipv6-routing-table-entry.h"
-#include "ns3/sixlowpan-module.h"
-#include "ns3/lr-wpan-module.h"
 
 using namespace ns3;
 
-
-
-int main (int argc, char** argv)
+int
+main(int argc, char** argv)
 {
-#if 0
-  LogComponentEnable ("Ping6Application", LOG_LEVEL_ALL);
-  LogComponentEnable ("LrWpanMac",LOG_LEVEL_ALL);
-  LogComponentEnable ("LrWpanPhy",LOG_LEVEL_ALL);
-  LogComponentEnable ("LrWpanNetDevice", LOG_LEVEL_ALL);
-  LogComponentEnable ("SixLowPanNetDevice", LOG_LEVEL_ALL);
-#endif
+    bool verbose = false;
+    bool disablePcap = false;
+    bool disableAsciiTrace = false;
+    bool enableLSixlowLogLevelInfo = false;
 
-  NodeContainer nodes;
-  nodes.Create(2);
+    CommandLine cmd(__FILE__);
+    cmd.AddValue("verbose", "turn on log components", verbose);
+    cmd.AddValue("disable-pcap", "disable PCAP generation", disablePcap);
+    cmd.AddValue("disable-asciitrace", "disable ascii trace generation", disableAsciiTrace);
+    cmd.AddValue("enable-sixlowpan-loginfo",
+                 "enable sixlowpan LOG_LEVEL_INFO (used for tests)",
+                 enableLSixlowLogLevelInfo);
+    cmd.Parse(argc, argv);
 
-  LrWpanHelper lrWpanHelper;
-  // Add and install the LrWpanNetDevice for each node
-  NetDeviceContainer lrwpanDevices = lrWpanHelper.Install(nodes);
+    if (verbose)
+    {
+        LogComponentEnable("Ping", LOG_LEVEL_ALL);
+        LogComponentEnable("LrWpanMac", LOG_LEVEL_ALL);
+        LogComponentEnable("LrWpanPhy", LOG_LEVEL_ALL);
+        LogComponentEnable("LrWpanNetDevice", LOG_LEVEL_ALL);
+        LogComponentEnable("SixLowPanNetDevice", LOG_LEVEL_ALL);
+    }
 
-  // Fake PAN association and short address assignment.
-  lrWpanHelper.AssociateToPan (lrwpanDevices, 0);
+    NodeContainer nodes;
+    nodes.Create(2);
 
-  MobilityHelper mobility;
-  mobility.SetMobilityModel ("ns3::ConstantPositionMobilityModel");
-  mobility.SetPositionAllocator ("ns3::GridPositionAllocator",
-                                 "MinX", DoubleValue (0.0),
-                                 "MinY", DoubleValue (0.0),
-                                 "DeltaX", DoubleValue (20),
-                                 "DeltaY", DoubleValue (20),
-                                 "GridWidth", UintegerValue (3),
-                                 "LayoutType", StringValue ("RowFirst"));
-  mobility.SetMobilityModel ("ns3::ConstantPositionMobilityModel");
-  mobility.Install (nodes);
-  
+    MobilityHelper mobility;
+    mobility.SetMobilityModel("ns3::ConstantPositionMobilityModel");
+    mobility.SetPositionAllocator("ns3::GridPositionAllocator",
+                                  "MinX",
+                                  DoubleValue(0.0),
+                                  "MinY",
+                                  DoubleValue(0.0),
+                                  "DeltaX",
+                                  DoubleValue(20),
+                                  "DeltaY",
+                                  DoubleValue(20),
+                                  "GridWidth",
+                                  UintegerValue(3),
+                                  "LayoutType",
+                                  StringValue("RowFirst"));
+    mobility.SetMobilityModel("ns3::ConstantPositionMobilityModel");
+    mobility.Install(nodes);
 
-  InternetStackHelper internetv6;
-  internetv6.Install (nodes);
+    LrWpanHelper lrWpanHelper;
+    // Add and install the LrWpanNetDevice for each node
+    NetDeviceContainer lrwpanDevices = lrWpanHelper.Install(nodes);
 
-  SixLowPanHelper sixlowpan;
-  NetDeviceContainer devices = sixlowpan.Install (lrwpanDevices); 
- 
-  Ipv6AddressHelper ipv6;
-  ipv6.SetBase (Ipv6Address ("2001:2::"), Ipv6Prefix (64));
-  Ipv6InterfaceContainer deviceInterfaces;
-  deviceInterfaces = ipv6.Assign (devices);
-  // check if adresses are assigned
-  //std::cout<< deviceInterfaces.GetAddress(0,1)<<std::endl;
-  //std::cout<< deviceInterfaces.GetAddress(1,1)<<std::endl;
+    // Manual PAN association and extended and short address assignment.
+    // Association using the MAC functions can also be used instead of this step.
+    lrWpanHelper.CreateAssociatedPan(lrwpanDevices, 1);
 
+    InternetStackHelper internetv6;
+    internetv6.Install(nodes);
 
-   
-  uint32_t packetSize = 10;
-  uint32_t maxPacketCount = 5;
-  Time interPacketInterval = Seconds (1.);
-  Ping6Helper ping6;
+    SixLowPanHelper sixlowpan;
+    NetDeviceContainer devices = sixlowpan.Install(lrwpanDevices);
 
-  ping6.SetLocal (deviceInterfaces.GetAddress (0, 1));
-  ping6.SetRemote (deviceInterfaces.GetAddress (1, 1));
+    Ipv6AddressHelper ipv6;
+    ipv6.SetBase(Ipv6Address("2001:2::"), Ipv6Prefix(64));
+    Ipv6InterfaceContainer deviceInterfaces;
+    deviceInterfaces = ipv6.Assign(devices);
 
-  ping6.SetAttribute ("MaxPackets", UintegerValue (maxPacketCount));
-  ping6.SetAttribute ("Interval", TimeValue (interPacketInterval));
-  ping6.SetAttribute ("PacketSize", UintegerValue (packetSize));
-  ApplicationContainer apps = ping6.Install (nodes.Get (0));
+    if (enableLSixlowLogLevelInfo)
+    {
+        std::cout << "Device 0: pseudo-Mac-48 "
+                  << Mac48Address::ConvertFrom(devices.Get(0)->GetAddress()) << ", IPv6 Address "
+                  << deviceInterfaces.GetAddress(0, 1) << std::endl;
+        std::cout << "Device 1: pseudo-Mac-48 "
+                  << Mac48Address::ConvertFrom(devices.Get(1)->GetAddress()) << ", IPv6 Address "
+                  << deviceInterfaces.GetAddress(1, 1) << std::endl;
+    }
 
-  apps.Start (Seconds (1.0));
-  apps.Stop (Seconds (10.0));
+    uint32_t packetSize = 16;
+    uint32_t maxPacketCount = 5;
+    Time interPacketInterval = Seconds(1.);
+    PingHelper ping(deviceInterfaces.GetAddress(1, 1));
 
-  AsciiTraceHelper ascii;
-  lrWpanHelper.EnableAsciiAll (ascii.CreateFileStream ("Ping-6LoW-lr-wpan.tr"));
-  lrWpanHelper.EnablePcapAll (std::string ("Ping-6LoW-lr-wpan"), true);
-  
-  Simulator::Stop (Seconds (10));
-  
-  Simulator::Run ();
-  Simulator::Destroy ();
+    ping.SetAttribute("Count", UintegerValue(maxPacketCount));
+    ping.SetAttribute("Interval", TimeValue(interPacketInterval));
+    ping.SetAttribute("Size", UintegerValue(packetSize));
+    ApplicationContainer apps = ping.Install(nodes.Get(0));
 
+    apps.Start(Seconds(2.0));
+    apps.Stop(Seconds(20.0));
+
+    if (!disableAsciiTrace)
+    {
+        AsciiTraceHelper ascii;
+        lrWpanHelper.EnableAsciiAll(ascii.CreateFileStream("Ping-6LoW-lr-wpan.tr"));
+    }
+    if (!disablePcap)
+    {
+        lrWpanHelper.EnablePcapAll(std::string("Ping-6LoW-lr-wpan"), true);
+    }
+    if (enableLSixlowLogLevelInfo)
+    {
+        Ptr<OutputStreamWrapper> routingStream = Create<OutputStreamWrapper>(&std::cout);
+        Ipv6RoutingHelper::PrintNeighborCacheAllAt(Seconds(9), routingStream);
+    }
+
+    Simulator::Stop(Seconds(20));
+
+    Simulator::Run();
+    Simulator::Destroy();
+
+    return 0;
 }
-
