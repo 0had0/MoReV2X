@@ -44,3 +44,5 @@ __pycache__/
 /[DU]l*Stats.txt
 /*.unimo
 /tagFile.txt
+/*.pcap
+/*.tr
