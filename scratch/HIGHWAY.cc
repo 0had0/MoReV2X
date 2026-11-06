@@ -122,6 +122,10 @@ void ApplySchedulerOption (Ptr<NrV2XUeMac> mac, const std::string &option)
     mac->SetAttribute ("AllSlotsReEvaluation", BooleanValue (true));
   else if (key == "umh")
     mac->SetAttribute ("UMHReEvaluation", BooleanValue (true));
+  else if (key == "adaptive")
+    mac->SetAttribute ("AdaptiveReservation", BooleanValue (true));
+  else if (key == "noadaptive")
+    mac->SetAttribute ("AdaptiveReservation", BooleanValue (false));
   else if (key == "pkeep")
     mac->SetAttribute ("Pkeep", DoubleValue (std::stod (value)));
   else if (key == "rsrp")
@@ -158,7 +162,7 @@ void ApplySchedulerMap (const std::string &schedulerMap, NodeContainer VehicleUE
   for (NodeContainer::Iterator L = VehicleUEs.Begin (); L != VehicleUEs.End (); ++L)
   {
     Ptr<NrV2XUeMac> mac = (*L)->GetDevice (0)->GetObject<NistLteUeNetDevice> ()->GetMac ();
-    BooleanValue dynamic, reTx, reEvaluation;
+    BooleanValue dynamic, reTx, reEvaluation, adaptive;
     DoubleValue rsrp, pkeep;
     UintegerValue grantMcs;
     mac->GetAttribute ("DynamicScheduling", dynamic);
@@ -167,8 +171,9 @@ void ApplySchedulerMap (const std::string &schedulerMap, NodeContainer VehicleUE
     mac->GetAttribute ("RSRPthreshold", rsrp);
     mac->GetAttribute ("SlGrantMcs", grantMcs);
     mac->GetAttribute ("Pkeep", pkeep);
+    mac->GetAttribute ("AdaptiveReservation", adaptive);
     mapFile << (*L)->GetId () << "," << dynamic.Get () << "," << reTx.Get () << "," << reEvaluation.Get ()
-            << "," << rsrp.Get () << "," << grantMcs.Get () << "," << pkeep.Get () << std::endl;
+            << "," << rsrp.Get () << "," << grantMcs.Get () << "," << pkeep.Get () << "," << adaptive.Get () << std::endl;
   }
 }
 
@@ -303,6 +308,16 @@ UdpClient::Send (void)
       v2xTag.SetReservationSize((uint16_t) ReservationSize + 35);
       NS_LOG_UNCOND("Udp: UE " << nodeId << " transmitting packet with size: " << m_size+35 << " B and reserving resources using " << ReservationSize+35 << "B. RRI " << v2xTag.GetPrsvp() << " ms. Next packet in " << T_gen << " ms");
     }
+    // Adaptive reservation sets the pace: a period that differs from the RRI would miss its slots
+    const double adaptiveRri = currentNode->GetDevice (0)->GetObject<NistLteUeNetDevice> ()->GetMac ()->GetAdaptiveRri ();
+    if (adaptiveRri > 0)
+    {
+      v2xTag.SetPrsvp (adaptiveRri);
+      v2xTag.SetPdb (std::min (v2xTag.GetPdb (), adaptiveRri));
+      if (VehicleTrafficType[nodeId-1] == 0x00)
+        T_gen = adaptiveRri;
+    }
+
     packetID = packetID + 1; // increment the packet ID number 
     v2xTag.SetIntValue(packetID); 
     v2xTag.SetPacketId(packetID); 
@@ -671,6 +686,7 @@ main (int argc, char *argv[])
 
   bool LegacyEvenUeOneShot = false;
   double Pkeep = 0.0;
+  bool AdaptiveRRI = false;
   bool PositionLog = false;
   std::string SchedulerMap = "";
 
@@ -743,6 +759,7 @@ main (int argc, char *argv[])
   cmd.AddValue ("SchedulerMap", "Per-node scheduler, e.g. 1-10:sps;11-20:dynamic+retx+rsrp=-110", SchedulerMap);
   cmd.AddValue ("UdpFiles", "Write the application layer logs TxFile.txt and RxFile.txt", enableUDPfiles);
   cmd.AddValue ("PosLog", "Write vehicle positions to posFile.txt every 100 ms", PositionLog);
+  cmd.AddValue ("AdaptiveRRI", "Adapt the RRI and the keep probability to the sensed load", AdaptiveRRI);
   cmd.AddValue ("pkeep", "Probability of keeping the resources when Cresel expires", Pkeep);
   cmd.AddValue ("LegacyEvenUeOneShot", "Force Cresel=1 on even UEs, as upstream MoReV2X v4.1 did", LegacyEvenUeOneShot);
 
@@ -937,6 +954,7 @@ main (int argc, char *argv[])
 
   readme << " - RSRP threshold = " << MAC_RSRPthreshold << " dBm" << std::endl;
   readme << " - Pkeep = " << Pkeep << std::endl;
+  readme << " - Adaptive RRI = " << AdaptiveRRI << std::endl;
   readme << " - RSSI threshold = " << CBR_RSSIthreshold << " dBm" << std::endl;
   readme << " - PHY sensitivity = " << RefSensitivity << " dBm" << std::endl;
 
@@ -1003,6 +1021,7 @@ main (int argc, char *argv[])
   Config::SetDefault ("ns3::NrV2XUeMac::FrequencyReuse", BooleanValue (FrequencyReuse));
   Config::SetDefault ("ns3::NrV2XUeMac::LegacyEvenUeOneShot", BooleanValue (LegacyEvenUeOneShot));
   Config::SetDefault ("ns3::NrV2XUeMac::Pkeep", DoubleValue (Pkeep));
+  Config::SetDefault ("ns3::NrV2XUeMac::AdaptiveReservation", BooleanValue (AdaptiveRRI));
 
   externalMobility = !MobilityConfig.sumoCfg.empty () || !MobilityConfig.traceCsv.empty ();
   if (externalMobility)

@@ -47,7 +47,11 @@ run numerology1 --Periodic --Numerology=1 --SubChannel=10
 run numerology2 --Periodic --Numerology=2 --SubChannel=10 --ChannelBW=20
 run freq_reuse --Periodic --Dynamic --FreqReuse --ReuseDist=500
 run avg_rri --Aperiodic --AvgRRI
-run per_node --Periodic '--SchedulerMap=1-5:sps;6-10:dynamic+retx;11-15:reeval+rsrp=-120'
+run adaptive_rri --Periodic --AdaptiveRRI
+run adaptive_retx --Periodic --AdaptiveRRI --ReTx --ReEvaluation
+run adaptive_mixed --Mixed --Percentage=50 --AdaptiveRRI
+run adaptive_aper --Aperiodic --AdaptiveRRI
+run per_node --Periodic '--SchedulerMap=1-5:sps;6-10:dynamic+retx;11-15:reeval+rsrp=-120+adaptive'
 run sumo --Periodic --Vehicles=80 --sumoCfg="$sumo_cfg" --sumoWarmup=60
 
 rm -rf "$workdir"
