@@ -76,7 +76,7 @@ namespace ns3 {
           }
         else 
           {
-             tmpRes = tmp1 + (10249 - tmp2);
+             tmpRes = tmp1 + (10240 - tmp2);
 
           }
         res.subframeNo = tmpRes % 10;
