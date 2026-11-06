@@ -11,6 +11,8 @@ cmake -S . -B cmake-cache-debug -G Ninja -DCMAKE_BUILD_TYPE=debug -DNS3_ASSERT=O
   -DNS3_ENABLED_MODULES="MoReV2X;traci" -DNS3_OUTPUT_DIRECTORY="$MOREV2X_ROOT/build-debug" \
   -DNS3_WARNINGS_AS_ERRORS=OFF > /dev/null || exit 1
 ninja -C cmake-cache-debug -j"$MOREV2X_JOBS" scratch_HIGHWAY > /dev/null || exit 1
+# Configuring points the lock file at this build, which would leave test.py with no tests
+trap 'cmake -S . -B cmake-cache > /dev/null' EXIT
 
 binary="$MOREV2X_ROOT/build-debug/scratch/ns3.42-HIGHWAY-debug"
 sumo_cfg="$MOREV2X_ROOT/scenarios/sumo/highway_2km/highway.sumocfg"
