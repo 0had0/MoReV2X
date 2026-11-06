@@ -27,6 +27,7 @@
 
 
 
+#include "nr-v2x-adaptive-reservation.h"
 #include <map>
 
 #include <ns3/nist-lte-mac-sap.h>
@@ -156,6 +157,8 @@ public:
   /* 
     Public function to push new RRI values into the list of allowed RRI values
   */
+  /// \return the RRI chosen by adaptive reservation in ms, 0 if it is off or has not run yet
+  double GetAdaptiveRri (void) const;
   void PushNewRRIValue (uint16_t RRI);
 
 
@@ -524,6 +527,18 @@ private:
   bool m_FreqReuse;
   bool m_AdaptiveScheduling;
   bool m_legacyEvenUeOneShot;
+
+  bool m_adaptiveReservation;
+  double m_adaptiveRriMin;
+  double m_adaptiveRriMax;
+  double m_adaptiveRriDelta;
+  double m_adaptiveFreeLow;
+  double m_adaptiveFreeHigh;
+  NrV2XAdaptiveReservation m_adaptive;
+  double m_adaptiveWindow; //!< ms of sensing history behind the free ratio
+  double m_adaptiveRri;    //!< RRI in use, in ms. 0 until the first selection
+  void UpdateAdaptiveReservation (SidelinkCommResourcePool::SubframeInfo currentSF, double rri);
+  double SensedFreeRatio (SidelinkCommResourcePool::SubframeInfo currentSF) const;
 
   double m_keepProbability;
   Ptr<UniformRandomVariable> m_evalKeepProb;

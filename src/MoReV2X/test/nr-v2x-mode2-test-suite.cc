@@ -1,10 +1,12 @@
 /* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 #include <list>
 #include <map>
+#include <vector>
 
 #include "ns3/boolean.h"
 #include "ns3/double.h"
 #include "ns3/nist-sl-pool.h"
+#include "ns3/nr-v2x-adaptive-reservation.h"
 #include "ns3/nr-v2x-ue-mac.h"
 #include "ns3/nr-v2x-utils.h"
 #include "ns3/test.h"
@@ -154,6 +156,45 @@ private:
   }
 };
 
+class AdaptiveReservationTestCase : public TestCase
+{
+public:
+  AdaptiveReservationTestCase () : TestCase ("Adaptive reservation follows the sensed load") {}
+
+private:
+  virtual void DoRun (void)
+  {
+    const std::vector<double> noNeighbours;
+    double rri; // the test macros evaluate their argument more than once
+
+    NrV2XAdaptiveReservation congested;
+    rri = congested.Update (60, 0.1, noNeighbours);
+    NS_TEST_ASSERT_MSG_EQ_TOL (rri, 100, 1e-9, "a busy channel slows the UE");
+    NS_TEST_ASSERT_MSG_EQ_TOL (congested.GetKeepProbability (), 0.25, 1e-9, "a busy channel lowers the keep probability");
+    rri = congested.Update (100, 0.1, noNeighbours);
+    NS_TEST_ASSERT_MSG_EQ_TOL (rri, 100, 1e-9, "RRI capped at the maximum");
+
+    NrV2XAdaptiveReservation free;
+    rri = free.Update (60, 0.9, noNeighbours);
+    NS_TEST_ASSERT_MSG_EQ_TOL (rri, 20, 1e-9, "a free channel speeds the UE up");
+    NS_TEST_ASSERT_MSG_EQ_TOL (free.GetKeepProbability (), 0.75, 1e-9, "a free channel raises the keep probability");
+    rri = free.Update (20, 0.9, noNeighbours);
+    NS_TEST_ASSERT_MSG_EQ_TOL (rri, 20, 1e-9, "RRI floored at the minimum");
+    NS_TEST_ASSERT_MSG_EQ_TOL (free.GetKeepProbability (), 0.8, 1e-9, "keep probability capped");
+
+    NrV2XAdaptiveReservation steady;
+    rri = steady.Update (60, 0.4, noNeighbours);
+    NS_TEST_ASSERT_MSG_EQ_TOL (rri, 60, 1e-9, "between the thresholds nothing moves");
+    NS_TEST_ASSERT_MSG_EQ_TOL (steady.GetKeepProbability (), 0.5, 1e-9, "between the thresholds nothing moves");
+
+    std::vector<double> neighbours;
+    neighbours.push_back (100);
+    neighbours.push_back (100);
+    rri = steady.Update (60, 0.4, neighbours);
+    NS_TEST_ASSERT_MSG_EQ_TOL (rri, 90, 1e-9, "pulled towards neighbours, on the 10 ms grid");
+  }
+};
+
 class LegacyHackDefaultTestCase : public TestCase
 {
 public:
@@ -181,6 +222,7 @@ public:
     AddTestCase (new ReselectionCounterTestCase, TestCase::QUICK);
     AddTestCase (new ResidualCsrTestCase, TestCase::QUICK);
     AddTestCase (new PerInstanceSchedulerTestCase, TestCase::QUICK);
+    AddTestCase (new AdaptiveReservationTestCase, TestCase::QUICK);
     AddTestCase (new LegacyHackDefaultTestCase, TestCase::QUICK);
   }
 };

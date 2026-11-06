@@ -27,7 +27,7 @@ RESERVATION_COLUMNS = ["node", "time", "unusedSubchannelRatio", "unusedReservati
 REEVALUATION_COLUMNS = ["freshGrant", "node", "time", "packet", "checkedTxIndex", "frame", "subframe",
                         "lastFrame", "lastSubframe", "csr", "checkFrame", "checkSubframe", "reselected"]
 POSITION_COLUMNS = ["time", "node", "x", "y", "z", "vx", "vy", "vz", "traffic", "inside"]
-SCHEDULER_COLUMNS = ["node", "dynamic", "retx", "reEvaluation", "rsrpThreshold", "mcs", "pkeep"]
+SCHEDULER_COLUMNS = ["node", "dynamic", "retx", "reEvaluation", "rsrpThreshold", "mcs", "pkeep", "adaptive"]
 
 LOSS_NAMES = {0: "below sensitivity", 1: "half duplex", 2: "propagation", 3: "collision", 9: "decoded"}
 TRIGGER_NAMES = {0: "counter", 1: "latency and size", 2: "latency", 3: "size", 4: "re-evaluation"}
