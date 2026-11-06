@@ -32,6 +32,7 @@ if [ "$mode" != "--quick" ]; then
   status=$?
   set -e
   grep -E 'of [0-9]+ tests passed' "$log_dir/ns3-tests.log" || true
+  rm -f ./*.unimo ./[DU]l*Stats.txt ./*.pcap ./*.tr # hundreds of MB written by ns-3 examples
   if [ "$status" -ne 0 ]; then
     # Anything failing that is not listed in tools/known-failures.txt stops the gate
     failed="$(grep -E '^(FAIL|CRASH|TIMEOUT): ' "$log_dir/ns3-tests.log" | sed -E 's/^[A-Z]+: (TestSuite|Example) //' | sort -u)"
