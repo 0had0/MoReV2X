@@ -1,0 +1,55 @@
+src/morev2x/helper/nist-lte-helper.cc:75:14: error: invalid operands to binary expression ('Ptr<SpectrumPropagationLossModel>' and 'int')
+src/morev2x/helper/nist-lte-helper.cc:84:28: error: invalid operands to binary expression ('Ptr<PropagationLossModel>' and 'int')
+src/morev2x/helper/nist-lte-helper.cc:99:14: error: invalid operands to binary expression ('Ptr<SpectrumPropagationLossModel>' and 'int')
+src/morev2x/helper/nist-lte-helper.cc:108:28: error: invalid operands to binary expression ('Ptr<PropagationLossModel>' and 'int')
+src/morev2x/helper/nist-lte-helper.cc:426:19: error: invalid operands to binary expression ('Ptr<NistEpcHelper>' and 'int')
+src/morev2x/helper/nist-lte-helper.cc:488:19: error: invalid operands to binary expression ('Ptr<NistEpcHelper>' and 'int')
+src/morev2x/helper/nist-lte-helper.cc:514:19: error: invalid operands to binary expression ('Ptr<NistEpcHelper>' and 'int')
+src/morev2x/helper/nist-lte-helper.cc:520:19: error: invalid operands to binary expression ('Ptr<NistLteUeNetDevice>' and 'int')
+src/morev2x/helper/nist-lte-helper.cc:527:20: error: invalid operands to binary expression ('Ptr<NistEpcUeNas>' and 'int')
+src/morev2x/helper/nist-lte-helper.cc:559:30: error: invalid operands to binary expression ('Ptr<NistEpcHelper>' and 'int')
+src/morev2x/helper/nist-lte-helper.cc:582:30: error: invalid operands to binary expression ('Ptr<NistEpcHelper>' and 'int')
+src/morev2x/helper/nist-lte-helper.cc:603:30: error: invalid operands to binary expression ('Ptr<NistEpcHelper>' and 'int')
+src/morev2x/helper/nist-lte-helper.cc:622:30: error: invalid operands to binary expression ('Ptr<NistEpcHelper>' and 'int')
+src/morev2x/helper/nist-lte-helper.cc:642:30: error: invalid operands to binary expression ('Ptr<NistEpcHelper>' and 'int')
+src/morev2x/helper/nist-lte-helper.cc:698:22: error: invalid operands to binary expression ('Ptr<NistLteUeRrc>' and 'int')
+src/morev2x/helper/nist-lte-helper.cc:727:17: error: invalid operands to binary expression ('Ptr<AntennaModel>' and 'int')
+src/morev2x/helper/nist-lte-helper.cc:737:17: error: invalid operands to binary expression ('Ptr<AntennaModel>' and 'int')
+src/morev2x/helper/nist-lte-helper.cc:804:17: error: invalid operands to binary expression ('Ptr<AntennaModel>' and 'int')
+src/morev2x/helper/nist-lte-helper.cc:814:17: error: invalid operands to binary expression ('Ptr<AntennaModel>' and 'int')
+src/morev2x/helper/nist-lte-helper.cc:850:28: error: invalid operands to binary expression ('Ptr<PropagationLossModel>' and 'int')
+src/morev2x/helper/nist-lte-helper.cc:885:28: error: invalid operands to binary expression ('Ptr<PropagationLossModel>' and 'int')
+src/morev2x/helper/nist-point-to-point-epc-helper.cc:164:25: error: invalid operands to binary expression ('Ptr<Ipv4>' and 'int')
+ns3/lte-node-state.h:38:22: error: declaration of 'GetInstanceTypeId' overrides a 'final' function
+ns3/log.h:630:14: error: invalid operands to binary expression ('std::ostream' (aka 'basic_ostream<char>') and 'const ns3::NistEpcTft::NistPacketFilter')
+src/morev2x/model/nist-lte-amc.cc:246:18: error: no matching function for call to 'MakeEnumAccessor'
+src/morev2x/model/nist-lte-chunk-processor.cc:62:19: error: invalid operands to binary expression ('Ptr<SpectrumValue>' and 'int')
+src/morev2x/model/nist-lte-rlc-am.cc:182:56: error: no member named 'IsRunning' in 'ns3::EventId'; did you mean 'IsPending'?
+src/morev2x/model/nist-lte-rlc-am.cc:585:35: error: no member named 'IsRunning' in 'ns3::EventId'; did you mean 'IsPending'?
+src/morev2x/model/nist-lte-rlc-am.cc:730:39: error: no member named 'IsRunning' in 'ns3::EventId'; did you mean 'IsPending'?
+src/morev2x/model/nist-lte-rlc-am.cc:850:30: error: no member named 'IsRunning' in 'ns3::EventId'; did you mean 'IsPending'?
+src/morev2x/model/nist-lte-rlc-am.cc:868:32: error: no member named 'IsRunning' in 'ns3::EventId'; did you mean 'IsPending'?
+src/morev2x/model/nist-lte-rlc-am.cc:994:37: error: no member named 'IsRunning' in 'ns3::EventId'; did you mean 'IsPending'?
+src/morev2x/model/nist-lte-rlc-am.cc:1604:56: error: no member named 'IsRunning' in 'ns3::EventId'; did you mean 'IsPending'?
+src/morev2x/model/nist-lte-rrc-protocol-ideal.cc:326:21: error: invalid operands to binary expression ('Ptr<NistLteUeNetDevice>' and 'int')
+src/morev2x/model/nist-lte-sl-chunk-processor.cc:72:40: error: invalid operands to binary expression ('Ptr<SpectrumValue>' and 'int')
+src/morev2x/model/nist-lte-ue-rrc.cc:929:109: error: invalid operands to binary expression ('Ptr<LteSidelinkRadioBearerInfo>' and 'long')
+src/morev2x/model/nist-lte-ue-rrc.cc:1617:48: error: invalid operands to binary expression ('Ptr<LteUeRrcSl>' and 'long')
+src/morev2x/model/nist-lte-ue-rrc.cc:1646:93: error: invalid operands to binary expression ('Ptr<SidelinkRxCommResourcePool>' and 'long')
+src/morev2x/model/nist-lte-ue-rrc.cc:1654:28: error: invalid operands to binary expression ('Ptr<SidelinkRxCommResourcePool>' and 'long')
+src/morev2x/model/nist-lte-ue-rrc.cc:1674:50: error: invalid operands to binary expression ('Ptr<LteUeRrcSl>' and 'long')
+src/morev2x/model/nist-lte-ue-rrc.cc:1705:94: error: invalid operands to binary expression ('Ptr<SidelinkRxDiscResourcePool>' and 'long')
+src/morev2x/model/nist-lte-ue-rrc.cc:1712:24: error: invalid operands to binary expression ('Ptr<SidelinkRxDiscResourcePool>' and 'long')
+src/morev2x/model/nist-lte-ue-rrc.cc:2053:18: error: invalid operands to binary expression ('Ptr<LteSignalingRadioNistBearerInfo>' and 'int')
+src/morev2x/model/nr-v2x-rlc-um.cc:623:26: error: no member named 'IsRunning' in 'ns3::EventId'; did you mean 'IsPending'?
+src/morev2x/model/nr-v2x-rlc-um.cc:639:28: error: no member named 'IsRunning' in 'ns3::EventId'; did you mean 'IsPending'?
+src/morev2x/model/nr-v2x-spectrum-phy.cc:765:23: error: invalid operands to binary expression ('Ptr<NistLteSpectrumSignalParametersDataFrame>' and 'int')
+src/morev2x/model/nr-v2x-spectrum-phy.cc:960:29: error: invalid operands to binary expression ('Ptr<NistLteSpectrumSignalParametersDlCtrlFrame>' and 'int')
+src/morev2x/model/nr-v2x-spectrum-phy.cc:960:52: error: invalid operands to binary expression ('Ptr<NistLteSpectrumSignalParametersUlSrsFrame>' and 'int')
+ns3/lte-node-state.h:38:22: error: declaration of 'GetInstanceTypeId' overrides a 'final' function
+src/morev2x/examples/HIGHWAY.cc:230:38: error: use of undeclared identifier 'm_peerAddress'
+src/morev2x/examples/HIGHWAY.cc:232:60: error: use of undeclared identifier 'm_peerAddress'
+src/morev2x/examples/HIGHWAY.cc:234:43: error: use of undeclared identifier 'm_peerAddress'
+src/morev2x/examples/HIGHWAY.cc:236:60: error: use of undeclared identifier 'm_peerAddress'
+src/morev2x/examples/HIGHWAY.cc:1083:20: error: no member named 'MakeMobilityModelConsistent' in 'ns3::BuildingsHelper'
+ns3/ptr.h:494:19: error: static assertion failed due to requirement '!std::is_base_of_v<ns3::Object, ns3::LTENodeState>': Use CreateObject() instead of Create() for Object subclasses
