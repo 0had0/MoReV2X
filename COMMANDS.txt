@@ -45,7 +45,7 @@ Faster, without waf checking the build:
 build/optimized/scratch/HIGHWAY --Vehicles=100 --simTime=10 --Periodic --mcs=13
 
 Traffic model, pick exactly one:  --Periodic  --Aperiodic  --Mixed --Percentage=50  --ETSI
-Scheduler:     --Dynamic  --ReTx  --ReEvaluation  --AllSlots  --UMH  --Adaptive
+Scheduler:     --Dynamic  --ReTx  --ReEvaluation  --AllSlots  --UMH  --Adaptive  --AdaptiveRRI
                --RSRP=-128  --PDB=100  --pkeep=0.5  --FreqReuse --ReuseDist=500
 PHY:           --mcs=13  --SubChannel=10  --ChannelBW=10  --Numerology=0  --ueTxPower=23
 Randomness:    --seed=1  --runNo=1
@@ -54,7 +54,10 @@ Extra logs:    --UdpFiles=true  --PosLog=true
 Careful:
   --mcs=0 transmits nothing, the MAC treats 0 as "sidelink off".
   --noIBE=false turns IBE off. --noIBE on its own turns it on, the name is inverted.
+  --Adaptive and --AdaptiveRRI are different. --Adaptive picks SPS or dynamic by traffic type.
+  --AdaptiveRRI changes the RRI and the packet rate from the sensed load.
   All options:  build/optimized/scratch/HIGHWAY --PrintHelp
+  Any attribute:  --ns3::NrV2XUeMac::AdaptiveRriMin=50
 
 
 Parameter sweep, every combination of a YAML file, resumes if interrupted:
@@ -67,12 +70,13 @@ Each key is a HIGHWAY option, and a list is swept. Summary in results/sweeps/<na
 --SchedulerMap="<first>-<last>:<option>+<option>;..."
 
 Options: sps dynamic retx noretx reeval noreeval allslots umh rsrp=<dBm> mcs=<index> pkeep=<p>
+         adaptive noadaptive
 UE node ids start at 1. Node 0 is the PGW.
 
 ./waf --run "HIGHWAY --Vehicles=20 --simTime=10 --Periodic --mcs=13 --SchedulerMap=1-10:sps;11-20:dynamic+retx"
 
 The result of the map is written to results/<scenario>/SchedulerMap.txt.
-Columns: node,dynamic,retx,reEvaluation,rsrpThreshold,mcs,pkeep
+Columns: node,dynamic,retx,reEvaluation,rsrpThreshold,mcs,pkeep,adaptive
 
 
 6. SUMO MOBILITY
@@ -99,7 +103,7 @@ cd -
 --------
 tools/gate.sh                   Everything: build, ns-3 suites and examples, scenario tests.
 tools/gate.sh --quick           Skips the ns-3 suites. Does not unlock a commit.
-tools/debug-check.sh            All scheduler modes with NS_ASSERT on, about 10 minutes the
+tools/debug-check.sh            All 22 scheduler modes with NS_ASSERT on, about 10 minutes the
                                 first time. Run it after changing the MAC: the optimized
                                 build ignores assertions, this one found 2 real bugs.
 ./test.py --nowaf               All ns-3 suites and examples.
@@ -108,7 +112,7 @@ tools/debug-check.sh            All scheduler modes with NS_ASSERT on, about 10 
 .venv/bin/python -m unittest discover -s tests -v       MoReV2X scenario tests.
 .venv/bin/python -m unittest tests.test_integration.SumoMobility -v    One test class.
 
-tools/fingerprint.sh            Hash of the Mode 2 logs of 3 fixed runs. Same output before and
+tools/fingerprint.sh            Hash of the sorted Mode 2 logs of 3 fixed runs. Same output before and
                                 after a change proves default behaviour did not move. Valid on
                                 one machine and one ns-3 version only.
 

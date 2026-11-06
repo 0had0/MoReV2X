@@ -75,6 +75,7 @@ def build(bld):
         'model/lte-node-state.cc',
         'model/nr-v2x-amc.cc',
         'model/nr-v2x-utils.cc',
+        'model/nr-v2x-adaptive-reservation.cc',
         ]
 
     module_test = bld.create_ns3_module_test_library('MoReV2X')
@@ -158,6 +159,7 @@ def build(bld):
         'model/lte-node-state.h',
         'model/nr-v2x-amc.h',
         'model/nr-v2x-utils.h',
+        'model/nr-v2x-adaptive-reservation.h',
         ]
 
     bld.ns3_python_bindings()

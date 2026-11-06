@@ -454,6 +454,29 @@ NrV2XUeMac::GetTypeId (void)
                                         BooleanValue (false),
                                         MakeBooleanAccessor (&NrV2XUeMac::m_AdaptiveScheduling),
                                         MakeBooleanChecker ())
+                .AddAttribute ("AdaptiveReservation",
+                                        "Adapt the RRI and the keep probability to the sensed channel load",
+                                        BooleanValue (false),
+                                        MakeBooleanAccessor (&NrV2XUeMac::m_adaptiveReservation),
+                                        MakeBooleanChecker ())
+                .AddAttribute ("AdaptiveRriMin", "Smallest adaptive RRI (ms)", DoubleValue (20.0),
+                                        MakeDoubleAccessor (&NrV2XUeMac::m_adaptiveRriMin),
+                                        MakeDoubleChecker<double> (1.0))
+                .AddAttribute ("AdaptiveRriMax", "Largest adaptive RRI (ms)", DoubleValue (100.0),
+                                        MakeDoubleAccessor (&NrV2XUeMac::m_adaptiveRriMax),
+                                        MakeDoubleChecker<double> (1.0))
+                .AddAttribute ("AdaptiveRriDelta", "Change of the adaptive RRI in one update (ms)", DoubleValue (40.0),
+                                        MakeDoubleAccessor (&NrV2XUeMac::m_adaptiveRriDelta),
+                                        MakeDoubleChecker<double> (0.0))
+                .AddAttribute ("AdaptiveFreeLow", "Sensed free ratio below which the UE backs off", DoubleValue (0.3),
+                                        MakeDoubleAccessor (&NrV2XUeMac::m_adaptiveFreeLow),
+                                        MakeDoubleChecker<double> (0.0, 1.0))
+                .AddAttribute ("AdaptiveFreeHigh", "Sensed free ratio above which the UE speeds up", DoubleValue (0.5),
+                                        MakeDoubleAccessor (&NrV2XUeMac::m_adaptiveFreeHigh),
+                                        MakeDoubleChecker<double> (0.0, 1.0))
+                .AddAttribute ("AdaptiveWindow", "Sensing history behind the free ratio (ms)", DoubleValue (100.0),
+                                        MakeDoubleAccessor (&NrV2XUeMac::m_adaptiveWindow),
+                                        MakeDoubleChecker<double> (1.0))
                 .AddAttribute ("Pkeep",
                                         "Probability of keeping the resources when the reselection counter expires",
                                         DoubleValue (0.0),
@@ -511,7 +534,8 @@ NrV2XUeMac::NrV2XUeMac ()
    m_subframeNo (0),
    m_slHasDataToTx (false),
    m_validReservation (false),
-   m_updateReservation (false)
+   m_updateReservation (false),
+   m_adaptiveRri (0.0)
 {
    NS_LOG_FUNCTION (this);
    
@@ -1254,6 +1278,81 @@ NrV2XUeMac::ComputeReEvaluationFrame(uint32_t frameNo, uint32_t subframeNo)
 }
 
 
+double
+NrV2XUeMac::GetAdaptiveRri (void) const
+{
+  return m_adaptiveReservation ? m_adaptiveRri : 0.0;
+}
+
+
+double
+NrV2XUeMac::SensedFreeRatio (SidelinkCommResourcePool::SubframeInfo currentSF) const
+{
+  const uint32_t subchannels = std::floor (m_BW_RBs / m_nsubCHsize);
+  const uint32_t windowSlots = m_adaptiveWindow / m_slotDuration;
+  uint32_t busy = 0;
+  std::map <uint16_t, std::map<SidelinkCommResourcePool::SubframeInfo, std::vector<ReservedCSR> > >::const_iterator sensedIt;
+  for (sensedIt = m_sensedReservedCSRMap.begin (); sensedIt != m_sensedReservedCSRMap.end (); sensedIt++)
+  {
+    std::map<SidelinkCommResourcePool::SubframeInfo, std::vector<ReservedCSR> >::const_iterator slotIt;
+    for (slotIt = sensedIt->second.begin (); slotIt != sensedIt->second.end (); slotIt++)
+    {
+      if (SubtractFrames (currentSF.frameNo, slotIt->first.frameNo, currentSF.subframeNo, slotIt->first.subframeNo) >= windowSlots)
+        continue;
+      // A re-transmission announcement describes a future slot, its own slot has an entry of its own
+      for (std::vector<ReservedCSR>::const_iterator resIt = slotIt->second.begin (); resIt != slotIt->second.end (); resIt++)
+      {
+        if (!resIt->isReTx)
+        {
+          busy++;
+          break;
+        }
+      }
+    }
+  }
+  return std::max (0.0, 1.0 - (double) busy / (subchannels * windowSlots));
+}
+
+
+void
+NrV2XUeMac::UpdateAdaptiveReservation (SidelinkCommResourcePool::SubframeInfo currentSF, double rri)
+{
+  std::map<uint32_t, double> heard; // the latest RRI of each neighbour
+  std::map <uint16_t, std::map<SidelinkCommResourcePool::SubframeInfo, std::vector<ReservedCSR> > >::const_iterator sensedIt;
+  for (sensedIt = m_sensedReservedCSRMap.begin (); sensedIt != m_sensedReservedCSRMap.end (); sensedIt++)
+  {
+    std::map<SidelinkCommResourcePool::SubframeInfo, std::vector<ReservedCSR> >::const_iterator slotIt;
+    for (slotIt = sensedIt->second.begin (); slotIt != sensedIt->second.end (); slotIt++)
+    {
+      for (std::vector<ReservedCSR>::const_iterator resIt = slotIt->second.begin (); resIt != slotIt->second.end (); resIt++)
+      {
+        // In a re-transmission entry the RRI field holds the offset to that transmission
+        if (!resIt->isReTx && resIt->nodeId != m_rnti && resIt->RRI > 0)
+          heard[resIt->nodeId] = resIt->RRI;
+      }
+    }
+  }
+  std::vector<double> neighbourRris;
+  for (std::map<uint32_t, double>::const_iterator it = heard.begin (); it != heard.end (); it++)
+    neighbourRris.push_back (it->second);
+
+  NrV2XAdaptiveReservation::Parameters parameters;
+  parameters.rriMin = m_adaptiveRriMin;
+  parameters.rriMax = m_adaptiveRriMax;
+  parameters.rriDelta = m_adaptiveRriDelta;
+  parameters.freeLow = m_adaptiveFreeLow;
+  parameters.freeHigh = m_adaptiveFreeHigh;
+  m_adaptive.Configure (parameters);
+
+  m_adaptiveRri = m_adaptive.Update (rri, SensedFreeRatio (currentSF), neighbourRris);
+  m_keepProbability = m_adaptive.GetKeepProbability ();
+
+  // Step 1 projects past transmissions over the listed RRIs, so the new one has to be there
+  if (std::find (m_RRIvalues.begin (), m_RRIvalues.end (), (uint16_t) m_adaptiveRri) == m_RRIvalues.end ())
+    PushNewRRIValue (m_adaptiveRri);
+}
+
+
 NrV2XUeMac::V2XSidelinkGrant 
 NrV2XUeMac::V2XSelectResources (uint32_t frameNo, uint32_t subframeNo, double pdb, double p_rsvp, uint8_t v2xMessageType, uint8_t v2xTrafficType, uint16_t ReselectionCounter, uint16_t PacketSize, uint16_t ReservationSize, reselectionTrigger V2Xtrigger)
 {        
@@ -1281,6 +1380,18 @@ NrV2XUeMac::V2XSelectResources (uint32_t frameNo, uint32_t subframeNo, double pd
    V2XGrant.m_mcs = m_slGrantMcs;
    V2XGrant.m_RRI = p_rsvp;
 
+   if (m_adaptiveReservation)
+   {
+     if ((m_adaptiveRri == 0.0) || (V2Xtrigger == COUNTER))
+     {
+       SidelinkCommResourcePool::SubframeInfo nowSF;
+       nowSF.frameNo = frameNo;
+       nowSF.subframeNo = subframeNo;
+       UpdateAdaptiveReservation (nowSF, (m_adaptiveRri == 0.0) ? p_rsvp : m_adaptiveRri);
+     }
+     V2XGrant.m_RRI = m_adaptiveRri;
+     pdb = std::min (pdb, V2XGrant.m_RRI); // the next packet comes one RRI later
+   }
 
            
    if (ReselectionCounter == 0)
@@ -1296,7 +1407,7 @@ NrV2XUeMac::V2XSelectResources (uint32_t frameNo, uint32_t subframeNo, double pd
    // Assigning the reselection counter value        
    if (ReselectionCounter == 10000)
    { 
-     V2XGrant.m_Cresel = GetCresel (p_rsvp);                    
+     V2XGrant.m_Cresel = GetCresel (V2XGrant.m_RRI);                    
    }
    else
      V2XGrant.m_Cresel = ReselectionCounter;
@@ -2535,7 +2646,8 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
 
          if (( (ReservationDelay > itBsr->second.V2XPdb) || (ReTxReservationDelay > itBsr->second.V2XPdb) ) && poolIt->second.m_currentV2XGrant.m_TxIndex == 1)
          {
-           NS_ASSERT_MSG(aperiodicTraffic, "Periodic traffic should not generate latency reselections");
+           // With adaptive reservation the first packet after an RRI change can miss the old slot
+           NS_ASSERT_MSG(aperiodicTraffic || m_adaptiveReservation, "Periodic traffic should not generate latency reselections");
 //           NrV2XUeMac::ReservationsStats[m_rnti].LatencyReselections += 1;
 //           if (poolIt->second.m_currentV2XGrant.m_rbLenPssch < TBLen_RBs)
            if (poolIt->second.m_currentV2XGrant.m_grantTransmissions[1].m_rbLenPssch < TBLen_RBs)

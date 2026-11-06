@@ -111,6 +111,10 @@ class TrafficAndSchedulerModes(ScratchRuns):
         "freqreuse": ["--Periodic", "--Dynamic", "--FreqReuse", "--ReuseDist=500"],
         "avgrri": ["--Aperiodic", "--AvgRRI"],
         "aperiodic_reeval": ["--Aperiodic", "--ReTx", "--ReEvaluation"],
+        "adaptive_rri": ["--Periodic", "--AdaptiveRRI"],
+        "adaptive_rri_retx": ["--Periodic", "--AdaptiveRRI", "--ReTx", "--ReEvaluation"],
+        "adaptive_rri_aperiodic": ["--Aperiodic", "--AdaptiveRRI"],
+        "adaptive_rri_mixed": ["--Mixed", "--Percentage=50", "--AdaptiveRRI"],
     }
 
     def test_all_modes(self):
@@ -162,7 +166,7 @@ class PerNodeSchedulers(ScratchRuns):
         folder, _ = self.highway("--Vehicles=4", "--simTime=1", "--Periodic", "--mcs=13",
                                  "--SchedulerMap=2-3:dynamic+retx+rsrp=-110")
         applied = pd.read_csv(os.path.join(folder, "SchedulerMap.txt"), header=None,
-                              names=["node", "dynamic", "retx", "reeval", "rsrp", "mcs", "pkeep"]).set_index("node")
+                              names=["node", "dynamic", "retx", "reeval", "rsrp", "mcs", "pkeep", "adaptive"]).set_index("node")
         self.assertEqual(applied.dynamic.tolist(), [0, 1, 1, 0])
         self.assertEqual(applied.retx.tolist(), [0, 1, 1, 0])
         self.assertEqual(applied.rsrp.tolist(), [-128, -110, -110, -128])
@@ -260,6 +264,36 @@ class SumoMobility(ScratchRuns):
         self.assertLess((merged.x_x - merged.x_y).abs().max(), 0.5)
         tx = read(folder, "phyDebugShort.txt", TX_COLUMNS)
         self.assertGreater(len(tx), 0)
+
+
+class AdaptiveReservation(ScratchRuns):
+    def test_rri_stays_on_the_grid(self):
+        folder, _ = self.highway("--Vehicles=40", "--simTime=6", "--Periodic", "--mcs=13", "--AdaptiveRRI")
+        rri = read(folder, "SSPSlog.txt", SSPS_COLUMNS).RRI
+        self.assertTrue(rri.between(20, 100).all(), rri.unique())
+        self.assertTrue((rri % 10 == 0).all(), rri.unique())
+
+    def test_packet_period_follows_the_rri(self):
+        folder, _ = self.highway("--Vehicles=20", "--simTime=8", "--Periodic", "--mcs=13", "--AdaptiveRRI")
+        tx = read(folder, "phyDebugShort.txt", TX_COLUMNS).sort_values(["node", "genTime"])
+        tx["period"] = tx.groupby("node").genTime.diff() * 1000
+        # The packet after an RRI change was already scheduled with the old period
+        unchanged = (tx.groupby("node").RRI.diff() == 0) & (tx.groupby("node").RRI.diff(2) == 0)
+        steady = tx[tx.period.notna() & unchanged]
+        self.assertGreater(len(steady), 50)
+        self.assertLess((steady.period - steady.RRI).abs().max(), 0.5, "the traffic drifted from the grant")
+
+    def test_it_is_per_node(self):
+        folder, _ = self.highway("--Vehicles=20", "--simTime=6", "--Periodic", "--mcs=13",
+                                 "--SchedulerMap=1-10:adaptive")
+        ssps = read(folder, "SSPSlog.txt", SSPS_COLUMNS)
+        self.assertTrue(ssps[ssps.node > 10].RRI.isin([20, 100]).all(), "other nodes keep their RRI")
+        self.assertTrue(set(ssps[ssps.node <= 10].RRI) - {20, 100}, "adaptive nodes should leave the fixed RRIs")
+
+    def test_off_by_default(self):
+        folder, _ = self.highway("--Vehicles=10", "--simTime=3", "--Periodic", "--mcs=13")
+        applied = pd.read_csv(os.path.join(folder, "SchedulerMap.txt"), header=None).iloc[:, -1]
+        self.assertTrue((applied == 0).all())
 
 
 class ParameterSweep(ScratchRuns):
