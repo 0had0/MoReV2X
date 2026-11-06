@@ -454,6 +454,11 @@ NrV2XUeMac::GetTypeId (void)
                                         BooleanValue (false),
                                         MakeBooleanAccessor (&NrV2XUeMac::m_AdaptiveScheduling),
                                         MakeBooleanChecker ())
+                .AddAttribute ("LegacyEvenUeOneShot",
+                                        "Force Cresel=1 on even RNTIs, as upstream MoReV2X v4.1 did unconditionally",
+                                        BooleanValue (false),
+                                        MakeBooleanAccessor (&NrV2XUeMac::m_legacyEvenUeOneShot),
+                                        MakeBooleanChecker ())
                 .AddAttribute ("OutputPath",
                                         "Specifiy the output path where to store the results",
                                         StringValue ("results/sidelink/"),
@@ -1300,7 +1305,7 @@ NrV2XUeMac::V2XSelectResources (uint32_t frameNo, uint32_t subframeNo, double pd
 
 
    // Re-evaluations paper review
-   if (m_rnti % 2 == 0)
+   if (m_legacyEvenUeOneShot && (m_rnti % 2 == 0))
        V2XGrant.m_Cresel = 1;     
 
    SidelinkCommResourcePool::SubframeInfo currentSF;
@@ -1875,9 +1880,13 @@ V2XSidelinkGrant V2XGrant, double T_2, uint16_t NSubCh,  uint16_t L_SubCh, uint3
    uint32_t nCSRresidual = 0;
 
    NS_LOG_DEBUG("List Sa size after removing past transmissions: " << ComputeResidualCSRs (Sa_pastTx) );
-   NS_ASSERT_MSG(ComputeResidualCSRs (Sa_pastTx) > 0, "List of candidate resources is empty after removing past transmissions");
-//   if (ComputeResidualCSRs (Sa_pastTx) == 0)
-//     Sa_pastTx = Sa;
+   // With a short RRI, the UE's own past transmissions can cover the whole selection window.
+   // Selecting from an empty list is undefined, so ignore them for this selection.
+   if (ComputeResidualCSRs (Sa_pastTx) == 0)
+   {
+     NS_LOG_WARN("UE " << m_rnti << ": past transmissions exclude every candidate, keeping the full window");
+     Sa_pastTx = Sa;
+   }
    
    // Now put Sa into L1 and start excluding reserved resources
    L1 = Sa_pastTx;

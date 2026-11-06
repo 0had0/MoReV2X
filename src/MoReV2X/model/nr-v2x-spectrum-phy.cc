@@ -372,6 +372,16 @@ NrV2XSpectrumPhy::GetTypeId (void)
 		   DoubleValue (1.0),
 		   MakeDoubleAccessor (&NrV2XSpectrumPhy::m_savingPeriod),
 		   MakeDoubleChecker<double> ())
+    .AddAttribute ("MetricsMinX",
+                   "Receptions are logged only for receivers with x >= this value (m)",
+		   DoubleValue (0.0),
+		   MakeDoubleAccessor (&NrV2XSpectrumPhy::m_metricsMinX),
+		   MakeDoubleChecker<double> ())
+    .AddAttribute ("MetricsMaxX",
+                   "Receptions are logged only for receivers with x <= this value (m)",
+		   DoubleValue (3500.0),
+		   MakeDoubleAccessor (&NrV2XSpectrumPhy::m_metricsMaxX),
+		   MakeDoubleChecker<double> ())
 
   ;
 
@@ -857,7 +867,7 @@ NrV2XSpectrumPhy::StartRx (Ptr<SpectrumSignalParameters> spectrumRxParams)
         NS_LOG_INFO("Cannot receive this packet!");
         NodeContainer GlobalContainer = NodeContainer::GetGlobal(); //Used to evaluate the transmitter-receiver distance at spectrum layer
 //        if ((posRX.x >= 1500) && (posRX.x <= 3500) && ( lteV2XSlRxParams->nodeId != GetDevice()->GetNode()->GetId()) )
-        if ((posRX.x >= 0) && (posRX.x <= 3500) && ( lteV2XSlRxParams->nodeId != GetDevice()->GetNode()->GetId()) )
+        if ((posRX.x >= m_metricsMinX) && (posRX.x <= m_metricsMaxX) && ( lteV2XSlRxParams->nodeId != GetDevice()->GetNode()->GetId()) )
         {
           Ptr<Node> TxNode;
           for (NodeContainer::Iterator L = GlobalContainer.Begin(); L != GlobalContainer.End(); ++L) 
@@ -1898,7 +1908,7 @@ NrV2XSpectrumPhy::EndRxV2XSlData ()
                 }
 
 //                if ((posRX.x >= 1500) && (posRX.x <= 3500))
-                if ((posRX.x >= 0) && (posRX.x <= 3500))
+                if ((posRX.x >= m_metricsMinX) && (posRX.x <= m_metricsMaxX))
                 {              
                   PacketStatus newRx;
                   newRx.rxTime = std::floor(Simulator::Now().GetSeconds()*100)/100;

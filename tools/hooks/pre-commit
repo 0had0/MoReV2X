@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Refuses a commit unless tools/gate.sh passed for exactly the staged content.
+set -euo pipefail
+root="$(git rev-parse --show-toplevel)"
+staged="$(git write-tree)"
+if [ -f "$root/.gate-stamp" ] && [ "$(cat "$root/.gate-stamp")" = "$staged" ]; then
+  echo "gate: already passed for $staged"
+  exit 0
+fi
+echo "gate: no pass recorded for the staged tree, running tools/gate.sh"
+exec "$root/tools/gate.sh"

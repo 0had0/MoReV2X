@@ -716,6 +716,8 @@ private:
 
   double m_prevPrintTime;
   double m_savingPeriod;
+  double m_metricsMinX;
+  double m_metricsMaxX;
 
   struct PacketStatus
   {

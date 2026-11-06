@@ -421,6 +421,16 @@ NrV2XUePhy::GetTypeId (void)
 		   DoubleValue (1.0),
 		   MakeDoubleAccessor (&NrV2XUePhy::m_savingPeriod),
 		   MakeDoubleChecker<double> ())
+    .AddAttribute ("CbrMinX",
+                   "CBR is sampled only for UEs with x >= this value (m)",
+		   DoubleValue (1500.0),
+		   MakeDoubleAccessor (&NrV2XUePhy::m_cbrMinX),
+		   MakeDoubleChecker<double> ())
+    .AddAttribute ("CbrMaxX",
+                   "CBR is sampled only for UEs with x <= this value (m)",
+		   DoubleValue (3500.0),
+		   MakeDoubleAccessor (&NrV2XUePhy::m_cbrMaxX),
+		   MakeDoubleChecker<double> ())
 
 
 
@@ -859,7 +869,7 @@ NrV2XUePhy::UnimoreReceivedRssi (double rssi, std::vector <int> rbMap, uint16_t 
       {
         mobRX = RxNode->GetObject<MobilityModel>();
         posRX = mobRX->GetPosition();
-        if (posRX.x >= 1500 && posRX.x <= 3500)
+        if (posRX.x >= m_cbrMinX && posRX.x <= m_cbrMaxX)
         {
           NrV2XUePhy::UnimoreEvaluateCBR(SF.frameNo, SF.subframeNo);
         }

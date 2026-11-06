@@ -154,7 +154,9 @@ UdpClient::StopApplication (void)
   Simulator::Cancel (m_sendEvent);
 }
 
-void
+// MoReV2X scenarios in scratch/ redefine this function. Weak, so that the
+// executable wins on macOS too, where this file would otherwise bind to itself.
+__attribute__ ((weak)) void
 UdpClient::Send (void)
 {
   NS_LOG_FUNCTION (this);

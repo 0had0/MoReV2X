@@ -29,6 +29,8 @@
 #include "ns3/nr-v2x-utils.h"
 #include <random>
 #include <ns3/nr-v2x-amc.h>
+#include "ns3/sumo-mobility-helper.h"
+#include "ns3/nr-v2x-ue-net-device.h"
 
 NS_LOG_COMPONENT_DEFINE ("DebugScript");
 
@@ -83,6 +85,89 @@ bool UrbanScenario;
 std::string FilePath;
 
 bool enableUDPfiles;
+
+bool externalMobility = false; // Vehicle positions come from SUMO or a replayed trace
+
+std::vector<std::string> SplitString (const std::string &text, char separator)
+{
+  std::vector<std::string> tokens;
+  std::stringstream stream (text);
+  std::string token;
+  while (std::getline (stream, token, separator))
+    if (!token.empty ())
+      tokens.push_back (token);
+  return tokens;
+}
+
+// One UE: the scheduler it runs. Unset fields keep the value from Config::SetDefault.
+void ApplySchedulerOption (Ptr<NrV2XUeMac> mac, const std::string &option)
+{
+  const std::string::size_type equal = option.find ('=');
+  const std::string key = option.substr (0, equal);
+  const std::string value = (equal == std::string::npos) ? "" : option.substr (equal + 1);
+
+  if (key == "sps")
+    mac->SetAttribute ("DynamicScheduling", BooleanValue (false));
+  else if (key == "dynamic")
+    mac->SetAttribute ("DynamicScheduling", BooleanValue (true));
+  else if (key == "retx")
+    mac->SetAttribute ("EnableReTx", BooleanValue (true));
+  else if (key == "noretx")
+    mac->SetAttribute ("EnableReTx", BooleanValue (false));
+  else if (key == "reeval")
+    mac->SetAttribute ("AllowReEvaluation", BooleanValue (true));
+  else if (key == "noreeval")
+    mac->SetAttribute ("AllowReEvaluation", BooleanValue (false));
+  else if (key == "allslots")
+    mac->SetAttribute ("AllSlotsReEvaluation", BooleanValue (true));
+  else if (key == "umh")
+    mac->SetAttribute ("UMHReEvaluation", BooleanValue (true));
+  else if (key == "rsrp")
+    mac->SetAttribute ("RSRPthreshold", DoubleValue (std::stod (value)));
+  else if (key == "mcs")
+    mac->SetAttribute ("SlGrantMcs", UintegerValue (std::stoul (value)));
+  else
+    NS_FATAL_ERROR ("Unknown scheduler option '" << option << "' in --SchedulerMap");
+}
+
+// Format: "<firstNode>-<lastNode>:<option>+<option>;...", e.g. "1-10:sps;11-20:dynamic+rsrp=-110"
+void ApplySchedulerMap (const std::string &schedulerMap, NodeContainer VehicleUEs, const std::string &path)
+{
+  std::vector<std::string> rules = SplitString (schedulerMap, ';');
+  for (std::vector<std::string>::iterator rule = rules.begin (); rule != rules.end (); ++rule)
+  {
+    std::vector<std::string> parts = SplitString (*rule, ':');
+    NS_ABORT_MSG_IF (parts.size () != 2, "Expected <first>-<last>:<options> in --SchedulerMap, got " << *rule);
+    std::vector<std::string> range = SplitString (parts[0], '-');
+    const uint32_t first = std::stoul (range.front ());
+    const uint32_t last = std::stoul (range.back ());
+    std::vector<std::string> options = SplitString (parts[1], '+');
+    for (NodeContainer::Iterator L = VehicleUEs.Begin (); L != VehicleUEs.End (); ++L)
+    {
+      if (((*L)->GetId () < first) || ((*L)->GetId () > last))
+        continue;
+      Ptr<NrV2XUeMac> mac = (*L)->GetDevice (0)->GetObject<NistLteUeNetDevice> ()->GetMac ();
+      for (std::vector<std::string>::iterator option = options.begin (); option != options.end (); ++option)
+        ApplySchedulerOption (mac, *option);
+    }
+  }
+
+  std::ofstream mapFile ((path + "SchedulerMap.txt").c_str ());
+  for (NodeContainer::Iterator L = VehicleUEs.Begin (); L != VehicleUEs.End (); ++L)
+  {
+    Ptr<NrV2XUeMac> mac = (*L)->GetDevice (0)->GetObject<NistLteUeNetDevice> ()->GetMac ();
+    BooleanValue dynamic, reTx, reEvaluation;
+    DoubleValue rsrp;
+    UintegerValue grantMcs;
+    mac->GetAttribute ("DynamicScheduling", dynamic);
+    mac->GetAttribute ("EnableReTx", reTx);
+    mac->GetAttribute ("AllowReEvaluation", reEvaluation);
+    mac->GetAttribute ("RSRPthreshold", rsrp);
+    mac->GetAttribute ("SlGrantMcs", grantMcs);
+    mapFile << (*L)->GetId () << "," << dynamic.Get () << "," << reTx.Get () << "," << reEvaluation.Get ()
+            << "," << rsrp.Get () << "," << grantMcs.Get () << std::endl;
+  }
+}
 
 uint32_t PacketSizeDistribution(void)
 {
@@ -417,7 +502,7 @@ void LoadCAMtraces (NodeContainer VehicleUEs)
       std::vector<std::string> row; 
       std::vector<int> row_int; 
       std::ifstream CAMtraceFile;
-      CAMtraceFile.open("/home/luca/Desktop/C-V2V/src/MoReV2X/CAM-tools/CAM-model/CAMtraces/CAMtrace_" + std::to_string(ID) + ".csv");
+      CAMtraceFile.open("src/MoReV2X/CAM-tools/CAM-model/CAMtraces/CAMtrace_" + std::to_string(ID) + ".csv");
       if (CAMtraceFile.is_open())
       {  
         while ( getline (CAMtraceFile,line) )
@@ -479,9 +564,12 @@ void Print (NodeContainer VehicleUEs) {
             else
               positFile << Simulator::Now().GetSeconds() << "," << ID << "," << pos.x << "," << pos.y << "," << pos.z << "," << VelX[ID-1] << "," << VelY[ID-1] << "," << VelZ[ID-1] << "," << (int)VehicleTrafficType[ID-1] << "," << "0" << "\r\n";
 
-            EnableTX[ID-1] = true;
-            if (!PositionChecker.isEnabled(pos))
-              EnableTX[ID-1] = false;
+            if (!externalMobility)
+            {
+              EnableTX[ID-1] = true;
+              if (!PositionChecker.isEnabled(pos))
+                EnableTX[ID-1] = false;
+            }
 
 
            PrevX[ID-1] = pos.x;
@@ -578,6 +666,12 @@ main (int argc, char *argv[])
 
   bool RxCresel = false;
 
+  bool LegacyEvenUeOneShot = false;
+  bool PositionLog = false;
+  std::string SchedulerMap = "";
+
+  SumoMobilityConfig MobilityConfig;
+
 // Change the random run  
   uint32_t seed = 867; // this is the default seed;
   uint32_t runNumber = 1; // this is the default run --> this will be overridden shortly...
@@ -636,6 +730,16 @@ main (int argc, char *argv[])
 
   cmd.AddValue ("FreqReuse", "Enable the frequency-reuse strategy", FrequencyReuse); 
   cmd.AddValue ("ReuseDist", "Set the reuse distance", ReuseDistance); 
+
+  cmd.AddValue ("sumoCfg", "Drive the vehicles live from this .sumocfg over TraCI", MobilityConfig.sumoCfg);
+  cmd.AddValue ("mobilityTrace", "Replay vehicles from this time,node_id,x,y,speed CSV", MobilityConfig.traceCsv);
+  cmd.AddValue ("sumoSync", "Seconds between two SUMO position updates", MobilityConfig.syncInterval);
+  cmd.AddValue ("sumoWarmup", "SUMO seconds simulated before ns-3 starts, to reach steady traffic", MobilityConfig.warmup);
+  cmd.AddValue ("sumoOptions", "Extra options for the SUMO command line", MobilityConfig.extraOptions);
+  cmd.AddValue ("SchedulerMap", "Per-node scheduler, e.g. 1-10:sps;11-20:dynamic+retx+rsrp=-110", SchedulerMap);
+  cmd.AddValue ("UdpFiles", "Write the application layer logs TxFile.txt and RxFile.txt", enableUDPfiles);
+  cmd.AddValue ("PosLog", "Write vehicle positions to posFile.txt every 100 ms", PositionLog);
+  cmd.AddValue ("LegacyEvenUeOneShot", "Force Cresel=1 on even UEs, as upstream MoReV2X v4.1 did", LegacyEvenUeOneShot);
 
 
  // cmd.AddValue ("Sens", "The reference sensitivity", RefSensitivity); 
@@ -781,8 +885,8 @@ main (int argc, char *argv[])
   FilePath = outputPath;
   //Clear the results folder 
 
-  system(("rm -r " + outputPath).c_str());
-  system(("mkdir " + outputPath).c_str());
+  system(("rm -rf " + outputPath).c_str());
+  system(("mkdir -p " + outputPath).c_str());
 
   std::ofstream readme;
   readme.open (outputPath + "simREADME.txt");
@@ -891,6 +995,17 @@ main (int argc, char *argv[])
   Config::SetDefault ("ns3::NrV2XUeMac::AdaptiveScheduling", BooleanValue (AdaptiveSchedulingMode2));
   Config::SetDefault ("ns3::NrV2XUeMac::UMHReEvaluation", BooleanValue (UMH_ReEvaluation));
   Config::SetDefault ("ns3::NrV2XUeMac::FrequencyReuse", BooleanValue (FrequencyReuse));
+  Config::SetDefault ("ns3::NrV2XUeMac::LegacyEvenUeOneShot", BooleanValue (LegacyEvenUeOneShot));
+
+  externalMobility = !MobilityConfig.sumoCfg.empty () || !MobilityConfig.traceCsv.empty ();
+  if (externalMobility)
+  {
+    // SUMO maps have their own coordinates: only the parking lot is left out of the logs
+    Config::SetDefault ("ns3::NrV2XSpectrumPhy::MetricsMinX", DoubleValue (-5e4));
+    Config::SetDefault ("ns3::NrV2XSpectrumPhy::MetricsMaxX", DoubleValue (1e7));
+    Config::SetDefault ("ns3::NrV2XUePhy::CbrMinX", DoubleValue (-5e4));
+    Config::SetDefault ("ns3::NrV2XUePhy::CbrMaxX", DoubleValue (1e7));
+  }
 
 
   // Configure Power Control and Phy layer
@@ -1034,6 +1149,15 @@ main (int argc, char *argv[])
     ueResponders.Add(lteNode);
   }
  
+  SumoMobilityHelper *externalVehicles = 0;
+  MobilityConfig.seed = seed;
+  if (externalMobility)
+  {
+    externalVehicles = new SumoMobilityHelper (MobilityConfig);
+    externalVehicles->InstallParked (ueResponders);
+  }
+  else
+  {
   MobilityHelper mobilityUE;
 
   Ptr<UniformRandomVariable> laneNumber = CreateObject<UniformRandomVariable>();
@@ -1072,6 +1196,7 @@ main (int argc, char *argv[])
       VelMob->SetVelocity(Vector(-19.44, 0, 0));
 //      VelMob->SetVelocity(Vector(0, 0, 0));          
   }
+  } // end if (externalMobility)
   
 /*  MobilityHelper mobilityUE;
   Ptr<ListPositionAllocator> positionAlloc = CreateObject <ListPositionAllocator>();
@@ -1156,7 +1281,18 @@ main (int argc, char *argv[])
   }
 
 //  Print(ueResponders);  // Print the initial position of the nodes in the output file
-   
+
+  if (externalMobility)
+  {
+    // A parked UE stays silent: UdpClient::Send polls EnableTX until a vehicle claims the node
+    std::fill (EnableTX.begin (), EnableTX.end (), false);
+    externalVehicles->Start (
+      [] (Ptr<Node> node, const std::string &) { EnableTX[node->GetId ()-1] = true; },
+      [] (Ptr<Node> node, const std::string &) { EnableTX[node->GetId ()-1] = false; });
+  }
+
+  if (PositionLog)
+    Print(ueResponders);
 
   Sl3GPPChannelMatrix->InitChannelMatrix(ueResponders);
 
@@ -1322,7 +1458,7 @@ main (int argc, char *argv[])
     else  // Mixed traffic
     {
       mac->PushNewRRIValue(100);
-//      mac->PushNewRRIValue(20);
+      mac->PushNewRRIValue(20); // Periodic_Tgen of the nodes with ID % ModuloSplit <= 1
       if (avgRRI) 
       {
         mac->PushNewRRIValue(RndExp->GetMean()*2);
@@ -1343,6 +1479,8 @@ main (int argc, char *argv[])
 
    // NetDeviceContainer ueSendersDevs = lteHelper->InstallUeDevice (ueResponders);
    // ueDevs.Add (ueSendersDevs);
+
+  ApplySchedulerMap (SchedulerMap, ueResponders, outputPath);
 
 
   NS_LOG_INFO ("Installing IP stack...");
@@ -1482,6 +1620,13 @@ main (int argc, char *argv[])
     Put code to evaluate KPIs here
   */
   Simulator::Destroy ();
+
+  if (externalMobility)
+  {
+    std::cout << "Peak active vehicles " << std::dec << externalVehicles->GetPeakActiveVehicles ()
+              << ", vehicles without a node " << externalVehicles->GetRejectedVehicles () << std::endl;
+    delete externalVehicles;
+  }
 
   NS_LOG_INFO ("Done.");
 
