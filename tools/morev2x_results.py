@@ -71,6 +71,7 @@ def simulate(tag, *arguments, workdir=None):
     for what changed. Delete results/notebooks/ to force everything to run again.
     """
     workdir = workdir or os.path.join(ROOT, "results", "notebooks", tag)
+    os.makedirs(workdir, exist_ok=True)
     marker = os.path.join(workdir, "stdout.log")
     arguments = [str(a) for a in arguments]
     identity = " ".join(arguments)
@@ -78,7 +79,6 @@ def simulate(tag, *arguments, workdir=None):
     finished = (os.path.exists(marker) and os.path.exists(identity_file)
                 and open(identity_file).read() == identity)
     if not finished:
-        os.makedirs(workdir, exist_ok=True)
         environment = dict(os.environ, DYLD_LIBRARY_PATH=os.path.join(ROOT, "build", "optimized"))
         with open(marker, "w") as log:
             subprocess.run([os.path.join(ROOT, "build", "optimized", "scratch", "HIGHWAY")] + arguments,

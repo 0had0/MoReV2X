@@ -9,3 +9,4 @@ pandas
 sumolib==1.28.0
 traci==1.28.0
 tqdm
+pyyaml
