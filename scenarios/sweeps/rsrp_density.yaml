@@ -1,0 +1,9 @@
+# Every HIGHWAY option is a key. A list is swept, all combinations are run.
+# Three seeds of two loads at three thresholds is 18 runs.
+simTime: 10
+mcs: 13
+Periodic: true
+Vehicles: [60, 120]
+RSRP: [-128, -118, -108]
+seed: 1
+runNo: [1, 2, 3]

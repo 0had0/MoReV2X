@@ -57,6 +57,11 @@ Careful:
   All options:  build/optimized/scratch/HIGHWAY --PrintHelp
 
 
+Parameter sweep, every combination of a YAML file, resumes if interrupted:
+tools/run_sweep.py scenarios/sweeps/rsrp_density.yaml --jobs 5
+Each key is a HIGHWAY option, and a list is swept. Summary in results/sweeps/<name>/summary.csv.
+
+
 5. DIFFERENT SCHEDULERS ON DIFFERENT NODES
 ------------------------------------------
 --SchedulerMap="<first>-<last>:<option>+<option>;..."

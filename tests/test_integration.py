@@ -262,5 +262,28 @@ class SumoMobility(ScratchRuns):
         self.assertGreater(len(tx), 0)
 
 
+class ParameterSweep(ScratchRuns):
+    def test_sweep_runs_every_combination_and_resumes(self):
+        workdir = tempfile.mkdtemp(prefix="morev2x-sweep-")
+        self.scratch = [workdir]
+        config = os.path.join(workdir, "sweep.yaml")
+        with open(config, "w") as out:
+            out.write("simTime: 3\nmcs: 13\nPeriodic: true\nseed: 1\nVehicles: [4, 6]\nRSRP: [-128, -118]\n")
+        output = os.path.join(workdir, "out")
+        command = [os.path.join(ROOT, ".venv", "bin", "python"), os.path.join(ROOT, "tools", "run_sweep.py"),
+                   config, "--jobs", "2", "--output", output]
+        subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
+        summary = pd.read_csv(os.path.join(output, "summary.csv"))
+        self.assertEqual(sorted(zip(summary.Vehicles, summary.RSRP)),
+                         sorted([(4, -128), (4, -118), (6, -128), (6, -118)]))
+        self.assertFalse(summary.failed.any())
+        self.assertGreater(summary.transmissions.min(), 0)
+
+        marker = os.path.join(output, "Vehicles4_RSRP-128", "stdout.log")
+        stamp = os.path.getmtime(marker)
+        subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
+        self.assertEqual(os.path.getmtime(marker), stamp, "a finished run must not start again")
+
+
 if __name__ == "__main__":
     unittest.main()
