@@ -1,0 +1,48 @@
+src/MoReV2X/helper/nist-lte-helper.cc:75:14: error: invalid operands to binary expression ('Ptr<SpectrumPropagationLossModel>' and 'int')
+src/MoReV2X/helper/nist-lte-helper.cc:84:28: error: invalid operands to binary expression ('Ptr<PropagationLossModel>' and 'int')
+src/MoReV2X/helper/nist-lte-helper.cc:99:14: error: invalid operands to binary expression ('Ptr<SpectrumPropagationLossModel>' and 'int')
+src/MoReV2X/helper/nist-lte-helper.cc:108:28: error: invalid operands to binary expression ('Ptr<PropagationLossModel>' and 'int')
+src/MoReV2X/helper/nist-lte-helper.cc:426:19: error: invalid operands to binary expression ('Ptr<NistEpcHelper>' and 'int')
+src/MoReV2X/helper/nist-lte-helper.cc:488:19: error: invalid operands to binary expression ('Ptr<NistEpcHelper>' and 'int')
+src/MoReV2X/helper/nist-lte-helper.cc:514:19: error: invalid operands to binary expression ('Ptr<NistEpcHelper>' and 'int')
+src/MoReV2X/helper/nist-lte-helper.cc:520:19: error: invalid operands to binary expression ('Ptr<NistLteUeNetDevice>' and 'int')
+src/MoReV2X/helper/nist-lte-helper.cc:527:20: error: invalid operands to binary expression ('Ptr<NistEpcUeNas>' and 'int')
+src/MoReV2X/helper/nist-lte-helper.cc:559:30: error: invalid operands to binary expression ('Ptr<NistEpcHelper>' and 'int')
+src/MoReV2X/helper/nist-lte-helper.cc:582:30: error: invalid operands to binary expression ('Ptr<NistEpcHelper>' and 'int')
+src/MoReV2X/helper/nist-lte-helper.cc:603:30: error: invalid operands to binary expression ('Ptr<NistEpcHelper>' and 'int')
+src/MoReV2X/helper/nist-lte-helper.cc:622:30: error: invalid operands to binary expression ('Ptr<NistEpcHelper>' and 'int')
+src/MoReV2X/helper/nist-lte-helper.cc:642:30: error: invalid operands to binary expression ('Ptr<NistEpcHelper>' and 'int')
+src/MoReV2X/helper/nist-lte-helper.cc:698:22: error: invalid operands to binary expression ('Ptr<NistLteUeRrc>' and 'int')
+src/MoReV2X/helper/nist-lte-helper.cc:725:14: error: no member named 'GetRxAntenna' in 'ns3::SpectrumPhy'
+src/MoReV2X/helper/nist-lte-helper.cc:728:37: error: no member named 'GetRxAntenna' in 'ns3::SpectrumPhy'
+src/MoReV2X/helper/nist-lte-helper.cc:732:40: error: no member named 'GetRxAntenna' in 'ns3::SpectrumPhy'; did you mean 'GetAntenna'?
+src/MoReV2X/helper/nist-lte-helper.cc:733:17: error: invalid operands to binary expression ('Ptr<AntennaModel>' and 'int')
+src/MoReV2X/helper/nist-lte-helper.cc:798:14: error: no member named 'GetRxAntenna' in 'ns3::SpectrumPhy'
+src/MoReV2X/helper/nist-lte-helper.cc:801:37: error: no member named 'GetRxAntenna' in 'ns3::SpectrumPhy'
+src/MoReV2X/helper/nist-lte-helper.cc:805:40: error: no member named 'GetRxAntenna' in 'ns3::SpectrumPhy'; did you mean 'GetAntenna'?
+src/MoReV2X/helper/nist-lte-helper.cc:806:17: error: invalid operands to binary expression ('Ptr<AntennaModel>' and 'int')
+src/MoReV2X/helper/nist-lte-helper.cc:842:28: error: invalid operands to binary expression ('Ptr<PropagationLossModel>' and 'int')
+src/MoReV2X/helper/nist-lte-helper.cc:877:28: error: invalid operands to binary expression ('Ptr<PropagationLossModel>' and 'int')
+/Users/hadih/Documents/groupcast-adaptation-ns3/ns-3-dev/src/core/model/object.h:632:34: error: allocating an object of abstract class type 'ns3::NrV2XSpectrumPhy'
+/Users/hadih/Documents/groupcast-adaptation-ns3/ns-3-dev/src/core/model/ptr.h:683:7: error: cannot initialize a member subobject of type 'ns3::AntennaModel *' with an rvalue of type 'ns3::Object *'
+src/MoReV2X/helper/nist-point-to-point-epc-helper.cc:164:25: error: invalid operands to binary expression ('Ptr<Ipv4>' and 'int')
+src/MoReV2X/model/nist-epc-sgw-pgw-application.cc:187:3: error: unknown type name 'SocketAddressTag'
+/Users/hadih/Documents/groupcast-adaptation-ns3/ns-3-dev/src/core/model/log.h:491:14: error: invalid operands to binary expression ('std::ostream' (aka 'basic_ostream<char>') and 'const ns3::NistEpcTft::NistPacketFilter')
+src/MoReV2X/model/nist-lte-amc.cc:246:18: error: no matching function for call to 'MakeEnumAccessor'
+src/MoReV2X/model/nist-lte-chunk-processor.cc:62:19: error: invalid operands to binary expression ('Ptr<SpectrumValue>' and 'int')
+src/MoReV2X/model/nist-lte-rrc-protocol-ideal.cc:326:21: error: invalid operands to binary expression ('Ptr<NistLteUeNetDevice>' and 'int')
+src/MoReV2X/model/nist-lte-sl-chunk-processor.cc:72:40: error: invalid operands to binary expression ('Ptr<SpectrumValue>' and 'int')
+src/MoReV2X/model/nist-lte-ue-rrc.cc:929:109: error: invalid operands to binary expression ('Ptr<LteSidelinkRadioBearerInfo>' and 'long')
+src/MoReV2X/model/nist-lte-ue-rrc.cc:1617:48: error: invalid operands to binary expression ('Ptr<LteUeRrcSl>' and 'long')
+src/MoReV2X/model/nist-lte-ue-rrc.cc:1646:93: error: invalid operands to binary expression ('Ptr<SidelinkRxCommResourcePool>' and 'long')
+src/MoReV2X/model/nist-lte-ue-rrc.cc:1654:28: error: invalid operands to binary expression ('Ptr<SidelinkRxCommResourcePool>' and 'long')
+src/MoReV2X/model/nist-lte-ue-rrc.cc:1674:50: error: invalid operands to binary expression ('Ptr<LteUeRrcSl>' and 'long')
+src/MoReV2X/model/nist-lte-ue-rrc.cc:1705:94: error: invalid operands to binary expression ('Ptr<SidelinkRxDiscResourcePool>' and 'long')
+src/MoReV2X/model/nist-lte-ue-rrc.cc:1712:24: error: invalid operands to binary expression ('Ptr<SidelinkRxDiscResourcePool>' and 'long')
+src/MoReV2X/model/nist-lte-ue-rrc.cc:2053:18: error: invalid operands to binary expression ('Ptr<LteSignalingRadioNistBearerInfo>' and 'int')
+src/MoReV2X/model/nist-parabolic-3d-antenna-model.cc:171:18: error: no member named 'phi' in 'ns3::Angles'
+src/MoReV2X/model/nist-parabolic-3d-antenna-model.cc:196:20: error: no member named 'theta' in 'ns3::Angles'
+src/MoReV2X/model/nr-v2x-spectrum-phy.cc:769:23: error: invalid operands to binary expression ('Ptr<NistLteSpectrumSignalParametersDataFrame>' and 'int')
+src/MoReV2X/model/nr-v2x-spectrum-phy.cc:964:29: error: invalid operands to binary expression ('Ptr<NistLteSpectrumSignalParametersDlCtrlFrame>' and 'int')
+src/MoReV2X/model/nr-v2x-spectrum-phy.cc:964:52: error: invalid operands to binary expression ('Ptr<NistLteSpectrumSignalParametersUlSrsFrame>' and 'int')
+scratch/HIGHWAY.cc:1528:20: error: no member named 'MakeMobilityModelConsistent' in 'ns3::BuildingsHelper'
