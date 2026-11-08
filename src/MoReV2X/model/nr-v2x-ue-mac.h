@@ -392,6 +392,7 @@ private:
     uint32_t nCSRpastTx;
     uint32_t nCSRinitial;
     double pdb;
+    uint8_t priority; // priority of the packet the selection was made for
   };
 
   // Variables to store output data
@@ -410,7 +411,8 @@ private:
     uint16_t CheckCSR;
     bool freshGrant;
     bool reSelection;
-    uint16_t reSelectionType;
+    uint16_t reSelectionType; // 0 re-evaluation, 1 pre-emption check
+    uint8_t priority;         // priority of the checked packet
   };
 
   // Variables to store output data
@@ -482,7 +484,8 @@ private:
     LATENCYandSIZE = 1,
     LATENCY = 2,
     SIZE = 3,
-    ReEVALUATION = 4
+    ReEVALUATION = 4,
+    PREEMPTION = 5
   };
 
   SidelinkCommResourcePool::SubframeInfo m_prevListUpdate; //Clean past tx and sensed subframe list removing subframes older than the selection window
@@ -656,6 +659,7 @@ private:
     double RRI;
     bool isReTx;
     bool isSameTB;
+    uint8_t priority; // priority field of the SCI, 1 (highest) to 8. 0 when the sender set none
   };
 
   //std::map <SidelinkCommResourcePool::SubframeInfo,ReservedCSR> m_sensedReservedCSRMap;
@@ -689,7 +693,7 @@ private:
   */
   void DoReportPsschRsrp (Time time, uint16_t rbStart, uint16_t rbLen, double rsrpDb);
 
-  void DoReportPsschRsrpReservation (Time time, uint16_t rbStart, uint16_t rbLen, double rsrpDb, SidelinkCommResourcePool::SubframeInfo receivedSubframe, SidelinkCommResourcePool::SubframeInfo reservedSubframe, uint32_t CreselRx, uint32_t nodeId, double RRI, bool isReTx, bool isSameTB);
+  void DoReportPsschRsrpReservation (Time time, uint16_t rbStart, uint16_t rbLen, double rsrpDb, SidelinkCommResourcePool::SubframeInfo receivedSubframe, SidelinkCommResourcePool::SubframeInfo reservedSubframe, uint32_t CreselRx, uint32_t nodeId, double RRI, bool isReTx, bool isSameTB, uint8_t priority);
   
 
   SidelinkCommResourcePool::SubframeInfo ComputeReEvaluationFrame(uint32_t frameNo, uint32_t subframeNo);
@@ -710,6 +714,38 @@ private:
   std::map<uint16_t,std::list<SidelinkCommResourcePool::SubframeInfo>> SelectionWindow (SidelinkCommResourcePool::SubframeInfo currentSF, uint32_t T_2_slots, uint16_t N_CSR_per_SF);
 
   std::map<uint16_t,std::list<SidelinkCommResourcePool::SubframeInfo>> Mode2Step1 (std::map<uint16_t,std::list<SidelinkCommResourcePool::SubframeInfo> > Sa, SidelinkCommResourcePool::SubframeInfo currentSF, V2XSidelinkGrant V2XGrant, double T_2, uint16_t NSubCh,  uint16_t L_SubCh, uint32_t *iterationsCounter, double *psschThresh, uint32_t *nCSRpartial, bool OnlyReTxions);
+
+public:
+  /**
+   * RSRP threshold offset in dB for a reservation of priority rxPriority seen by a UE that
+   * transmits with priority txPriority, TS 38.214 8.1.4 step 5 (sl-ThresRSRP-pi-pj).
+   * 0 unless PriorityAwareSensing is on and both priorities are set.
+   */
+  double GetPriorityThresholdOffset (uint8_t rxPriority, uint8_t txPriority) const;
+  /** X% of step 6 for a transmission of this priority (sl-xPercentage) */
+  double GetSizeThreshold (uint8_t txPriority) const;
+  void SetThresRsrpList (std::string list);
+  void FlushReEvaluationStats (bool force);
+  std::string GetThresRsrpList (void) const;
+  void SetSizeThresholdList (std::string list);
+  std::string GetSizeThresholdList (void) const;
+  /**
+   * True when a reservation of higher priority than txPriority, above its RSRP threshold,
+   * covers the slot checkSF on one of the L_SubCh subchannels starting at csrStart.
+   * Same projection of periodic reservations as step 5. currentSF and checkSF are 0-based.
+   */
+  bool IsPreempted (SidelinkCommResourcePool::SubframeInfo currentSF, SidelinkCommResourcePool::SubframeInfo checkSF, uint16_t csrStart, uint16_t L_SubCh, double T_2, double threshold, uint8_t txPriority, uint32_t *preemptingUe);
+
+private:
+  /** Pre-emption check at T3 before an announced resource, TS 38.321 5.22.1.1 */
+  void CheckPreemption (SidelinkCommResourcePool::SubframeInfo currentSF, std::map <uint32_t, PoolInfo>::iterator IT, NistLteMacSapProvider::NistReportBufferNistStatusParameters pktParams);
+  bool m_priorityAwareSensing;
+  double m_priorityThresholdStep;
+  std::vector<double> m_thresRsrpList;      //!< 64 absolute thresholds, index (pi-1)*8 + (pj-1)
+  std::vector<double> m_sizeThresholdList;  //!< 8 values of X, one per priority
+  bool m_preemption;
+  uint8_t m_preemptionPriority;             //!< 0: any higher priority pre-empts. p: only priorities below p
+  uint8_t m_txPriority;                     //!< priority of the packet being scheduled
 
   /**
   * Method to store Tx events for scheduling assistance in LTE-V2V UE_SELECTED Mode 4 

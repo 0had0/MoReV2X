@@ -70,13 +70,26 @@ Each key is a HIGHWAY option, and a list is swept. Summary in results/sweeps/<na
 --SchedulerMap="<first>-<last>:<option>+<option>;..."
 
 Options: sps dynamic retx noretx reeval noreeval allslots umh rsrp=<dBm> mcs=<index> pkeep=<p>
-         adaptive noadaptive
+         adaptive noadaptive prio=<1..8> preempt prioaware
+  prio=      SL priority of the node's packets, sent in the SCI. 1 is the highest. Without it: 0, none.
+  preempt    pre-emption check at T3 before every announced resource (TS 38.321 5.22.1.1)
+  prioaware  RSRP threshold per priority pair and X% per priority (TS 38.214 8.1.4)
 UE node ids start at 1. Node 0 is the PGW.
 
 ./waf --run "HIGHWAY --Vehicles=20 --simTime=10 --Periodic --mcs=13 --SchedulerMap=1-10:sps;11-20:dynamic+retx"
 
 The result of the map is written to results/<scenario>/SchedulerMap.txt.
-Columns: node,dynamic,retx,reEvaluation,rsrpThreshold,mcs,pkeep,adaptive
+Columns: node,dynamic,retx,reEvaluation,rsrpThreshold,mcs,pkeep,adaptive,priority,preemption
+
+Priority attributes, for every node at once:
+  --ns3::NrV2XUeMac::PriorityAwareSensing=true
+  --ns3::NrV2XUeMac::PriorityThresholdStep=3        threshold = RSRP + step*(rxPriority - txPriority)
+  --ns3::NrV2XUeMac::ThresRsrpList=<64 values>      sl-ThresRSRP-List, overrides the step
+  --ns3::NrV2XUeMac::SizeThresholdList=<8 values>   sl-xPercentage per priority
+  --ns3::NrV2XUeMac::Preemption=true
+  --ns3::NrV2XUeMac::PreemptionPriority=3           only priorities 1 and 2 pre-empt. 0: any higher one
+ReEvaluationsLog.txt has two more columns: kind (0 re-evaluation, 1 pre-emption check) and priority.
+SSPSlog.txt has a 24th column, the priority. Trigger 5 is a pre-emption.
 
 
 6. SUMO MOBILITY
