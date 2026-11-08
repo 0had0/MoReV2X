@@ -11,6 +11,7 @@ import pandas as pd
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD = os.path.join(ROOT, "build", "optimized")
 HIGHWAY = os.path.join(BUILD, "scratch", "HIGHWAY")
+URBAN = os.path.join(BUILD, "scratch", "URBAN")
 SUMO_CFG = os.path.join(ROOT, "scenarios", "sumo", "highway_2km", "highway.sumocfg")
 TIMEOUT = 600
 
@@ -27,15 +28,16 @@ RESERVATION_COLUMNS = ["node", "time", "unusedSubchannelRatio", "unusedReservati
 POS_COLUMNS = ["time", "node", "x", "y", "z", "vx", "vy", "vz", "traffic", "inside"]
 
 
-def run_highway(*arguments, cwd=None):
-    """Runs HIGHWAY in a scratch directory and returns (output folder, stdout)."""
+def run_highway(*arguments, cwd=None, program=HIGHWAY):
+    """Runs HIGHWAY (or URBAN) in a scratch directory and returns (output folder, stdout)."""
     workdir = cwd or tempfile.mkdtemp(prefix="morev2x-test-")
     env = dict(os.environ, DYLD_LIBRARY_PATH=BUILD)
-    done = subprocess.run([HIGHWAY] + list(arguments), cwd=workdir, env=env, timeout=TIMEOUT,
+    done = subprocess.run([program] + list(arguments), cwd=workdir, env=env, timeout=TIMEOUT,
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     if done.returncode != 0:
-        raise AssertionError("HIGHWAY %s failed with %d:\n%s"
-                             % (" ".join(arguments), done.returncode, done.stdout[-3000:]))
+        raise AssertionError("%s %s failed with %d:\n%s"
+                             % (os.path.basename(program), " ".join(arguments), done.returncode,
+                                done.stdout[-3000:]))
     results = os.path.join(workdir, "results")
     folders = sorted(os.listdir(results))
     return os.path.join(results, folders[-1]), done.stdout
@@ -50,10 +52,13 @@ class ScratchRuns(unittest.TestCase):
         for path in getattr(self, "scratch", []):
             shutil.rmtree(path, ignore_errors=True)
 
-    def highway(self, *arguments):
+    def highway(self, *arguments, program=HIGHWAY):
         workdir = tempfile.mkdtemp(prefix="morev2x-test-")
         self.scratch = getattr(self, "scratch", []) + [workdir]
-        return run_highway(*arguments, cwd=workdir)
+        return run_highway(*arguments, cwd=workdir, program=program)
+
+    def urban(self, *arguments):
+        return self.highway(*arguments, program=URBAN)
 
 
 class BaselineHighway(ScratchRuns):
@@ -284,6 +289,54 @@ class UnservablePackets(ScratchRuns):
         self.assertFalse(os.path.exists(os.path.join(folder, "MacDropLog.txt")))
         rx = read(folder, "ReceivedLog.txt", RX_COLUMNS)
         self.assertGreater(rx[rx.distance < 200].decoded.mean(), 0.9)
+
+
+class Urban(ScratchRuns):
+    COMMON = ["--Vehicles=40", "--simTime=3", "--Periodic", "--mcs=13", "--seed=2"]
+
+    def test_the_blocks_cut_the_links_between_streets(self):
+        # The same drop with the blocks and with an open grid (a buildings file with no rows)
+        empty = os.path.join(tempfile.mkdtemp(prefix="morev2x-open-"), "open.csv")
+        self.scratch = getattr(self, "scratch", []) + [os.path.dirname(empty)]
+        with open(empty, "w") as out:
+            out.write("building,corners\n")
+        open_folder, _ = self.urban(*self.COMMON, "--Buildings=" + empty)
+        grid_folder, _ = self.urban(*self.COMMON)
+        def far(folder):
+            # 400-600 m: UMi LOS is about -75 dBm there, NLOS below the -103.5 dBm sensitivity
+            rx = read(folder, "ReceivedLog.txt", RX_COLUMNS)
+            rx = rx[(rx.distance > 400) & (rx.distance < 600)]
+            self.assertGreater(len(rx), 100)
+            return (rx.lossType == 0).mean()
+        self.assertGreater(far(grid_folder), far(open_folder) + 0.2, "links across a block fall below sensitivity")
+
+    def test_one_building_per_block(self):
+        folder, _ = self.urban("--Vehicles=10", "--simTime=1", "--Periodic", "--mcs=13", "--GridX=2", "--GridY=3")
+        blocks = pd.read_csv(os.path.join(folder, "buildings.csv"))
+        self.assertEqual(len(blocks), 6)
+        corners = [[float(v) for v in row.split()] for row in blocks.corners]
+        xs = sorted({c[0] for c in corners} | {c[2] for c in corners})
+        ys = sorted({c[1] for c in corners} | {c[5] for c in corners})
+        self.assertEqual(xs, [10, 423, 443, 856])           # 413 m buildings, 20 m streets
+        self.assertEqual(ys, [10, 240, 260, 490, 510, 740])  # 230 m buildings
+
+    def test_vehicles_stay_on_the_lanes(self):
+        # One block, 200 km/h for 3 s: every vehicle crosses the grid edge at least once
+        folder, _ = self.urban("--Vehicles=20", "--simTime=3", "--Periodic", "--mcs=13", "--GridX=1",
+                               "--GridY=1", "--Speed=200", "--PosLog=true")
+        pos = read(folder, "posFile.txt", POS_COLUMNS)
+        lanes = [-5.25, -1.75, 1.75, 5.25]
+        on_x = pos.y.round(2).isin(lanes)   # streets along x at y = 0
+        on_y = pos.x.round(2).isin(lanes)   # streets along y at x = 0
+        self.assertTrue((on_x | on_y).all())
+        # The wrap runs every 100 ms, so a vehicle is at most 5.6 m past the edge
+        self.assertTrue(pos[on_x].x.between(-6, 439).all(), pos[on_x].x.describe())
+        self.assertTrue(pos[on_y].y.between(-6, 256).all(), pos[on_y].y.describe())
+        self.assertGreater(pos.groupby("node").x.agg(lambda x: x.diff().abs().max()).max(), 400, "a vehicle wrapped")
+
+    def test_highway_has_no_urban_option(self):
+        with self.assertRaises(AssertionError):
+            self.highway("--Vehicles=10", "--simTime=1", "--Periodic", "--UrbanChannel=true")
 
 
 class AdaptiveReservation(ScratchRuns):

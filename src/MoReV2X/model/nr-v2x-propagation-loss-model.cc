@@ -18,6 +18,12 @@
  * Modified by: Luca Lusvarghi <luca.lusvarghi5@unimore.it>
  */
 
+#include <cctype>
+#include <fstream>
+#include <sstream>
+#include "ns3/abort.h"
+#include "ns3/boolean.h"
+#include "ns3/string.h"
 #include "ns3/mobility-model.h"
 #include "ns3/double.h"
 #include "ns3/mobility-building-info.h"
@@ -76,7 +82,25 @@ NrV2XPropagationLossModel::GetTypeId (void)
                    "The shadowing decorrelation distance",
                    DoubleValue (10.0),
                    MakeDoubleAccessor (&NrV2XPropagationLossModel::m_decorrDistance),
-                   MakeDoubleChecker<double> ())   
+                   MakeDoubleChecker<double> ())
+    .AddAttribute ("Urban",
+                   "Use the TR 37.885 urban grid model: UMi street canyon pathloss, NLOS where buildings "
+                   "cut the line between the UEs, LOS or NLOSv elsewhere. False: highway model",
+                   BooleanValue (false),
+                   MakeBooleanAccessor (&NrV2XPropagationLossModel::m_urban),
+                   MakeBooleanChecker ())
+    .AddAttribute ("SigmaNLOS",
+                   "Shadowing standard deviation of links blocked by buildings (urban only), dB",
+                   DoubleValue (4.0),
+                   MakeDoubleAccessor (&NrV2XPropagationLossModel::m_sigmaNLOS),
+                   MakeDoubleChecker<double> ())
+    .AddAttribute ("BuildingsFile",
+                   "CSV with one building per row: id, then the corners as 'x0 y0 x1 y1 ...' (the "
+                   "buildings.csv of tools/qos/make_traces.py). Empty: no buildings",
+                   StringValue (""),
+                   MakeStringAccessor (&NrV2XPropagationLossModel::LoadBuildings,
+                                       &NrV2XPropagationLossModel::GetBuildingsFile),
+                   MakeStringChecker ())
   ;
   return tid;
 }
@@ -174,6 +198,7 @@ NrV2XPropagationLossModel::InitChannelMatrix (NodeContainer VehicleUEs)
       tmp.Shadowing = 0.0;
       tmp.ShadowingNLOSv = 0.0;
       tmp.LOS = false;
+      tmp.State = NLOSV_STATE;
       tmpColumns.insert(std::pair<uint32_t , ChannelModel> (rxID,tmp));
     }
     NrV2XPropagationLossModel::ChannelMatrix.insert(std::pair<uint32_t, std::map<uint32_t , ChannelModel> > (txID, tmpColumns));
@@ -195,37 +220,7 @@ NrV2XPropagationLossModel::InitChannelMatrix (NodeContainer VehicleUEs)
       if (rxID < txID)
       {      
         Ptr<MobilityModel> mobRX = RxNode->GetObject<MobilityModel> ();
-        double TxRxDistance = mobTX->GetDistanceFrom(mobRX);
-//        NS_LOG_INFO("Tx ID " << txID << ", Rx ID " << rxID << ", Tx-Rx distance " << TxRxDistance << ", " << mobTX->GetPosition().x << ", " << mobRX->GetPosition().x);
-        NrV2XPropagationLossModel::ChannelMatrix[txID][rxID].Distance = TxRxDistance;
-        NrV2XPropagationLossModel::ChannelMatrix[txID][rxID].Pathloss = 32.4 + 20 * std::log10(TxRxDistance) + 20 * std::log10(m_frequency); 
-        shadowingValue = m_shadowing->GetValue (0.0, (m_sigma*m_sigma));
-        NrV2XPropagationLossModel::ChannelMatrix[txID][rxID].Shadowing = shadowingValue;
-        if (TxRxDistance <= 475)
-        { 
-          Plos = std::min(1.0,2.1013e-6*TxRxDistance*TxRxDistance - 0.002*TxRxDistance + 1.0193);  // Probability of being in LOS in the Highway scenario (see 3GPP TR 37.885)
-        }
-        else
-        {
-          Plos = std::max(0.0,0.54 - 0.001*(TxRxDistance-475));
-        }
-//        Plos = 0;         //TODO COMMENT
-        LOS = m_randomUniform->GetValue () > Plos ? false : true;
-        NrV2XPropagationLossModel::ChannelMatrix[txID][rxID].LOS = LOS;
-        if (LOS)
-        {
-          NS_LOG_INFO("LOS link");
-          NrV2XPropagationLossModel::ChannelMatrix[txID][rxID].ShadowingNLOSv = 0;
-        }
-        else
-        {
-          Ptr<NormalRandomVariable> RandomShadowingNLOSv =  CreateObject<NormalRandomVariable> ();
-          shadowingNLOSv = RandomShadowingNLOSv->GetValue (5 + std::max(0.0,(15*std::log10(TxRxDistance))-41), (m_sigmaNLOSv*m_sigmaNLOSv));// Due to the presence of other vehicles
-//          shadowingNLOSv = m_shadowingNLOSv->GetValue (5 + std::max(0.0,(15*std::log10(TxRxDistance))-41), (m_sigmaNLOSv*m_sigmaNLOSv));// Due to the presence of other vehicles
-          shadowingNLOSv = std::max(0.0,shadowingNLOSv);
-          NS_LOG_INFO("NLOSv link. Additional shadowing = " << shadowingNLOSv << " dB");
-          NrV2XPropagationLossModel::ChannelMatrix[txID][rxID].ShadowingNLOSv = shadowingNLOSv;
-        }
+        UpdateLink (NrV2XPropagationLossModel::ChannelMatrix[txID][rxID], mobTX, mobRX, true);
       }
     }
   }
@@ -272,42 +267,7 @@ NrV2XPropagationLossModel::UpdateChannelMatrix (void)
       if (rxID < txID)
       {      
         Ptr<MobilityModel> mobRX = RxNode->GetObject<MobilityModel> ();
-        double TxRxDistance = mobTX->GetDistanceFrom(mobRX);
-        double UpdateDistance = abs(TxRxDistance - NrV2XPropagationLossModel::ChannelMatrix[txID][rxID].Distance);
-  //     NS_LOG_INFO("Update distance for Tx " << txID << " and Rx " << rxID << " is " << UpdateDistance << " m");
-        shadowingValue = m_shadowing->GetValue (0.0, (m_sigma*m_sigma));
-        NS_LOG_INFO("Tx Node " << txID << " Rx Node " << rxID << " Update distance " << UpdateDistance << " Previous shadowing value " << NrV2XPropagationLossModel::ChannelMatrix[txID][rxID].Shadowing << " current shadowing value " << shadowingValue);
-        //TODO UNCOMMENT
-        shadowingValue = exp(-UpdateDistance/m_decorrDistance)*NrV2XPropagationLossModel::ChannelMatrix[txID][rxID].Shadowing + sqrt( 1-exp(-2*UpdateDistance/m_decorrDistance) )*shadowingValue; 
-        NS_LOG_INFO("Shadowing value after decorrelation " << shadowingValue);
-        NrV2XPropagationLossModel::ChannelMatrix[txID][rxID].Distance = TxRxDistance;
-        NrV2XPropagationLossModel::ChannelMatrix[txID][rxID].Pathloss = 32.4 + 20 * std::log10(TxRxDistance) + 20 * std::log10(m_frequency); 
-        NrV2XPropagationLossModel::ChannelMatrix[txID][rxID].Shadowing = shadowingValue;
-        if (TxRxDistance <= 475)
-        { 
-          Plos = std::min(1.0,2.1013e-6*TxRxDistance*TxRxDistance - 0.002*TxRxDistance + 1.0193);  // Probability of being in LOS in the Highway scenario (see 3GPP TR 37.885)
-        }
-        else
-        {
-          Plos = std::max(0.0,0.54 - 0.001*(TxRxDistance-475));
-        }
-//        Plos = 0;         //TODO COMMENT
-        LOS = m_randomUniform->GetValue () > Plos ? false : true;
-        NrV2XPropagationLossModel::ChannelMatrix[txID][rxID].LOS = LOS;
-        if (LOS)
-        {
-          NS_LOG_INFO("LOS link");
-          NrV2XPropagationLossModel::ChannelMatrix[txID][rxID].ShadowingNLOSv = 0;
-        }
-        else
-        {
-          Ptr<NormalRandomVariable> RandomShadowingNLOSv =  CreateObject<NormalRandomVariable> ();
-          shadowingNLOSv = RandomShadowingNLOSv->GetValue (5 + std::max(0.0,(15*std::log10(TxRxDistance))-41), (m_sigmaNLOSv*m_sigmaNLOSv));// Due to the presence of other vehicles
-//          shadowingNLOSv = m_shadowingNLOSv->GetValue (5 + std::max(0.0,(15*std::log10(TxRxDistance))-41), (m_sigmaNLOSv*m_sigmaNLOSv));// Due to the presence of other vehicles
-          shadowingNLOSv = std::max(0.0,shadowingNLOSv);
-          NS_LOG_INFO("NLOSv link. Additional shadowing = " << shadowingNLOSv << " dB");
-          NrV2XPropagationLossModel::ChannelMatrix[txID][rxID].ShadowingNLOSv = shadowingNLOSv;
-        }
+        UpdateLink (NrV2XPropagationLossModel::ChannelMatrix[txID][rxID], mobTX, mobRX, false);
       }
     }
   }  
@@ -328,6 +288,242 @@ NrV2XPropagationLossModel::UpdateChannelMatrix (void)
 
 //  std::cin.get();
   Simulator::Schedule (MilliSeconds (100), &NrV2XPropagationLossModel::UpdateChannelMatrix, this);      
+}
+
+void
+NrV2XPropagationLossModel::UpdateLink (ChannelModel &link, Ptr<MobilityModel> tx, Ptr<MobilityModel> rx, bool first)
+{
+  double distance = std::max (1.0, tx->GetDistanceFrom (rx));
+  bool blocked = m_urban && !m_buildings.empty () && IsBlockedByBuildings (tx->GetPosition (), rx->GetPosition ());
+  double sigma = blocked ? m_sigmaNLOS : m_sigma;
+
+  // Log-normal shadowing, correlated over the distance the pair moved (Gudmundson)
+  double sample = m_shadowing->GetValue (0.0, sigma * sigma);
+  if (!first)
+    {
+      double moved = std::abs (distance - link.Distance);
+      sample = std::exp (-moved / m_decorrDistance) * link.Shadowing
+               + std::sqrt (1 - std::exp (-2 * moved / m_decorrDistance)) * sample;
+    }
+  link.Shadowing = sample;
+  link.Distance = distance;
+
+  if (blocked)
+    {
+      link.State = NLOS_STATE;
+      link.LOS = false;
+      link.Pathloss = UrbanNlosPathloss (distance, m_frequency);
+      link.ShadowingNLOSv = 0;
+      return;
+    }
+
+  double pLos = m_urban ? UrbanLosProbability (distance) : HighwayLosProbability (distance);
+  link.LOS = m_randomUniform->GetValue () <= pLos;
+  link.State = link.LOS ? LOS_STATE : NLOSV_STATE;
+  link.Pathloss = m_urban ? UrbanLosPathloss (distance, m_frequency) : HighwayLosPathloss (distance, m_frequency);
+  if (link.LOS)
+    {
+      link.ShadowingNLOSv = 0;
+    }
+  else
+    {
+      // Vehicles in the way: extra loss with mean 5 + max(0, 15 log10(d) - 41) dB, TR 37.885 6.2.1
+      Ptr<NormalRandomVariable> blockage = CreateObject<NormalRandomVariable> ();
+      double extra = blockage->GetValue (5 + std::max (0.0, (15 * std::log10 (distance)) - 41), (m_sigmaNLOSv * m_sigmaNLOSv));
+      link.ShadowingNLOSv = std::max (0.0, extra);
+    }
+}
+
+double
+NrV2XPropagationLossModel::HighwayLosPathloss (double distance, double frequency)
+{
+  return 32.4 + 20 * std::log10 (distance) + 20 * std::log10 (frequency);
+}
+
+double
+NrV2XPropagationLossModel::UrbanLosPathloss (double distance, double frequency)
+{
+  return 38.77 + 16.7 * std::log10 (distance) + 18.2 * std::log10 (frequency);
+}
+
+double
+NrV2XPropagationLossModel::UrbanNlosPathloss (double distance, double frequency)
+{
+  return 36.85 + 30 * std::log10 (distance) + 18.9 * std::log10 (frequency);
+}
+
+double
+NrV2XPropagationLossModel::UrbanLosProbability (double distance)
+{
+  return std::min (1.0, 1.05 * std::exp (-0.0114 * distance));
+}
+
+double
+NrV2XPropagationLossModel::HighwayLosProbability (double distance)
+{
+  if (distance <= 475)
+    {
+      return std::min (1.0, 2.1013e-6 * distance * distance - 0.002 * distance + 1.0193);
+    }
+  return std::max (0.0, 0.54 - 0.001 * (distance - 475));
+}
+
+void
+NrV2XPropagationLossModel::AddBuilding (const std::vector<Vector> &corners)
+{
+  if (corners.size () < 3)
+    {
+      NS_FATAL_ERROR ("A building needs at least 3 corners");
+    }
+  Vector low = corners[0], high = corners[0];
+  for (std::size_t i = 1; i < corners.size (); ++i)
+    {
+      low.x = std::min (low.x, corners[i].x);
+      low.y = std::min (low.y, corners[i].y);
+      high.x = std::max (high.x, corners[i].x);
+      high.y = std::max (high.y, corners[i].y);
+    }
+  m_buildings.push_back (corners);
+  m_buildingBoxes.push_back (std::make_pair (low, high));
+}
+
+uint32_t
+NrV2XPropagationLossModel::GetNBuildings (void) const
+{
+  return m_buildings.size ();
+}
+
+static double
+Cross (const Vector &o, const Vector &a, const Vector &b)
+{
+  return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+}
+
+static int
+Orientation (const Vector &o, const Vector &a, const Vector &b)
+{
+  double v = Cross (o, a, b);
+  return (v > 0) ? 1 : ((v < 0) ? -1 : 0);
+}
+
+// q lies on segment p-r, given that the three points are collinear
+static bool
+OnSegment (const Vector &p, const Vector &q, const Vector &r)
+{
+  return std::min (p.x, r.x) <= q.x && q.x <= std::max (p.x, r.x)
+         && std::min (p.y, r.y) <= q.y && q.y <= std::max (p.y, r.y);
+}
+
+// Segments p1-p2 and q1-q2 cross or touch
+static bool
+SegmentsIntersect (const Vector &p1, const Vector &p2, const Vector &q1, const Vector &q2)
+{
+  int o1 = Orientation (p1, p2, q1), o2 = Orientation (p1, p2, q2);
+  int o3 = Orientation (q1, q2, p1), o4 = Orientation (q1, q2, p2);
+  if (o1 != o2 && o3 != o4)
+    {
+      return true;
+    }
+  return (o1 == 0 && OnSegment (p1, q1, p2)) || (o2 == 0 && OnSegment (p1, q2, p2))
+         || (o3 == 0 && OnSegment (q1, p1, q2)) || (o4 == 0 && OnSegment (q1, p2, q2));
+}
+
+static bool
+InsidePolygon (const Vector &p, const std::vector<Vector> &corners)
+{
+  bool inside = false;
+  for (std::size_t i = 0, j = corners.size () - 1; i < corners.size (); j = i++)
+    {
+      if (((corners[i].y > p.y) != (corners[j].y > p.y))
+          && (p.x < (corners[j].x - corners[i].x) * (p.y - corners[i].y) / (corners[j].y - corners[i].y) + corners[i].x))
+        {
+          inside = !inside;
+        }
+    }
+  return inside;
+}
+
+bool
+NrV2XPropagationLossModel::IsBlockedByBuildings (const Vector &a, const Vector &b) const
+{
+  for (std::size_t n = 0; n < m_buildings.size (); ++n)
+    {
+      const Vector &low = m_buildingBoxes[n].first, &high = m_buildingBoxes[n].second;
+      if (std::max (a.x, b.x) < low.x || std::min (a.x, b.x) > high.x
+          || std::max (a.y, b.y) < low.y || std::min (a.y, b.y) > high.y)
+        {
+          continue;
+        }
+      const std::vector<Vector> &corners = m_buildings[n];
+      if (InsidePolygon (a, corners) || InsidePolygon (b, corners))
+        {
+          return true;
+        }
+      for (std::size_t i = 0; i < corners.size (); ++i)
+        {
+          if (SegmentsIntersect (a, b, corners[i], corners[(i + 1) % corners.size ()]))
+            {
+              return true;
+            }
+        }
+    }
+  return false;
+}
+
+void
+NrV2XPropagationLossModel::LoadBuildings (std::string path)
+{
+  m_buildingsFile = path;
+  m_buildings.clear ();
+  m_buildingBoxes.clear ();
+  if (path.empty ())
+    {
+      return;
+    }
+  std::ifstream file (path.c_str ());
+  if (!file.is_open ())
+    {
+      NS_FATAL_ERROR ("Buildings file not found: " << path);
+    }
+  std::string line;
+  while (std::getline (file, line))
+    {
+      std::string::size_type comma = line.find (',');
+      if (comma == std::string::npos || !std::isdigit (static_cast<unsigned char> (line[0])))
+        {
+          continue; // header or empty line
+        }
+      std::istringstream values (line.substr (comma + 1));
+      std::vector<Vector> corners;
+      double x, y;
+      while (values >> x >> y)
+        {
+          corners.push_back (Vector (x, y, 0));
+        }
+      AddBuilding (corners);
+    }
+  NS_LOG_INFO ("Loaded " << m_buildings.size () << " buildings from " << path);
+}
+
+std::string
+NrV2XPropagationLossModel::GetBuildingsFile (void) const
+{
+  return m_buildingsFile;
+}
+
+NrV2XPropagationLossModel::LinkState
+NrV2XPropagationLossModel::GetLinkState (uint32_t txID, uint32_t rxID) const
+{
+  std::map<uint32_t, std::map<uint32_t , ChannelModel> >::const_iterator txIT = NrV2XPropagationLossModel::ChannelMatrix.find (txID);
+  if (txIT != NrV2XPropagationLossModel::ChannelMatrix.end ())
+    {
+      std::map<uint32_t , ChannelModel>::const_iterator rxIT = txIT->second.find (rxID);
+      if (rxIT != txIT->second.end ())
+        {
+          return rxIT->second.State;
+        }
+    }
+  return NLOSV_STATE;
 }
 
 bool

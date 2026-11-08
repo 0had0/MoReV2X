@@ -79,6 +79,24 @@ The result of the map is written to results/<scenario>/SchedulerMap.txt.
 Columns: node,dynamic,retx,reEvaluation,rsrpThreshold,mcs,pkeep,adaptive
 
 
+URBAN (TR 37.885 urban grid)
+./waf --run "URBAN --Vehicles=60 --simTime=5 --Periodic --mcs=13"
+Streets every 433 m along x and 250 m along y, 2 lanes of 3.5 m per direction, and a building
+of 413 x 230 m in every block (written to results/<scenario>/buildings.csv). Vehicles drive
+straight and wrap around the grid edge; they do not turn. Every HIGHWAY option works, and:
+--GridX=3 --GridY=3             blocks along x and y (the TR minimum, 1299 x 750 m)
+--Speed=60                      km/h; TR 37.885 uses 60 and 15
+--Buildings=<file.csv>          footprints in place of the blocks, one per row: id,x0 y0 x1 y1 ...
+                                A file with only its header leaves the grid open.
+Channel: UMi street canyon LOS pathloss, LOS or NLOSv by the urban LOS probability, shadowing
+decorrelated over 10 m. A link whose straight line crosses a building is NLOS:
+36.85 + 30 log10(d) + 18.9 log10(fc).
+Attributes: ns3::NrV2XPropagationLossModel::Urban, ::BuildingsFile, ::SigmaNLOS (4 dB).
+HIGHWAY keeps the highway model and has no buildings.
+scratch/HIGHWAY.cc and scratch/URBAN.cc hold the roads; scratch/common/v2x-scenario.cc the
+rest of the scenario, compiled into every scratch program that includes common/v2x-scenario.h.
+
+
 6. SUMO MOBILITY
 ----------------
 Live coupling over TraCI, ns-3 starts SUMO itself:

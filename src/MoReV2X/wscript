@@ -81,6 +81,7 @@ def build(bld):
     module_test = bld.create_ns3_module_test_library('MoReV2X')
     module_test.source = [
         'test/nr-v2x-mode2-test-suite.cc',
+        'test/nr-v2x-urban-channel-test-suite.cc',
         ]
 
     headers = bld(features='ns3header')
