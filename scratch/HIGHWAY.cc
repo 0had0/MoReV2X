@@ -761,6 +761,10 @@ main (int argc, char *argv[])
   cmd.AddValue ("PosLog", "Write vehicle positions to posFile.txt every 100 ms", PositionLog);
   cmd.AddValue ("AdaptiveRRI", "Adapt the RRI and the keep probability to the sensed load", AdaptiveRRI);
   cmd.AddValue ("pkeep", "Probability of keeping the resources when Cresel expires", Pkeep);
+  bool urbanChannel = false;
+  std::string buildingsFile = "";
+  cmd.AddValue ("UrbanChannel", "TR 37.885 urban channel: UMi pathloss, NLOS behind --Buildings", urbanChannel);
+  cmd.AddValue ("Buildings", "Building footprints, one per row: id,x0 y0 x1 y1 ...", buildingsFile);
   cmd.AddValue ("LegacyEvenUeOneShot", "Force Cresel=1 on even UEs, as upstream MoReV2X v4.1 did", LegacyEvenUeOneShot);
 
 
@@ -1139,7 +1143,9 @@ main (int argc, char *argv[])
   Config::SetDefault ("ns3::NrV2XPropagationLossModel::Frequency", DoubleValue (5.9));
   Config::SetDefault ("ns3::NrV2XPropagationLossModel::Sigma", DoubleValue (3.0));
   Config::SetDefault ("ns3::NrV2XPropagationLossModel::SigmaNLOSv", DoubleValue (4.0));
-  Config::SetDefault ("ns3::NrV2XPropagationLossModel::DecorrDistance", DoubleValue (25.0));
+  Config::SetDefault ("ns3::NrV2XPropagationLossModel::DecorrDistance", DoubleValue (urbanChannel ? 10.0 : 25.0));
+  Config::SetDefault ("ns3::NrV2XPropagationLossModel::Urban", BooleanValue (urbanChannel));
+  Config::SetDefault ("ns3::NrV2XPropagationLossModel::BuildingsFile", StringValue (buildingsFile));
 
   lteHelper->SetPathlossModelType ("ns3::NrV2XPropagationLossModel"); 
 
