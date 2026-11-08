@@ -54,6 +54,10 @@ namespace ns3 {
 
 NS_LOG_COMPONENT_DEFINE ("NrV2XUeMac");
 
+// Bytes a TB must hold on top of the queue the RLC reports: after NotifyTxOpportunity the MAC
+// checks that the queue is below the TB minus the RLC header, and MoReV2X does not segment
+static const uint32_t RLC_UM_HEADER_BYTES = 2;
+
 NS_OBJECT_ENSURE_REGISTERED (NrV2XUeMac);
 
 ////////////////////
@@ -2674,7 +2678,7 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
          {
            // A packet larger than the whole channel can carry never fits a reservation: every slot would
            // trigger a size reselection and the packet would stay queued for ever. Drop it.
-           if (m_NRamc->GetSlMaxTbSize (m_slGrantMcs, m_nsubCHsize, m_BW_RBs) < (*itBsr).second.txQueueSize)
+           if (m_NRamc->GetSlMaxTbSize (m_slGrantMcs, m_nsubCHsize, m_BW_RBs) < (*itBsr).second.txQueueSize + RLC_UM_HEADER_BYTES)
            {
              DiscardQueuedPacket (itBsr, "oversize");
            }
@@ -2735,7 +2739,7 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
          NS_LOG_DEBUG("Reservation delay (next tx) = " << ReTxReservationDelay << " ms, PDB = " << itBsr->second.V2XPdb << " ms");
 
          uint16_t TBlen_subCH, TBLen_RBs;
-    	 poolIt->second.m_currentV2XGrant.m_tbSize = m_NRamc->GetSlSubchAndTbSizeFromMcs ((*itBsr).second.txQueueSize, poolIt->second.m_currentV2XGrant.m_mcs, m_nsubCHsize, m_BW_RBs, &TBlen_subCH, &TBLen_RBs) / 8;
+    	 poolIt->second.m_currentV2XGrant.m_tbSize = m_NRamc->GetSlSubchAndTbSizeFromMcs ((*itBsr).second.txQueueSize + RLC_UM_HEADER_BYTES, poolIt->second.m_currentV2XGrant.m_mcs, m_nsubCHsize, m_BW_RBs, &TBlen_subCH, &TBLen_RBs) / 8;
          TB_RBs  = TBLen_RBs;
          NS_LOG_DEBUG("Allocated " << poolIt->second.m_currentV2XGrant.m_tbSize << " B, with " <<  (*itBsr).second.txQueueSize << " B in the queue. PSSCH length = " << TBLen_RBs << " RBs, reservation is " << poolIt->second.m_currentV2XGrant.m_grantTransmissions[1].m_rbLenPssch << " RBs");
 
@@ -2923,7 +2927,7 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
 	   (*itBsr).second.alreadyUESelected = true; //FIXME please change the name of this member
            //Compute the TB size
            uint16_t TBlen_subCH, TBLen_RBs;
-    	   poolIt->second.m_currentV2XGrant.m_tbSize = m_NRamc->GetSlSubchAndTbSizeFromMcs ((*itBsr).second.txQueueSize, poolIt->second.m_currentV2XGrant.m_mcs, m_nsubCHsize, m_BW_RBs, &TBlen_subCH, &TBLen_RBs) / 8;
+    	   poolIt->second.m_currentV2XGrant.m_tbSize = m_NRamc->GetSlSubchAndTbSizeFromMcs ((*itBsr).second.txQueueSize + RLC_UM_HEADER_BYTES, poolIt->second.m_currentV2XGrant.m_mcs, m_nsubCHsize, m_BW_RBs, &TBlen_subCH, &TBLen_RBs) / 8;
  	//   poolIt->second.m_currentV2XGrant.m_tbSize = m_amc->GetUlTbSizeFromMcs ((int) poolIt->second.m_currentV2XGrant.m_mcs, (int) poolIt->second.m_currentV2XGrant.m_rbLenPssch) / 8;
            NS_LOG_DEBUG("Allocated " << poolIt->second.m_currentV2XGrant.m_tbSize << " B, with " <<  (*itBsr).second.txQueueSize << " B in the queue. PSSCH length = " << TBLen_RBs << " RBs, reservation is " << poolIt->second.m_currentV2XGrant.m_grantTransmissions[1].m_rbLenPssch << " RBs");
             
