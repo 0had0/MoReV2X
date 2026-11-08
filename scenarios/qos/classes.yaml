@@ -1,0 +1,140 @@
+# Traffic classes of the QOS scenarios, one per PQI of the evaluation plan.
+#
+#   PQI  type     PDB     PER    service                  SL priority (assumption, see below)
+#   21   GBR      20 ms   1e-4   platooning               3
+#   22   GBR      50 ms   1e-2   advanced driving         4
+#   23   GBR      100 ms  1e-2   cooperative perception   6
+#   89   non-GBR  50 ms   1e-4   emergency trajectory     2
+#   90   non-GBR  100 ms  1e-4   CAM / VAM / DENM         5
+#   91   non-GBR  3 ms    1e-5   crash mitigation         1
+#
+# The SL priority goes into the SCI and drives pre-emption. The PQI table gives no priority, so
+# the classes are ranked by how strict PDB and PER are: crash mitigation first, perception last.
+# Change "priority" here to test another ranking.
+#
+# Sizes are application payloads. MoReV2X adds 35 B of headers, and one slot of 20 MHz at
+# 60 kHz with 12-RB subchannels and MCS 14 carries the payload limit printed by QOS at start-up
+# (637 B). Larger packets would be dropped as "oversize", so the published sizes above that
+# limit are capped. A new packet of a class replaces an older one still waiting in the RLC
+# (logged as "replaced"), MoReV2X sends one packet per TB.
+#
+# Sources
+#   5GAA  "5G V2X Direct Communication Evaluation Approach", Annex A.2, traffic types v2vTType-xx
+#   37885 3GPP TR 37.885, aperiodic traffic model (50 ms + exponential with mean 50 ms)
+#
+# Blind retransmissions (retx): 1 for the classes with a PER of 1e-4, 2 for the 1e-5 one, none
+# for 1e-2. All transmissions of a packet are within 32 slots (8 ms) and inside its PDB.
+#
+# Fields: see tools/qos/sweep.py FLOW_HEADER. model is periodic (period_ms), aperiodic
+# (period_ms + exponential with mean exp_mean_ms) or event (Poisson events at event_rate per
+# second per node, each a burst of `burst` packets every burst_interval_ms).
+# scheduling sps keeps a reservation for Cresel periods, dynamic selects for every packet.
+
+classes:
+  platooning:                 # PQI 21. 5GAA v2vTType-21 size, period matched to the 20 ms PDB
+    pqi: 21
+    priority: 3
+    pdb_ms: 20
+    per: 1.0e-4
+    gbr: 1
+    roles: [platoon]
+    model: periodic
+    period_ms: 20
+    sizes: [300]
+    rri_ms: 20
+    scheduling: sps
+    retx: 1
+
+  advanced_driving:           # PQI 22. 5GAA v2vTType-33 (cooperative lane merge): 100 ms, 300 B
+    pqi: 22
+    priority: 4
+    pdb_ms: 50
+    per: 1.0e-2
+    gbr: 1
+    roles: [car, truck]
+    share: 0.3                # automated vehicles
+    model: periodic
+    period_ms: 100
+    sizes: [300]
+    rri_ms: 100
+    scheduling: sps
+    retx: 0
+
+  cooperative_perception:     # PQI 23. 5GAA v2vTType-34: 50 ms + Exp(50 ms), up to its 600 B
+    pqi: 23
+    priority: 6
+    pdb_ms: 100
+    per: 1.0e-2
+    gbr: 1
+    roles: [car, truck, platoon, rsu]
+    share: 0.5                # 5GAA: sensor sharing on 50 % of the vehicles
+    model: aperiodic
+    period_ms: 50
+    exp_mean_ms: 50
+    sizes: [200, 400, 600]
+    probs: [0.34, 0.33, 0.33]
+    reservation_size: 600     # SPS reserves for the largest CPM, no size reselection
+    rri_ms: 100
+    scheduling: sps
+    retx: 0
+
+  emergency_trajectory:       # PQI 89. 5GAA v2vTType-32 timing, size capped from 800-1200 B
+    pqi: 89
+    priority: 2
+    pdb_ms: 50
+    per: 1.0e-4
+    gbr: 0
+    roles: [emergency]
+    model: aperiodic
+    period_ms: 50
+    exp_mean_ms: 50
+    sizes: [400]
+    rri_ms: 100
+    scheduling: dynamic
+    retx: 1
+
+  cam:                        # PQI 90. 5GAA v2vTType-11, rate 2 (100 ms), MessageSize 1
+    pqi: 90
+    priority: 5
+    pdb_ms: 100
+    per: 1.0e-4
+    gbr: 0
+    roles: [car, truck, platoon, emergency]
+    model: periodic
+    period_ms: 100
+    sizes: [190, 350, 450]
+    probs: [0.3, 0.4, 0.3]
+    reservation_size: 450
+    rri_ms: 100
+    scheduling: sps
+    retx: 1
+
+  vam:                        # PQI 90, vulnerable road users. 5GAA urban rate 1 (200 ms), 190 B
+    pqi: 90
+    priority: 5
+    pdb_ms: 100
+    per: 1.0e-4
+    gbr: 0
+    roles: [cyclist, pedestrian]
+    model: periodic
+    period_ms: 200
+    sizes: [190]
+    rri_ms: 200
+    scheduling: sps
+    retx: 1
+
+  crash_mitigation:           # PQI 91. Rare events, a short burst of fresh state per event
+    pqi: 91
+    priority: 1
+    pdb_ms: 3
+    per: 1.0e-5
+    gbr: 0
+    roles: [car, truck, platoon, emergency]
+    model: event
+    event_rate: 0.05          # one event per vehicle every 20 s on average
+    burst: 5
+    burst_interval_ms: 10
+    sizes: [200]
+    rri_ms: 100
+    scheduling: dynamic
+    retx: 2

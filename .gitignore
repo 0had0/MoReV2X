@@ -46,3 +46,4 @@ __pycache__/
 /tagFile.txt
 /*.pcap
 /*.tr
+/docs/notebooks/src/

@@ -1,0 +1,13 @@
+# Built and recreated inside the image
+build/
+build-debug/
+cmake-cache/
+cmake-cache-debug/
+.venv/
+.local/
+results/
+testpy-output/
+.git/
+.gate-stamp
+.lock-*
+docs/notebooks/.ipynb_checkpoints

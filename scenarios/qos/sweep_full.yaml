@@ -1,0 +1,72 @@
+# Full QOS sweep, sized for about 8 hours on 30 parallel jobs (32 cores, one left for the
+# monitor and one for the system). Launch it with tools/qos/remote/launch.sh, see COMMANDS.txt.
+#
+#   tools/qos/sweep.py scenarios/qos/sweep_full.yaml --dry-run    the list of runs
+#
+# A run is one (scenario, density, condition, variant, policy, seed). Its id names all six.
+# Every run of a seed replays the same SUMO trace, so policies and conditions are compared on
+# identical mobility.
+
+name: qos_full
+include: [classes.yaml]
+binary: build/optimized/scratch/QOS
+sim_time: 15            # simulated seconds per run
+warmup: 3               # seconds left out of every metric
+max_distance: 1000      # m, attempts and ReceivedLog rows beyond are ignored
+jobs: 30
+metrics_jobs: 6          # metric extractions at once, each needs a few GB on dense runs
+keep_raw: false         # true keeps the MoReV2X logs of every run (about 0.3 GB each)
+timeout: 14400          # s, a run still going after 4 h is stopped and marked failed
+seeds: [1, 2, 3]
+
+# PHY and MAC shared by every run: numerology 2 (60 kHz, 0.25 ms slots), 20 MHz = 24 RBs,
+# two 12-RB subchannels, MCS 14, 23 dBm
+phy:
+  Numerology: 2
+  ChannelBW: 20
+  SubChannel: 12
+  mcs: 14
+  ueTxPower: 23
+  RSRP: -128
+  SavingPeriod: 0.5
+
+# Resource selection policies compared in every scenario
+policies:
+  "off":          {ReEvaluation: 0, Preemption: 0}   # quoted: YAML reads a bare off as false
+  reeval:         {ReEvaluation: 1, Preemption: 0}
+  reeval_preempt: {ReEvaluation: 1, Preemption: 1}
+
+scenarios:
+  highway_platoon:
+    trace: {scenario: highway_platoon, platoons: 3, platoon_size: 6}
+    densities: [low, high]                      # 5 and 20 background vehicles per km per lane
+    classes: [platooning, advanced_driving, cooperative_perception, emergency_trajectory, cam, crash_mitigation]
+    conditions:
+      baseline: {}
+      # Wideband jammer 20 m off the road at mid-highway, 23 dBm, on 30 % of every 10 ms, 5 s to 12 s
+      jamming:
+        arguments: {Jammer: "1000,25,23,0.3,10,5,12"}
+      # Gilbert-Elliott bursts at the platoon trucks: good 0.5 s, bad 50 ms on average
+      loss_bursts:
+        arguments: {BurstLoss: "platoon;0.5;0.05"}
+      # 3 ms + up to 4 ms of higher-layer latency before platooning messages reach the sidelink
+      stack_latency:
+        classes: {platooning: {stack_delay_ms: 3, stack_jitter_ms: 4}}
+
+  urban_intersection:
+    trace: {scenario: urban_intersection}
+    densities: [low, high]                      # 60 and 180 vehicles in the grid
+    arguments: {Urban: 1}
+    classes: [advanced_driving, cooperative_perception, emergency_trajectory, cam, vam, crash_mitigation]
+
+  highway_cpm:
+    trace: {scenario: highway_cpm}
+    densities: [medium, high]                   # 20 and 30 vehicles per km per lane
+    classes: [cam, cooperative_perception]
+    variants:
+      # SPS reserving for the largest CPM
+      sps_max: {classes: {cooperative_perception: {share: 1.0}}}
+      # SPS reserving for the median CPM: larger ones trigger size reselections
+      sps_median: {classes: {cooperative_perception: {share: 1.0, reservation_size: 400}}}
+      # Aggressive reselection: a new selection for every CPM
+      dynamic: {classes: {cooperative_perception: {share: 1.0, scheduling: dynamic}}}

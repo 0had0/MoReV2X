@@ -1,0 +1,45 @@
+# Smoke sweep: every scenario, condition, variant and policy of sweep_full.yaml once, short and
+# sparse, to check the whole chain (traces, QOS, metrics, summary) before the long run.
+# tools/qos/smoke.sh runs it and checks the summary. About 10 minutes on 4 cores.
+
+name: qos_smoke
+include: [classes.yaml, sweep_full.yaml]
+sim_time: 4
+warmup: 1
+jobs: 4
+keep_raw: false
+timeout: 1800
+seeds: [1]
+
+scenarios:
+  highway_platoon:
+    trace: {scenario: highway_platoon, platoons: 2, platoon_size: 4, length: 1000}
+    densities: [low]
+    classes: [platooning, advanced_driving, cooperative_perception, emergency_trajectory, cam, crash_mitigation]
+    conditions:
+      baseline: {}
+      jamming:
+        arguments: {Jammer: "500,25,23,0.3,10,1.5,3.5"}
+      loss_bursts:
+        arguments: {BurstLoss: "platoon;0.5;0.05"}
+      stack_latency:
+        classes: {platooning: {stack_delay_ms: 3, stack_jitter_ms: 4}}
+
+  urban_intersection:
+    trace: {scenario: urban_intersection}
+    densities: [low]
+    arguments: {Urban: 1}
+    classes: [advanced_driving, cooperative_perception, emergency_trajectory, cam, vam, crash_mitigation]
+    # crash mitigation is rare, a smoke run needs enough of it to exercise PDB = 3 ms
+    variants:
+      default: {classes: {crash_mitigation: {event_rate: 1.0}}}
+
+  highway_cpm:
+    trace: {scenario: highway_cpm, length: 1000}
+    densities: [medium]
+    classes: [cam, cooperative_perception]
+    policies: [reeval_preempt]
+    variants:
+      sps_max: {classes: {cooperative_perception: {share: 1.0}}}
+      sps_median: {classes: {cooperative_perception: {share: 1.0, reservation_size: 400}}}
+      dynamic: {classes: {cooperative_perception: {share: 1.0, scheduling: dynamic}}}
