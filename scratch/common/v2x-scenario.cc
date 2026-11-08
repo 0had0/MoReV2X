@@ -151,6 +151,19 @@ ParseTrafficModel (const std::string &option)
   return t;
 }
 
+// --ExtraFlow: a second traffic class on every UE, on its own multicast group and logical channel
+struct ExtraFlowSpec
+{
+  bool enabled = false;
+  double period = 0;   // ms
+  double pdb = 0;      // ms
+  uint32_t size = 0;   // B, payload
+  uint8_t priority = 0;
+  bool sps = true;
+};
+ExtraFlowSpec ExtraFlow;
+Ipv4Address extraGroupAddress ("225.0.0.2");
+
 bool ETSITraffic, avgRRI;
 
 void LoadCAMtraces (NodeContainer VehicleUEs);
@@ -323,6 +336,43 @@ UdpClient::Send (void)
   bool insideTX;
 
   Ptr<UniformRandomVariable> packetSize_index = CreateObject<UniformRandomVariable>();
+
+  if (ExtraFlow.enabled && Ipv4Address::IsMatchingType (m_peerAddress) && Ipv4Address::ConvertFrom (m_peerAddress) == extraGroupAddress)
+  {
+    if (EnableTX[nodeId-1])
+    {
+      NrV2XTag tag;
+      tag.SetGenTime (Simulator::Now ().GetSeconds ());
+      tag.SetDoubleValue (Simulator::Now ().GetSeconds ());
+      tag.SetMessageType (0x00);
+      tag.SetTrafficType (0x00);
+      tag.SetPPPP (ExtraFlow.priority);
+      tag.SetPrsvp (ExtraFlow.period);
+      tag.SetPdb (ExtraFlow.pdb);
+      tag.SetNodeId (nodeId);
+      tag.SetReselectionCounter (ExtraFlow.sps ? 10000 : 1);
+      tag.SetPacketSize (ExtraFlow.size + 35);
+      tag.SetReservationSize (ExtraFlow.size + 35);
+      packetID = packetID + 1;
+      tag.SetIntValue (packetID);
+      tag.SetPacketId (packetID);
+      Vector position = GetNode ()->GetObject<MobilityModel> ()->GetPosition ();
+      tag.SetGenPosX (position.x);
+      tag.SetGenPosY (position.y);
+      tag.SetNumHops (0);
+      Ptr<Packet> p = Create<Packet> (ExtraFlow.size);
+      p->AddByteTag (tag);
+      Ptr<Socket> socket = Socket::CreateSocket (currentNode, TypeId::LookupByName ("ns3::UdpSocketFactory"));
+      socket->SetAllowBroadcast (true);
+      socket->Bind ();
+      socket->Connect (InetSocketAddress (extraGroupAddress, 8001));
+      if (socket->Send (p) >= 0)
+        ++m_sent;
+      socket->Close ();
+    }
+    m_sendEvent = Simulator::Schedule (MilliSeconds (ExtraFlow.period), &UdpClient::Send, this);
+    return;
+  }
 
   if (!Traffic.name.empty () && EnableTX[nodeId-1])
   {
@@ -935,6 +985,8 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
   cmd.AddValue ("PosLog", "Write vehicle positions to posFile.txt every 100 ms", PositionLog);
   cmd.AddValue ("AdaptiveRRI", "Adapt the RRI and the keep probability to the sensed load", AdaptiveRRI);
   cmd.AddValue ("pkeep", "Probability of keeping the resources when Cresel expires", Pkeep);
+  std::string extraFlowOption = "";
+  cmd.AddValue ("ExtraFlow", "Second class on every UE: <period ms>:<PDB ms>:<payload B>:<priority>:<sps|dynamic>", extraFlowOption);
   cmd.AddValue ("LegacyEvenUeOneShot", "Force Cresel=1 on even UEs, as upstream MoReV2X v4.1 did", LegacyEvenUeOneShot);
   scenario.AddOptions (cmd);
 
@@ -949,6 +1001,20 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
     // scenario away from the CAM traces and the aperiodic generators
     PeriodicTraffic = true;
     AperiodicTraffic = false;
+  }
+
+  if (!extraFlowOption.empty ())
+  {
+    std::vector<std::string> parts = SplitString (extraFlowOption, ':');
+    NS_ABORT_MSG_IF (parts.size () != 5, "--ExtraFlow=<period ms>:<PDB ms>:<payload B>:<priority>:<sps|dynamic>");
+    ExtraFlow.enabled = true;
+    ExtraFlow.period = std::stod (parts[0]);
+    ExtraFlow.pdb = std::stod (parts[1]);
+    ExtraFlow.size = std::stoul (parts[2]);
+    ExtraFlow.priority = std::stoul (parts[3]);
+    NS_ABORT_MSG_IF (parts[4] != "sps" && parts[4] != "dynamic", "--ExtraFlow scheduling is sps or dynamic");
+    ExtraFlow.sps = parts[4] == "sps";
+    NS_ABORT_MSG_IF (ExtraFlow.pdb > ExtraFlow.period, "--ExtraFlow: the PDB must not exceed the period");
   }
 
   if (SCS_factor.find(OFDM_numerology) == SCS_factor.end())
@@ -1620,6 +1686,8 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
     if (FrequencyReuse)
       mac->CopySubchannelsMap(SubchannelIndexMap);
 
+    if (ExtraFlow.enabled)
+      mac->PushNewRRIValue(ExtraFlow.period);
     if (!Traffic.name.empty ())
       mac->PushNewRRIValue (Traffic.rriMs);
 
@@ -1747,6 +1815,22 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
 //  clientApps.Get(1) -> SetStopTime (Seconds (simTime + 0.5));
 //@OLD  clientApps.Get(0) -> SetStopTime (Seconds (simTime + 1));
  
+  if (ExtraFlow.enabled)
+  {
+    UdpClientHelper extraClient (extraGroupAddress, 8001);
+    extraClient.SetAttribute ("MaxPackets", UintegerValue (100000));
+    ApplicationContainer extraApps = extraClient.Install (ueResponders);
+    for (uint32_t i = 0; i < ueResponders.GetN (); i++)
+    {
+      extraApps.Get (i)->SetStartTime (Seconds (rand->GetValue (0.001, 1.0)));
+      extraApps.Get (i)->SetStopTime (Seconds (simTime + 0.5));
+    }
+    PacketSinkHelper extraSink ("ns3::UdpSocketFactory", InetSocketAddress (Ipv4Address::GetAny (), 8001));
+    ApplicationContainer extraSinks = extraSink.Install (ueResponders);
+    extraSinks.Start (Seconds (0.001));
+    extraSinks.Stop (Seconds (simTime + 0.9));
+  }
+
   // Application to receive traffic
   PacketSinkHelper clientPacketSinkHelper ("ns3::UdpSocketFactory", InetSocketAddress (Ipv4Address::GetAny (), 8000));  // Ipv4Address::GetAny() returns the dummy 0.0.0.0 address. The port number must be the correct one
   ApplicationContainer clientRespondersSrvApps = clientPacketSinkHelper.Install(ueResponders);
@@ -1762,6 +1846,11 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
 
   Ptr<NistSlTft> tftRx = Create<NistSlTft> (NistSlTft::BIDIRECTIONAL, groupAddress, groupL2Address);
   proseHelper->ActivateSidelinkBearer (Seconds(0.001), ueDevs, tftRx); // Set accordingly with clientApps StartTime! 0.1 Seconds is the ActivationTime of the Sidelink bearer
+  if (ExtraFlow.enabled)
+  {
+    Ptr<NistSlTft> extraTft = Create<NistSlTft> (NistSlTft::BIDIRECTIONAL, extraGroupAddress, 0x01);
+    proseHelper->ActivateSidelinkBearer (Seconds (0.001), ueDevs, extraTft);
+  }
 
 
   Ptr<LteUeRrcSl> ueSidelinkConfiguration = CreateObject<LteUeRrcSl> ();

@@ -29,6 +29,7 @@
 
 #include "nr-v2x-adaptive-reservation.h"
 #include <map>
+#include <set>
 
 #include <ns3/nist-lte-mac-sap.h>
 #include <ns3/nist-lte-ue-cmac-sap.h>
@@ -552,6 +553,14 @@ private:
    */
   void DiscardQueuedPacket (std::map <SidelinkLcIdentifier, NistLteMacSapProvider::NistReportBufferNistStatusParameters>::iterator itBsr, const std::string &reason);
   bool m_discardPdu; //!< set while DiscardQueuedPacket pulls the PDU out of the RLC
+
+  // Several flows: each destination group has its own pool entry, hence its own grant
+  /** Priority of the packet waiting in the flow of this destination, 9 if it has none, 10 if empty */
+  uint8_t PendingPriority (uint32_t dstL2Id) const;
+  /** Slots (frame*10+subframe, 0-based, modulo 10240) that the other flows of this UE reserved */
+  std::set<uint32_t> SiblingReservedSlots (uint32_t dstL2Id);
+  uint32_t m_currentPoolDst; //!< destination of the flow being served in this slot
+  Time m_lastSlTxTime;       //!< slot of the last PSSCH, a UE sends one per slot
 
   double m_sizeThreshold;
   double m_rsrpThreshold;
