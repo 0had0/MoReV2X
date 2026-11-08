@@ -99,6 +99,16 @@ flow leaves out the slots the other flows of the UE reserved. HIGHWAY adds one c
 ./waf --run "HIGHWAY --Vehicles=30 --simTime=4 --Periodic --mcs=13 --SchedulerMap=1-30:prio=5 --ExtraFlow=20:20:150:2:sps"
 
 
+URBAN CHANNEL (TR 37.885 urban grid)
+--UrbanChannel=true             UMi street canyon LOS pathloss, LOS or NLOSv by the urban LOS
+                                probability, shadowing decorrelated over 10 m
+--Buildings=<file.csv>          footprints, one per row: id,x0 y0 x1 y1 ... A link whose straight
+                                line crosses one is NLOS: 36.85 + 30 log10(d) + 18.9 log10(fc)
+Attributes: ns3::NrV2XPropagationLossModel::Urban, ::BuildingsFile, ::SigmaNLOS (4 dB).
+The highway model stays the default and ignores buildings.
+./waf --run "HIGHWAY --Vehicles=40 --simTime=3 --Periodic --mcs=13 --UrbanChannel=true --Buildings=buildings.csv"
+
+
 6. SUMO MOBILITY
 ----------------
 Live coupling over TraCI, ns-3 starts SUMO itself:

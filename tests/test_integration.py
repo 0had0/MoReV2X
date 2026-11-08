@@ -357,6 +357,28 @@ class UnservablePackets(ScratchRuns):
         rx = read(folder, "ReceivedLog.txt", RX_COLUMNS)
         self.assertGreater(rx[rx.distance < 200].decoded.mean(), 0.9)
 
+class UrbanChannel(ScratchRuns):
+    def test_a_median_wall_cuts_the_opposite_carriageway(self):
+        # Lanes are at y = 4..24 m, eastbound above 13 m. A wall between y = 12.5 and 13.5 m
+        # leaves only same-direction links, which with the urban model are LOS or NLOSv
+        wall = os.path.join(tempfile.mkdtemp(prefix="morev2x-wall-"), "wall.csv")
+        self.scratch = getattr(self, "scratch", []) + [os.path.dirname(wall)]
+        with open(wall, "w") as out:
+            out.write("building,corners\n0,-100 12.5 5100 12.5 5100 13.5 -100 13.5\n")
+        common = ["--Vehicles=40", "--simTime=3", "--Periodic", "--mcs=13", "--seed=2"]
+        open_folder, _ = self.highway(*common, "--UrbanChannel=true")
+        wall_folder, _ = self.highway(*common, "--UrbanChannel=true", "--Buildings=" + wall)
+        def far(folder):
+            # 400-600 m: UMi LOS is about -75 dBm there, NLOS below the -103.5 dBm sensitivity
+            rx = read(folder, "ReceivedLog.txt", RX_COLUMNS)
+            rx = rx[(rx.distance > 400) & (rx.distance < 600)]
+            return (rx.lossType == 0).mean()
+        self.assertGreater(far(wall_folder), far(open_folder) + 0.2, "cross-carriageway links fall below sensitivity")
+
+    def test_highway_channel_is_the_default(self):
+        folder, _ = self.highway("--Vehicles=10", "--simTime=2", "--Periodic", "--mcs=13")
+        self.assertTrue(os.path.exists(os.path.join(folder, "ReceivedLog.txt")))
+
 
 class AdaptiveReservation(ScratchRuns):
     def test_rri_stays_on_the_grid(self):

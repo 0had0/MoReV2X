@@ -92,6 +92,30 @@ public:
 
   bool GetLineOfSightState (uint32_t txID, uint32_t rxID);
 
+  /** Link state of TR 37.885: LOS, NLOSv (blocked by vehicles) or NLOS (blocked by buildings) */
+  enum LinkState
+  {
+    LOS_STATE = 0,
+    NLOSV_STATE = 1,
+    NLOS_STATE = 2
+  };
+  LinkState GetLinkState (uint32_t txID, uint32_t rxID) const;
+
+  /** TR 37.885 Table 6.2.1-1, urban, d in m (>= 1) and fc in GHz */
+  static double UrbanLosPathloss (double distance, double frequency);
+  static double UrbanNlosPathloss (double distance, double frequency);
+  static double HighwayLosPathloss (double distance, double frequency);
+  /** TR 37.885 Table 6.2.1-2, urban: probability that a link not blocked by buildings is LOS */
+  static double UrbanLosProbability (double distance);
+  /** TR 37.885 Table 6.2.1-2, highway */
+  static double HighwayLosProbability (double distance);
+
+  /** Adds a building footprint, corners in order. Used by the BuildingsFile attribute and the tests */
+  void AddBuilding (const std::vector<Vector> &corners);
+  /** True when the straight segment a-b crosses or touches a building footprint */
+  bool IsBlockedByBuildings (const Vector &a, const Vector &b) const;
+  uint32_t GetNBuildings (void) const;
+
   /**
    * Compute the pathloss based on the positions of the two nodes
    *
@@ -117,6 +141,7 @@ public:
     double Pathloss;
     double Shadowing;
     double ShadowingNLOSv;
+    LinkState State;
   };
   // Map to store pathloss and shadowing
 
@@ -129,6 +154,10 @@ private:
   Ptr<NormalRandomVariable> m_shadowingNLOSv =  CreateObject<NormalRandomVariable> ();
 
   void UpdateChannelMatrix (void);
+  /** Draws pathloss, shadowing and link state of one pair, previous holds the last state */
+  void UpdateLink (ChannelModel &link, Ptr<MobilityModel> tx, Ptr<MobilityModel> rx, bool first);
+  void LoadBuildings (std::string path);
+  std::string GetBuildingsFile (void) const;
 
   NodeContainer m_UEsContainer;
 
@@ -136,6 +165,11 @@ private:
   double m_sigmaNLOSv;
   double m_decorrDistance;
   double m_frequency;
+  bool m_urban;            //!< TR 37.885 urban grid instead of highway
+  double m_sigmaNLOS;      //!< shadowing of links blocked by buildings
+  std::string m_buildingsFile;
+  std::vector<std::vector<Vector> > m_buildings;
+  std::vector<std::pair<Vector, Vector> > m_buildingBoxes; //!< bounding box of each footprint
 
 };
 
