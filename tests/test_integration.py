@@ -266,6 +266,26 @@ class SumoMobility(ScratchRuns):
         self.assertGreater(len(tx), 0)
 
 
+class UnservablePackets(ScratchRuns):
+    DROP_COLUMNS = ["node", "time", "packet", "genTime", "pdb", "bytes", "reason"]
+
+    def test_packets_too_large_for_the_channel_are_dropped(self):
+        # 10 MHz at 60 kHz is 11 RBs, one subchannel: no 300 B packet fits. This used to
+        # re-select in every slot until re-evaluation aborted on an empty window.
+        folder, _ = self.highway("--Vehicles=20", "--simTime=2", "--Periodic", "--mcs=13",
+                                 "--Numerology=2", "--ChannelBW=10", "--ReEvaluation")
+        drops = read(folder, "MacDropLog.txt", self.DROP_COLUMNS)
+        self.assertGreater(len(drops), 0)
+        self.assertEqual(set(drops.reason), {"oversize"})
+
+    def test_mu2_at_20_mhz_delivers(self):
+        folder, _ = self.highway("--Vehicles=20", "--simTime=2", "--Periodic", "--mcs=14",
+                                 "--Numerology=2", "--ChannelBW=20", "--SubChannel=12", "--ReEvaluation")
+        self.assertFalse(os.path.exists(os.path.join(folder, "MacDropLog.txt")))
+        rx = read(folder, "ReceivedLog.txt", RX_COLUMNS)
+        self.assertGreater(rx[rx.distance < 200].decoded.mean(), 0.9)
+
+
 class AdaptiveReservation(ScratchRuns):
     def test_rri_stays_on_the_grid(self):
         folder, _ = self.highway("--Vehicles=40", "--simTime=6", "--Periodic", "--mcs=13", "--AdaptiveRRI")

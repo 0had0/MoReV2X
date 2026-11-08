@@ -535,7 +535,8 @@ NrV2XUeMac::NrV2XUeMac ()
    m_slHasDataToTx (false),
    m_validReservation (false),
    m_updateReservation (false),
-   m_adaptiveRri (0.0)
+   m_adaptiveRri (0.0),
+   m_discardPdu (false)
 {
    NS_LOG_FUNCTION (this);
    
@@ -662,6 +663,11 @@ NrV2XUeMac::DoTransmitPdu (NistLteMacSapProvider::NistTransmitPduParameters para
   else
   {
     NS_LOG_INFO ("Transmitting sidelink PDU");
+    if (m_discardPdu)
+    {
+      NS_LOG_INFO ("Discarding the sidelink PDU");
+      return;
+    }
     //find transmitting pool
     std::map <uint32_t, PoolInfo>::iterator poolIt = m_sidelinkTxPoolsMap.find (params.dstL2Id);
     NS_ASSERT (poolIt!= m_sidelinkTxPoolsMap.end());
@@ -1448,6 +1454,8 @@ NrV2XUeMac::V2XSelectResources (uint32_t frameNo, uint32_t subframeNo, double pd
    L_SubCh/= m_nsubCHsize;
    NS_LOG_DEBUG("Reserving resources for packet size: " << PacketSize << " B, adjusted to " << AdjustedPacketSize << " B, required RBs = " << L_RBs << ", required subchannels " << L_SubCh);
 
+   // A reservation smaller than the packet would be followed by a size reselection in every slot
+   ReservationSize = std::max (ReservationSize, PacketSize);
    AdjustedReservationSize = m_NRamc->GetSlSubchAndTbSizeFromMcs (ReservationSize, V2XGrant.m_mcs , m_nsubCHsize, m_BW_RBs, &L_SubCh, &L_RBs) / 8;
    L_SubCh/= m_nsubCHsize;
    NS_LOG_DEBUG("Actual reservation size is: " << ReservationSize << " B, adjusted to " << AdjustedReservationSize << " B, required RBs = " << L_RBs << ", required subchannels " << L_SubCh);
@@ -2580,7 +2588,16 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
 
        if (poolIt->second.m_pool->GetSchedulingType() == SidelinkCommResourcePool::UE_SELECTED)
        {
-	 if (!(*itBsr).second.alreadyUESelected && !(itBsr == m_slBsrReceived.end () || (*itBsr).second.txQueueSize == 0)) //that is, if UE needs to transmit new data
+	 if (!(itBsr == m_slBsrReceived.end () || (*itBsr).second.txQueueSize == 0) && !(*itBsr).second.alreadyUESelected)
+         {
+           // A packet larger than the whole channel can carry never fits a reservation: every slot would
+           // trigger a size reselection and the packet would stay queued for ever. Drop it.
+           if (m_NRamc->GetSlMaxTbSize (m_slGrantMcs, m_nsubCHsize, m_BW_RBs) < (*itBsr).second.txQueueSize)
+           {
+             DiscardQueuedPacket (itBsr, "oversize");
+           }
+         }
+	 if (!(itBsr == m_slBsrReceived.end () || (*itBsr).second.txQueueSize == 0) && !(*itBsr).second.alreadyUESelected) //that is, if UE needs to transmit new data
          {    
            NS_LOG_INFO (this << " SL BSR size=" << m_slBsrReceived.size ());
            if (!poolIt->second.m_V2X_grant_received || ((*itBsr).second.V2XMessageType == 0x01 && (*itBsr).second.isNewV2X))
@@ -3272,6 +3289,26 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
 }
 
 void
+NrV2XUeMac::DiscardQueuedPacket (std::map <SidelinkLcIdentifier, NistLteMacSapProvider::NistReportBufferNistStatusParameters>::iterator itBsr, const std::string &reason)
+{
+  NS_LOG_FUNCTION (this << reason);
+  std::map <SidelinkLcIdentifier, NistLcInfo>::iterator lcIt = m_slLcInfoMap.find (itBsr->first);
+  NS_ASSERT (lcIt != m_slLcInfoMap.end ());
+  std::ofstream dropLog;
+  dropLog.open (m_outputPath + "MacDropLog.txt", std::ios_base::app);
+  dropLog << m_rnti << "," << Simulator::Now ().GetSeconds () << "," << itBsr->second.V2XPacketID << "," << itBsr->second.V2XGenTime
+          << "," << itBsr->second.V2XPdb << "," << itBsr->second.txQueueSize << "," << reason << std::endl;
+  dropLog.close ();
+  uint32_t bytes = itBsr->second.txQueueSize + 10; // room for the RLC header
+  // The RLC hands the PDU to DoTransmitPdu, which throws it away while m_discardPdu is set
+  m_discardPdu = true;
+  lcIt->second.macSapUser->NotifyTxOpportunity (bytes, 0, 0);
+  m_discardPdu = false;
+  itBsr->second.txQueueSize = 0;
+  itBsr->second.alreadyUESelected = false;
+}
+
+void
 NrV2XUeMac::DoAddSlDestination (uint32_t destination)
 {
 	std::list <uint32_t>::iterator it;
@@ -3506,6 +3543,12 @@ NrV2XUeMac::ReEvaluateResources (SidelinkCommResourcePool::SubframeInfo currentS
    std::map<uint16_t,std::list<SidelinkCommResourcePool::SubframeInfo> > Sa, L1, Sa_noPastTx;
  
 //   Sa = SelectionWindow (currentSF, (newPDB-1)/m_slotDuration, NSubCh - L_SubCh + 1);
+   // The window below starts T1 = 2 slots ahead. A packet with less budget left has nowhere to go
+   if (newPDB < 2 * m_slotDuration)
+   {
+     NS_LOG_DEBUG ("No time left before the PDB, skipping the re-evaluation");
+     return;
+   }
    Sa = SelectionWindow (currentSF, (uint32_t)((newPDB-m_slotDuration)/m_slotDuration +1), NSubCh - L_SubCh + 1);
    if (ComputeResidualCSRs(Sa) == 0)
    {
