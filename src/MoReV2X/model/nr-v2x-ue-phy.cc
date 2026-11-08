@@ -1009,7 +1009,7 @@ NrV2XUePhy::ReceiveNistLteControlMessageList (std::list<Ptr<NistLteControlMessag
         rbStartPssch = sci.m_rbStartPssch;
         rbLenPssch = sci.m_rbLenPssch;
    //     m_uePhySapUser -> ReportPsschRsrpReservation (Simulator::Now(), rbStartPssch-2, rbLenPssch+2, psschRsrpDb, receivedSF, reservedSF, CreselRx, sci.m_rnti, (uint16_t) sci.m_reservation); //Mode 4
-        m_uePhySapUser -> ReportPsschRsrpReservation (Simulator::Now(), rbStartPssch, rbLenPssch, psschRsrpDb, receivedSF, reservedSF, CreselRx, sci.m_rnti, sci.m_reservation,0,0); 
+        m_uePhySapUser -> ReportPsschRsrpReservation (Simulator::Now(), rbStartPssch, rbLenPssch, psschRsrpDb, receivedSF, reservedSF, CreselRx, sci.m_rnti, sci.m_reservation,0,0, sci.m_pppp); 
         NS_LOG_INFO("Received SCI_V2X with reservation at SF(" << receivedSF.frameNo << "," << receivedSF.subframeNo << ") with reserved SF(" << reservedSF.frameNo << "," << reservedSF.subframeNo << "), RBstart: " 
         << rbStartPssch << ", RBLen: " << rbLenPssch << ", PSSCH-RSRP: " << psschRsrpDb << "dB" );
         if (sci.m_announceNextTxion)
@@ -1017,11 +1017,11 @@ NrV2XUePhy::ReceiveNistLteControlMessageList (std::list<Ptr<NistLteControlMessag
           rbStartPssch = sci.m_secondRbStartPssch;
           rbLenPssch = sci.m_secondRbLenPssch;
           reservedSF = sci.m_secondSubframe;
-          m_uePhySapUser -> ReportPsschRsrpReservation (Simulator::Now(), rbStartPssch, rbLenPssch, psschRsrpDb, receivedSF, reservedSF, CreselRx, sci.m_rnti, sci.m_timeDiff,1,1); 
+          m_uePhySapUser -> ReportPsschRsrpReservation (Simulator::Now(), rbStartPssch, rbLenPssch, psschRsrpDb, receivedSF, reservedSF, CreselRx, sci.m_rnti, sci.m_timeDiff,1,1, sci.m_pppp); 
           NS_LOG_INFO("Received SCI_V2X with reservation at SF(" << receivedSF.frameNo << "," << receivedSF.subframeNo << ") with reserved SF(" << reservedSF.frameNo << "," << reservedSF.subframeNo << "), RBstart: " 
           << rbStartPssch << ", RBLen: " << rbLenPssch << ", PSSCH-RSRP: " << psschRsrpDb << "dB" );
           reservedSF = sci.m_secondReservedSubframe;
-          m_uePhySapUser -> ReportPsschRsrpReservation (Simulator::Now(), rbStartPssch, rbLenPssch, psschRsrpDb, receivedSF, reservedSF, CreselRx, sci.m_rnti, sci.m_reservation + sci.m_timeDiff,1,0); 
+          m_uePhySapUser -> ReportPsschRsrpReservation (Simulator::Now(), rbStartPssch, rbLenPssch, psschRsrpDb, receivedSF, reservedSF, CreselRx, sci.m_rnti, sci.m_reservation + sci.m_timeDiff,1,0, sci.m_pppp); 
           NS_LOG_INFO("Received SCI_V2X with reservation at SF(" << receivedSF.frameNo << "," << receivedSF.subframeNo << ") with reserved SF(" << reservedSF.frameNo << "," << reservedSF.subframeNo << "), RBstart: " 
           << rbStartPssch << ", RBLen: " << rbLenPssch << ", PSSCH-RSRP: " << psschRsrpDb << "dB" );
         }
@@ -1031,7 +1031,7 @@ NrV2XUePhy::ReceiveNistLteControlMessageList (std::list<Ptr<NistLteControlMessag
         rbStartPssch = sci.m_secondRbStartPssch;
         rbLenPssch = sci.m_secondRbLenPssch;
         reservedSF = sci.m_secondSubframe;
-        m_uePhySapUser -> ReportPsschRsrpReservation (Simulator::Now(), rbStartPssch, rbLenPssch, psschRsrpDb, receivedSF, reservedSF, CreselRx, sci.m_rnti, sci.m_timeDiff,1,1); 
+        m_uePhySapUser -> ReportPsschRsrpReservation (Simulator::Now(), rbStartPssch, rbLenPssch, psschRsrpDb, receivedSF, reservedSF, CreselRx, sci.m_rnti, sci.m_timeDiff,1,1, sci.m_pppp); 
         NS_LOG_INFO("Received SCI_V2X with reservation at SF(" << receivedSF.frameNo << "," << receivedSF.subframeNo << ") with reserved SF(" << reservedSF.frameNo << "," << reservedSF.subframeNo << "), RBstart: " 
         << rbStartPssch << ", RBLen: " << rbLenPssch << ", PSSCH-RSRP: " << psschRsrpDb << "dB" );
       }
