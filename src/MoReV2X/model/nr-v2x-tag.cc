@@ -54,7 +54,7 @@ NrV2XTag::GetInstanceTypeId (void) const
 uint32_t 
 NrV2XTag::GetSerializedSize (void) const
 {
-   return sizeof m_doubleValue + sizeof m_intValue + sizeof m_simpleValue + sizeof m_genTime + sizeof m_packetId + sizeof m_genPosX + sizeof m_genPosY + sizeof m_nodeId + sizeof m_numHops + sizeof m_messageType + sizeof m_trafficType + sizeof m_Cresel + sizeof m_PacketSize + sizeof m_ReservationSize + sizeof m_pppp + sizeof m_pdb + sizeof m_p_rsvp + sizeof m_mcs;
+   return sizeof m_doubleValue + sizeof m_intValue + sizeof m_simpleValue + sizeof m_genTime + sizeof m_packetId + sizeof m_genPosX + sizeof m_genPosY + sizeof m_nodeId + sizeof m_numHops + sizeof m_messageType + sizeof m_trafficType + sizeof m_Cresel + sizeof m_PacketSize + sizeof m_ReservationSize + sizeof m_pppp + sizeof m_pdb + sizeof m_p_rsvp + sizeof m_mcs + sizeof m_txPerTb;
 }
 
 void 
@@ -81,6 +81,7 @@ NrV2XTag::Serialize (TagBuffer i) const
   i.WriteDouble (m_pdb);
   i.WriteU32 (m_p_rsvp);
   i.WriteU32 (m_mcs);
+  i.WriteU8 (m_txPerTb);
 
 }
 void 
@@ -105,6 +106,7 @@ NrV2XTag::Deserialize (TagBuffer i)
   m_pdb = i.ReadDouble();
   m_p_rsvp = i.ReadU32 ();
   m_mcs = i.ReadU32 ();
+  m_txPerTb = i.ReadU8 ();
   
   
 }
@@ -220,6 +222,18 @@ void
 NrV2XTag::SetPrsvp (uint32_t value)
 {
   m_p_rsvp = value;
+}
+
+void
+NrV2XTag::SetTxPerTb (uint8_t value)
+{
+  m_txPerTb = value;
+}
+
+uint8_t
+NrV2XTag::GetTxPerTb (void) const
+{
+  return m_txPerTb;
 }
 
 void

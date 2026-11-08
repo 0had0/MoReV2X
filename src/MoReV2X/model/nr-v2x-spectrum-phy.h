@@ -719,6 +719,19 @@ private:
   double m_metricsMinX;
   double m_metricsMaxX;
 
+  double m_rxTimeResolution; //!< rxTime of ReceivedLog.txt is floored to this many seconds
+  double m_metricsMaxDistance; //!< receptions farther than this are not logged
+
+  // Gilbert-Elliott receiver bursts: alternating good and bad periods with exponential lengths.
+  // In a bad period every TB is lost (SCI and data), logged with lossType 4
+  bool InBurstLoss (void);
+  double m_burstMeanGood;
+  double m_burstMeanBad;
+  bool m_burstStarted;
+  bool m_burstBad;
+  Time m_burstNextSwitch;
+  Ptr<ExponentialRandomVariable> m_burstRng;
+
   struct PacketStatus
   {
     double rxTime;

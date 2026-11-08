@@ -755,6 +755,16 @@ private:
   bool m_preemption;
   uint8_t m_preemptionPriority;             //!< 0: any higher priority pre-empts. p: only priorities below p
   uint8_t m_txPriority;                     //!< priority of the packet being scheduled
+  uint8_t m_txPerTb;                        //!< transmissions per TB asked by the packet, 0 = EnableReTx
+  /** Transmissions of the TB being scheduled: the packet's own count, else 2 with EnableReTx, else 1 */
+  uint16_t TransmissionsPerTb (void) const;
+  /** Up to 3 resources for one TB, all within 32 slots of the first, sorted by time and indexed from 1 */
+  std::map<uint16_t, V2XSchedulingInfo> SelectExtraTransmissions (const std::vector<CandidateCSRl2> &candidates,
+      const V2XSchedulingInfo &first, SidelinkCommResourcePool::SubframeInfo firstSF, uint16_t count,
+      SidelinkCommResourcePool::SubframeInfo currentSF, uint16_t nbRbPssch, uint16_t nbRbPscch, reselectionTrigger trigger);
+  /** Gives each transmission after the first its re-evaluation flag: an earlier transmission less than
+   *  32 slots before it announces it, so it is not re-evaluated */
+  void SetAnnouncements (std::map<uint16_t, V2XSchedulingInfo> &transmissions, uint16_t fromIndex);
 
   /**
   * Method to store Tx events for scheduling assistance in LTE-V2V UE_SELECTED Mode 4 

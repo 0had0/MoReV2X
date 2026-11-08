@@ -58,6 +58,8 @@ run preemption --Periodic --PDB=20 --ReEvaluation '--SchedulerMap=1-7:prio=2+pre
 run prio_aware --Periodic --ReEvaluation --ReTx '--SchedulerMap=1-15:prio=4+prioaware+preempt'
 run two_flows --Periodic '--SchedulerMap=1-15:prio=5+preempt' --ReEvaluation --ExtraFlow=20:20:150:2:sps
 run two_flows_dyn --Periodic --ExtraFlow=50:50:150:3:dynamic
+run three_tx --Periodic --ReEvaluation '--SchedulerMap=1-8:tx=3+prio=2+preempt;9-15:tx=2+prio=6+preempt'
+run three_tx_mu2 --Periodic --Numerology=2 --ChannelBW=20 --SubChannel=12 --mcs=14 --ReEvaluation '--SchedulerMap=1-15:tx=3'
 
 rm -rf "$workdir"
 echo "$failures mode(s) failed"

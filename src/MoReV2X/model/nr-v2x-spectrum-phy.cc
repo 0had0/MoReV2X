@@ -189,7 +189,13 @@ NrV2XSpectrumPhy::NrV2XSpectrumPhy ()
   /* Set the initial sensitivity to a very low value, so as to reproduce the default behaviour 
      when it is not set otherwise */
   m_rxSensitivity (-1000),
-  m_slssId(0)
+  m_slssId(0),
+  m_rxTimeResolution (0.01),
+  m_metricsMaxDistance (1e9),
+  m_burstMeanGood (0.0),
+  m_burstMeanBad (0.0),
+  m_burstStarted (false),
+  m_burstBad (false)
 {
   NS_LOG_FUNCTION (this);
   m_random = CreateObject<UniformRandomVariable> ();
@@ -382,6 +388,26 @@ NrV2XSpectrumPhy::GetTypeId (void)
 		   DoubleValue (3500.0),
 		   MakeDoubleAccessor (&NrV2XSpectrumPhy::m_metricsMaxX),
 		   MakeDoubleChecker<double> ())
+    .AddAttribute ("RxTimeResolution",
+                   "Resolution of the reception time in ReceivedLog.txt, s. 0.01 is the MoReV2X format",
+		   DoubleValue (0.01),
+		   MakeDoubleAccessor (&NrV2XSpectrumPhy::m_rxTimeResolution),
+		   MakeDoubleChecker<double> (1e-9))
+    .AddAttribute ("MetricsMaxDistance",
+                   "Receptions are logged only up to this Tx-Rx distance (m). Keeps ReceivedLog.txt small",
+		   DoubleValue (1e9),
+		   MakeDoubleAccessor (&NrV2XSpectrumPhy::m_metricsMaxDistance),
+		   MakeDoubleChecker<double> (0.0))
+    .AddAttribute ("BurstLossMeanGood",
+                   "Mean length of the good periods of the receiver burst-loss model, s. 0 disables it",
+		   DoubleValue (0.0),
+		   MakeDoubleAccessor (&NrV2XSpectrumPhy::m_burstMeanGood),
+		   MakeDoubleChecker<double> (0.0))
+    .AddAttribute ("BurstLossMeanBad",
+                   "Mean length of the bad periods, s, during which every TB is lost (lossType 4)",
+		   DoubleValue (0.0),
+		   MakeDoubleAccessor (&NrV2XSpectrumPhy::m_burstMeanBad),
+		   MakeDoubleChecker<double> (0.0))
 
   ;
 
@@ -389,6 +415,29 @@ NrV2XSpectrumPhy::GetTypeId (void)
 }
 
 
+
+bool
+NrV2XSpectrumPhy::InBurstLoss (void)
+{
+  if (m_burstMeanGood <= 0 || m_burstMeanBad <= 0)
+    {
+      return false;
+    }
+  Time now = Simulator::Now ();
+  if (!m_burstStarted)
+    {
+      m_burstRng = CreateObject<ExponentialRandomVariable> ();
+      m_burstStarted = true;
+      m_burstBad = false;
+      m_burstNextSwitch = now + Seconds (m_burstRng->GetValue (m_burstMeanGood, 0));
+    }
+  while (now >= m_burstNextSwitch)
+    {
+      m_burstBad = !m_burstBad;
+      m_burstNextSwitch += Seconds (m_burstRng->GetValue (m_burstBad ? m_burstMeanBad : m_burstMeanGood, 0));
+    }
+  return m_burstBad;
+}
 
 Ptr<NetDevice>
 NrV2XSpectrumPhy::GetDevice ()
@@ -755,6 +804,13 @@ NrV2XSpectrumPhy::StartRx (Ptr<SpectrumSignalParameters> spectrumRxParams)
   // TODO FIXME NEW for V2X SL
   Ptr<NistLteSpectrumSignalParametersV2XSlFrame> lteV2XSlRxParams = DynamicCast<NistLteSpectrumSignalParametersV2XSlFrame> (spectrumRxParams);  
   
+  if (!lteDataRxParams && !lteSlRxParams && !lteV2XSlRxParams)
+    {
+      // Not a sidelink signal, for instance a jammer: it only adds interference
+      m_interferenceSl->AddSignal (rxPsd, duration);
+      m_interferenceData->AddSignal (rxPsd, duration);
+      return;
+    }
   Ptr<SciV2XLteControlMessage> msg_tmp = DynamicCast<SciV2XLteControlMessage>  ( *(lteV2XSlRxParams->ctrlMsgList.begin()));
   NistV2XSciListElement_s sci_tmp;
   sci_tmp = msg_tmp ->GetSci();
@@ -882,7 +938,7 @@ NrV2XSpectrumPhy::StartRx (Ptr<SpectrumSignalParameters> spectrumRxParams)
           NS_LOG_INFO("Tx-rx distance: " << mobRX->GetDistanceFrom(mobTX) << " m");
 
           PacketStatus newRx;
-          newRx.rxTime = std::floor(Simulator::Now().GetSeconds()*100)/100;
+          newRx.rxTime = std::floor(Simulator::Now().GetSeconds()*std::round(1.0/m_rxTimeResolution))/std::round(1.0/m_rxTimeResolution);
           newRx.latency = std::round( (Simulator::Now().GetSeconds() - sci_tmp.m_genTime)*10000 )/10000;
           newRx.TxDistance = mobRX->GetDistanceFrom(mobTX);
           newRx.packetID = sci_tmp.m_packetID;
@@ -905,7 +961,8 @@ NrV2XSpectrumPhy::StartRx (Ptr<SpectrumSignalParameters> spectrumRxParams)
             NS_LOG_INFO("Labelling the packet as: half-duplex loss!");
             newRx.lossType = 1;
           }
-          m_receivedPackets.push_back(newRx);
+          if (newRx.TxDistance <= m_metricsMaxDistance)
+            m_receivedPackets.push_back(newRx);
 
           //Save the data
           if ((m_saveCollisionsUniMore) && (Simulator::Now ().GetSeconds () - m_prevPrintTime > m_savingPeriod))
@@ -914,7 +971,7 @@ NrV2XSpectrumPhy::StartRx (Ptr<SpectrumSignalParameters> spectrumRxParams)
             AlePDR.open(m_outputPath + "ReceivedLog.txt", std::ios_base::app);
             for (std::vector<PacketStatus>::iterator iit = m_receivedPackets.begin(); iit != m_receivedPackets.end(); iit++)
             {
-              AlePDR << iit->rxTime << "," << iit->packetID << "," << iit->TxDistance << "," << iit->txID << "," << iit->rxID << "," << (uint16_t) iit->decoded << "," << iit->lossType << "," << iit->txIndex << "," << iit->selectionTrigger << "," << iit->announced << "," << iit->latency << std::endl;
+              AlePDR << iit->rxTime << "," << iit->packetID << "," << iit->TxDistance << "," << iit->txID << "," << iit->rxID << "," << (uint16_t) iit->decoded << "," << iit->lossType << "," << iit->txIndex << "," << iit->selectionTrigger << "," << iit->announced << "," << iit->latency << "\n";
             }
             m_receivedPackets.clear();
             //std::floor(Simulator::Now().GetSeconds()*100)/100 << "," << sci.m_packetID << "," << mobRX->GetDistanceFrom(mobTX) << "," <<  TxNode->GetId() << "," << GetDevice()->GetNode()->GetId() << ",";
@@ -928,12 +985,12 @@ NrV2XSpectrumPhy::StartRx (Ptr<SpectrumSignalParameters> spectrumRxParams)
           if (totalPowerDbm < m_rxSensitivity)
           { 
             NS_LOG_INFO ("Signal level below sensitivity");
-            AlePDR << ",0" << std::endl;
+            AlePDR << ",0" << "\n";
           }
           else if (!(!m_halfDuplexPhy || m_halfDuplexPhy->GetState () == IDLE || !(m_halfDuplexPhy->m_ulDataSlCheck)))
           {
             NS_LOG_INFO("Half duplex loss!");
-            AlePDR << ",1" << std::endl;
+            AlePDR << ",1" << "\n";
           }
           AlePDR.close(); */
      //     if (lteV2XSlRxParams->nodeId != 1)
@@ -1889,6 +1946,11 @@ NrV2XSpectrumPhy::EndRxV2XSlData ()
               //NS_ASSERT (itTb!=m_expectedSlTbs.end ());
               if (itTb!=m_expectedSlTbs.end ())
               {
+                if (!(*itTb).second.corrupt && InBurstLoss ())
+                {
+                  (*itTb).second.corrupt = true;
+                  (*itTb).second.lossType = 4;
+                }
                 NS_ASSERT (m_rxPacketInfo[i].m_rxControlMessage -> GetMessageType () == NistLteControlMessage::SCI_V2X);
                 Ptr<SciV2XLteControlMessage> msg2 = DynamicCast<SciV2XLteControlMessage> (m_rxPacketInfo[i].m_rxControlMessage);
                 NistV2XSciListElement_s sci = msg2->GetSci ();
@@ -1911,7 +1973,7 @@ NrV2XSpectrumPhy::EndRxV2XSlData ()
                 if ((posRX.x >= m_metricsMinX) && (posRX.x <= m_metricsMaxX))
                 {              
                   PacketStatus newRx;
-                  newRx.rxTime = std::floor(Simulator::Now().GetSeconds()*100)/100;
+                  newRx.rxTime = std::floor(Simulator::Now().GetSeconds()*std::round(1.0/m_rxTimeResolution))/std::round(1.0/m_rxTimeResolution);
                   newRx.latency = std::round( (Simulator::Now().GetSeconds() - sci.m_genTime)*10000 )/10000;
                   newRx.TxDistance = mobRX->GetDistanceFrom(mobTX);
                   newRx.packetID = sci.m_packetID;
@@ -1938,20 +2000,21 @@ NrV2XSpectrumPhy::EndRxV2XSlData ()
                     newRx.decoded = false;
                     newRx.lossType = itTb->second.lossType;
                   }
-                  m_receivedPackets.push_back(newRx);
+                  if (newRx.TxDistance <= m_metricsMaxDistance)
+                    m_receivedPackets.push_back(newRx);
                 /*  std::ofstream AlePDR; 
                   AlePDR.open(m_outputPath + "ReceivedLog.txt", std::ios_base::app);
                   AlePDR << std::floor(Simulator::Now().GetSeconds()*100)/100 << "," << sci.m_packetID << "," << mobRX->GetDistanceFrom(mobTX) << "," <<  TxNode->GetId() << "," << GetDevice()->GetNode()->GetId() << ",";
                   if (!itTb->second.corrupt)
                   {
                     if (!itTb->second.collidedPssch)
-                       AlePDR << "1,9" << std::endl;
+                       AlePDR << "1,9" << "\n";
                     else
-                       AlePDR << "0," << itTb->second.lossType << std::endl;
+                       AlePDR << "0," << itTb->second.lossType << "\n";
                   }
                   else
                   {
-                    AlePDR << "0," << itTb->second.lossType << std::endl;
+                    AlePDR << "0," << itTb->second.lossType << "\n";
                   }
                   AlePDR.close();*/
 
@@ -2074,7 +2137,7 @@ NrV2XSpectrumPhy::EndRxV2XSlData ()
     AlePDR.open(m_outputPath + "ReceivedLog.txt", std::ios_base::app);
     for (std::vector<PacketStatus>::iterator iit = m_receivedPackets.begin(); iit != m_receivedPackets.end(); iit++)
     {
-      AlePDR << iit->rxTime << "," << iit->packetID << "," << iit->TxDistance << "," << iit->txID << "," << iit->rxID << "," << (uint16_t) iit->decoded << "," << iit->lossType << "," << iit->txIndex << "," << iit->selectionTrigger << "," << iit->announced << "," << iit->latency << std::endl;
+      AlePDR << iit->rxTime << "," << iit->packetID << "," << iit->TxDistance << "," << iit->txID << "," << iit->rxID << "," << (uint16_t) iit->decoded << "," << iit->lossType << "," << iit->txIndex << "," << iit->selectionTrigger << "," << iit->announced << "," << iit->latency << "\n";
     }
     m_receivedPackets.clear();
      //std::floor(Simulator::Now().GetSeconds()*100)/100 << "," << sci.m_packetID << "," << mobRX->GetDistanceFrom(mobTX) << "," <<  TxNode->GetId() << "," << GetDevice()->GetNode()->GetId() << ",";

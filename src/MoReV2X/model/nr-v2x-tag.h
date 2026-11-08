@@ -65,6 +65,8 @@ public:
   void SetPdb (double value);
   void SetPrsvp (uint32_t value);
   void SetMcs (uint32_t value);
+  /** Transmissions of each TB: 1 + blind retransmissions. 0 leaves it to NrV2XUeMac::EnableReTx */
+  void SetTxPerTb (uint8_t value);
 
  // Getters
   uint8_t GetSimpleValue (void) const;
@@ -88,6 +90,7 @@ public:
   double GetPdb (void) const;
   uint32_t GetPrsvp (void) const;
   uint32_t GetMcs (void) const;
+  uint8_t GetTxPerTb (void) const;
   
 
 private:
@@ -118,6 +121,7 @@ private:
   double m_pdb; // the Packet Delay Budget (over the single hop)
   uint32_t m_p_rsvp; // the reservation period for this packet
   uint32_t m_mcs; // the Modulation and Coding Scheme to be used by lower layers for transmission
+  uint8_t m_txPerTb = 0; // transmissions per TB, 0 = MAC default
 };
 
 } //namespace ns3

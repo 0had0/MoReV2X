@@ -32,6 +32,8 @@
 #include <ns3/nist-lte-ue-cphy-sap.h>
 #include <ns3/ptr.h>
 #include <set>
+#include <deque>
+#include <map>
 #include <ns3/nist-lte-ue-power-control.h>
 
 
@@ -723,6 +725,7 @@ private:
   static double CBRSavingInterval;
 
   std::map <uint16_t,std::map<SidelinkCommResourcePool::SubframeInfo, RSSImeas> > m_receivedRSSI;
+  std::map <uint16_t, std::deque<SidelinkCommResourcePool::SubframeInfo> > m_receivedRSSIorder; //!< keys of m_receivedRSSI per subchannel, oldest first
 
   void UnimoreEvaluateCBR (uint16_t frameNo, uint16_t subframeNo);
 
