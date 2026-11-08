@@ -21,6 +21,14 @@ This fork builds and runs natively on Apple Silicon, adds SUMO mobility and per-
 Run `source .env` first. Commands are in [COMMANDS.txt](COMMANDS.txt), the guide is in [docs/notebooks](docs/notebooks/00_start_here.ipynb).
 On macOS use those commands, not the ones below.
 
+## QoS evaluation of NR sidelink Mode 2
+Six traffic classes (PQI 21, 22, 23, 89, 90, 91) on three SUMO scenarios (highway platooning,
+urban intersections with buildings, CPM contention) at numerology 2, 20 MHz, MCS 14, with
+priority-aware sensing, pre-emption, several flows per UE, blind retransmissions per class and the
+TR 37.885 urban channel. Definitions and launch: [notebook 10](docs/notebooks/10_qos_definitions.ipynb),
+results: notebooks 11 and 12. The `QOS SCENARIOS` section of [COMMANDS.txt](COMMANDS.txt) has the
+commands, including the Docker sweep on a remote host.
+
 # Getting Started
 First, you need to download the MoReV2X simulator on your computer. To do so, run the following command:   
 `git clone https://github.com/LLusvarghi/MoReV2X.git `
