@@ -543,6 +543,13 @@ private:
   double m_keepProbability;
   Ptr<UniformRandomVariable> m_evalKeepProb;
 
+  /**
+   * Removes the queued packet of this LC without transmitting it and writes one line
+   * to MacDropLog.txt. Used for packets that no grant can carry.
+   */
+  void DiscardQueuedPacket (std::map <SidelinkLcIdentifier, NistLteMacSapProvider::NistReportBufferNistStatusParameters>::iterator itBsr, const std::string &reason);
+  bool m_discardPdu; //!< set while DiscardQueuedPacket pulls the PDU out of the RLC
+
   double m_sizeThreshold;
   double m_rsrpThreshold;
   uint16_t m_sensingWindow;
