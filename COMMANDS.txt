@@ -91,6 +91,13 @@ Priority attributes, for every node at once:
 ReEvaluationsLog.txt has two more columns: kind (0 re-evaluation, 1 pre-emption check) and priority.
 SSPSlog.txt has a 24th column, the priority. Trigger 5 is a pre-emption.
 
+Several traffic classes per UE: every multicast group is its own sidelink logical channel and
+its own Mode 2 process in the MAC. The flows are served in priority order, a UE sends one PSSCH
+per slot (a flow that loses the slot is logged in MacDropLog.txt as intra-ue-conflict), and each
+flow leaves out the slots the other flows of the UE reserved. HIGHWAY adds one class to every UE:
+--ExtraFlow=<period ms>:<PDB ms>:<payload B>:<priority>:<sps|dynamic>
+./waf --run "HIGHWAY --Vehicles=30 --simTime=4 --Periodic --mcs=13 --SchedulerMap=1-30:prio=5 --ExtraFlow=20:20:150:2:sps"
+
 
 6. SUMO MOBILITY
 ----------------
@@ -116,7 +123,7 @@ cd -
 --------
 tools/gate.sh                   Everything: build, ns-3 suites and examples, scenario tests.
 tools/gate.sh --quick           Skips the ns-3 suites. Does not unlock a commit.
-tools/debug-check.sh            All 22 scheduler modes with NS_ASSERT on, about 10 minutes the
+tools/debug-check.sh            All 27 scheduler, priority and multi-flow modes with NS_ASSERT on, about 10 minutes the
                                 first time. Run it after changing the MAC: the optimized
                                 build ignores assertions, this one found 2 real bugs.
 ./test.py --nowaf               All ns-3 suites and examples.
