@@ -574,7 +574,9 @@ NrV2XUeMac::NrV2XUeMac ()
    m_priorityThresholdStep (3.0),
    m_preemption (false),
    m_preemptionPriority (0),
-   m_txPriority (0)
+   m_txPriority (0),
+   m_currentPoolDst (0),
+   m_lastSlTxTime (Seconds (-1))
 {
    NS_LOG_FUNCTION (this);
    
@@ -2049,6 +2051,27 @@ V2XSidelinkGrant V2XGrant, double T_2, uint16_t NSubCh,  uint16_t L_SubCh, uint3
    uint32_t nCSRtot = 1; //ComputeResidualCSRs (L1)
    uint32_t nCSRresidual = 0;
 
+   // Slots reserved by the other flows of this UE, with all the periods each one keeps for
+   std::set<uint32_t> siblingSlots = SiblingReservedSlots (m_currentPoolDst);
+   if (!siblingSlots.empty ())
+   {
+     uint32_t rriSlots = V2XGrant.m_RRI/m_slotDuration;
+     uint32_t periods = std::max ((uint32_t) 1, (uint32_t) V2XGrant.m_Cresel);
+     for (std::map<uint16_t,std::list<SidelinkCommResourcePool::SubframeInfo> >::iterator SaIt = Sa_pastTx.begin(); SaIt != Sa_pastTx.end(); SaIt++)
+     {
+       for (std::list<SidelinkCommResourcePool::SubframeInfo>::iterator FrameIT = SaIt->second.begin(); FrameIT != SaIt->second.end(); )
+       {
+         uint32_t slot = FrameIT->frameNo * 10 + FrameIT->subframeNo;
+         bool taken = false;
+         for (uint32_t k = 0; k < periods && !taken; k++)
+         {
+           taken = siblingSlots.count ((slot + k * rriSlots) % 10240) > 0;
+         }
+         FrameIT = taken ? SaIt->second.erase (FrameIT) : std::next (FrameIT);
+       }
+     }
+   }
+
    NS_LOG_DEBUG("List Sa size after removing past transmissions: " << ComputeResidualCSRs (Sa_pastTx) );
    // With a short RRI, the UE's own past transmissions can cover the whole selection window.
    // Selecting from an empty list is undefined, so ignore them for this selection.
@@ -2532,8 +2555,26 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
 
    std::map <uint32_t, PoolInfo>::iterator poolIt;
 
-   for (poolIt = m_sidelinkTxPoolsMap.begin() ; poolIt != m_sidelinkTxPoolsMap.end() ; poolIt++) // Actually there is only one pool
-   {  
+   // One pool entry per destination group, so one sidelink process per flow. The flows are served
+   // in priority order: when two of them hold the same slot, the most important one transmits
+   std::vector<std::map <uint32_t, PoolInfo>::iterator> poolOrder;
+   for (poolIt = m_sidelinkTxPoolsMap.begin() ; poolIt != m_sidelinkTxPoolsMap.end() ; poolIt++)
+   {
+     poolOrder.push_back (poolIt);
+   }
+   if (poolOrder.size () > 1)
+   {
+     std::stable_sort (poolOrder.begin (), poolOrder.end (),
+                       [this] (const std::map <uint32_t, PoolInfo>::iterator &a, const std::map <uint32_t, PoolInfo>::iterator &b)
+                       { return PendingPriority (a->first) < PendingPriority (b->first); });
+   }
+
+   for (std::size_t poolIndex = 0; poolIndex < poolOrder.size (); ++poolIndex)
+   {
+     poolIt = poolOrder[poolIndex];
+     m_currentPoolDst = poolIt->first;
+     aperiodicTraffic = false;
+     TB_RBs = 0;
      if ((poolIt -> second.m_pool -> IsV2XEnabled() || true) && m_slGrantMcs != 0)  // If the pool is V2X enabled
      { 
        //TODO V2X stuff
@@ -3025,6 +3066,18 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
      
        if (allocIter != poolIt->second.m_v2xTx.end() && allocIter->subframe.frameNo == frameNo && allocIter->subframe.subframeNo  == subframeNo)
        {
+         // A UE sends one PSSCH per slot. A flow served after another one in this slot loses its turn:
+         // its SCI is not sent and its PDU is dropped, the grant goes on as if it had transmitted
+         bool slotTaken = (m_lastSlTxTime == Simulator::Now ());
+         m_lastSlTxTime = Simulator::Now ();
+         if (slotTaken)
+         {
+           std::ofstream dropLog;
+           dropLog.open (m_outputPath + "MacDropLog.txt", std::ios_base::app);
+           dropLog << m_rnti << "," << Simulator::Now ().GetSeconds () << "," << itBsr->second.V2XPacketID << "," << itBsr->second.V2XGenTime
+                   << "," << itBsr->second.V2XPdb << "," << itBsr->second.txQueueSize << ",intra-ue-conflict" << std::endl;
+           dropLog.close ();
+         }
          NS_LOG_UNCOND("Now: " << Simulator::Now().GetSeconds()*1000 << " ms: Ok, now I should transmit data, Frame no. " << frameNo << ", Subframe no. " << subframeNo);
 	 NistV2XSciListElement_s sci1;
 	 sci1.m_rnti = m_rnti;
@@ -3167,7 +3220,11 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
       //   std::cin.get();
 
    	 msg->SetSci (sci1);
-         m_uePhySapProvider->SendNistLteControlMessage (msg);   
+         if (!slotTaken)
+         {
+           m_uePhySapProvider->SendNistLteControlMessage (msg);
+         }
+         m_discardPdu = slotTaken;
          // Transmit data
          if (true) //FIXME check if this is the first transmission
          {
@@ -3323,6 +3380,7 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
 	 {
            NS_FATAL_ERROR("This should never happen");
 	 }
+	 m_discardPdu = false;
 	 poolIt->second.m_v2xTx.erase (allocIter); //clear the transmission
        }// end if (allocIter != poolIt->second.m_v2xTx.end() && (*allocIter).subframe.frameNo == frameNo && (*allocIter).subframe.subframeNo  == subframeNo)
 
@@ -3580,6 +3638,46 @@ NrV2XUeMac::FlushReEvaluationStats (bool force)
 
      NrV2XUeMac::ReEvaluationStats.clear();
    }
+}
+
+uint8_t
+NrV2XUeMac::PendingPriority (uint32_t dstL2Id) const
+{
+  for (std::map <SidelinkLcIdentifier, NistLteMacSapProvider::NistReportBufferNistStatusParameters>::const_iterator it = m_slBsrReceived.begin ();
+       it != m_slBsrReceived.end (); ++it)
+    {
+      if (it->first.dstL2Id == dstL2Id && it->second.txQueueSize > 0)
+        {
+          return it->second.V2XPPPP == 0 ? 9 : it->second.V2XPPPP;
+        }
+    }
+  return 10;
+}
+
+std::set<uint32_t>
+NrV2XUeMac::SiblingReservedSlots (uint32_t dstL2Id)
+{
+  std::set<uint32_t> slots;
+  for (std::map <uint32_t, PoolInfo>::iterator pool = m_sidelinkTxPoolsMap.begin (); pool != m_sidelinkTxPoolsMap.end (); ++pool)
+    {
+      if (pool->first == dstL2Id || !pool->second.m_V2X_grant_received)
+        {
+          continue;
+        }
+      const V2XSidelinkGrant &grant = pool->second.m_currentV2XGrant;
+      uint32_t rriSlots = grant.m_RRI / m_slotDuration;
+      uint32_t periods = std::max ((uint32_t) 1, (uint32_t) grant.m_Cresel);
+      for (std::map<uint16_t, V2XSchedulingInfo>::const_iterator tx = grant.m_grantTransmissions.begin (); tx != grant.m_grantTransmissions.end (); ++tx)
+        {
+          // Grants hold 1-based frame and subframe numbers
+          uint32_t base = (tx->second.m_nextReservedFrame - 1) * 10 + (tx->second.m_nextReservedSubframe - 1);
+          for (uint32_t k = 0; k < periods; ++k)
+            {
+              slots.insert ((base + k * rriSlots) % 10240);
+            }
+        }
+    }
+  return slots;
 }
 
 void

@@ -303,6 +303,41 @@ class PriorityAndPreemption(ScratchRuns):
         self.assertEqual((log.kind == 1).sum(), 0)
 
 
+class MultipleFlows(ScratchRuns):
+    DROP_COLUMNS = ["node", "time", "packet", "genTime", "pdb", "bytes", "reason"]
+
+    def two_flows(self, *extra):
+        # CAM-like traffic at priority 5 and a 20 ms platoon-like class at priority 2 on every UE
+        return self.highway("--Vehicles=30", "--simTime=4", "--Periodic", "--mcs=13", "--SchedulerMap=1-30:prio=5",
+                            "--ExtraFlow=20:20:150:2:sps", *extra)
+
+    def test_each_flow_has_its_own_process(self):
+        folder, _ = self.two_flows()
+        ssps = read(folder, "SSPSlog.txt", SSPS_COLUMNS)
+        self.assertEqual(set(ssps.groupby("node").priority.nunique()), {2}, "every UE selects for both classes")
+        rri = ssps.groupby("priority").RRI.unique()
+        self.assertEqual(list(rri[2]), [20])
+
+    def test_one_pssch_per_slot(self):
+        folder, _ = self.two_flows()
+        tx = read(folder, "phyDebugShort.txt", TX_COLUMNS)
+        self.assertEqual(tx.groupby(["node", "txTime"]).size().max(), 1)
+        path = os.path.join(folder, "MacDropLog.txt")
+        drops = read(folder, "MacDropLog.txt", self.DROP_COLUMNS) if os.path.exists(path) else pd.DataFrame()
+        conflicts = (drops.reason == "intra-ue-conflict").sum() if len(drops) else 0
+        self.assertLess(conflicts, 0.01 * len(tx), "sibling flows avoid each other's slots")
+
+    def test_dynamic_extra_flow(self):
+        folder, _ = self.two_flows("--ExtraFlow=50:50:150:3:dynamic")
+        ssps = read(folder, "SSPSlog.txt", SSPS_COLUMNS)
+        self.assertTrue((ssps[ssps.priority == 3].Cresel <= 1).all(), "a new selection for every packet")
+
+    def test_single_flow_is_unchanged(self):
+        # Without --ExtraFlow there is one pool, and the selection order cannot change
+        folder, _ = self.highway("--Vehicles=20", "--simTime=3", "--Periodic", "--mcs=13")
+        self.assertFalse(os.path.exists(os.path.join(folder, "MacDropLog.txt")))
+
+
 class UnservablePackets(ScratchRuns):
     DROP_COLUMNS = ["node", "time", "packet", "genTime", "pdb", "bytes", "reason"]
 

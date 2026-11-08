@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs every scheduler mode under the debug profile, where NS_ASSERT is active. The
+# Runs every scheduler mode, priority, pre-emption and several flows per UE, under the debug profile, where NS_ASSERT is active. The
 # optimized build used by tools/gate.sh ignores assertions. Takes about 10 minutes
 # the first time, and leaves waf configured for the optimized build.
 set -uo pipefail
@@ -53,6 +53,11 @@ run adaptive_mixed --Mixed --Percentage=50 --AdaptiveRRI
 run adaptive_aper --Aperiodic --AdaptiveRRI
 run per_node --Periodic '--SchedulerMap=1-5:sps;6-10:dynamic+retx;11-15:reeval+rsrp=-120+adaptive'
 run sumo --Periodic --Vehicles=80 --sumoCfg="$sumo_cfg" --sumoWarmup=60
+run mu2_oversize --Periodic --Numerology=2 --ChannelBW=10 --ReEvaluation
+run preemption --Periodic --PDB=20 --ReEvaluation '--SchedulerMap=1-7:prio=2+preempt;8-15:prio=6+preempt'
+run prio_aware --Periodic --ReEvaluation --ReTx '--SchedulerMap=1-15:prio=4+prioaware+preempt'
+run two_flows --Periodic '--SchedulerMap=1-15:prio=5+preempt' --ReEvaluation --ExtraFlow=20:20:150:2:sps
+run two_flows_dyn --Periodic --ExtraFlow=50:50:150:3:dynamic
 
 rm -rf "$workdir"
 echo "$failures mode(s) failed"
