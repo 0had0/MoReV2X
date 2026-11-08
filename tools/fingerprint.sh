@@ -13,7 +13,8 @@ run () {
   local name="$1"; shift
   rm -rf results
   "$MOREV2X_BUILD/scratch/HIGHWAY" --Vehicles=30 --simTime=5 --mcs=13 --seed=3 "$@" > /dev/null 2>&1
-  printf '%-12s %s\n' "$name" "$(cat results/*/SSPSlog.txt results/*/ReceivedLog.txt results/*/phyDebugShort.txt | sort | shasum -a 256 | cut -c1-16)"
+  # SSPSlog: the 23 columns it had before the priority column was appended
+  printf '%-12s %s\n' "$name" "$( (cut -d, -f1-23 results/*/SSPSlog.txt; cat results/*/ReceivedLog.txt results/*/phyDebugShort.txt) | sort | shasum -a 256 | cut -c1-16)"
 }
 run sps --Periodic
 run retx_reeval --Periodic --ReTx --ReEvaluation

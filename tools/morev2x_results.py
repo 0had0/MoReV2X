@@ -15,7 +15,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SSPS_COLUMNS = ["node", "time", "frame", "subframe", "iterations", "rsrpThreshold", "nCSRfinal",
                 "nCSRpastTx", "nCSRinitial", "Cresel", "RRI", "RRIslots", "PDB", "txPerTB",
                 "grantIndex", "trigger", "nextFrame", "nextSubframe", "rbStart", "rbLen",
-                "reEvalEnabled", "reEvalFrame", "reEvalSubframe"]
+                "reEvalEnabled", "reEvalFrame", "reEvalSubframe", "priority"]
 RX_COLUMNS = ["rxTime", "packetID", "distance", "txID", "rxID", "decoded", "lossType", "txIndex",
               "trigger", "announced", "latency"]
 TX_COLUMNS = ["node", "packet", "genTime", "txIndex", "txTime", "frame", "subframe", "Cresel", "RRI",
@@ -25,12 +25,15 @@ RESERVATION_COLUMNS = ["node", "time", "unusedSubchannelRatio", "unusedReservati
                        "latencyReselections", "sizeReselections", "counterReselections",
                        "transmissions"]
 REEVALUATION_COLUMNS = ["freshGrant", "node", "time", "packet", "checkedTxIndex", "frame", "subframe",
-                        "lastFrame", "lastSubframe", "csr", "checkFrame", "checkSubframe", "reselected"]
+                        "lastFrame", "lastSubframe", "csr", "checkFrame", "checkSubframe", "reselected", "kind",
+                        "priority"]
 POSITION_COLUMNS = ["time", "node", "x", "y", "z", "vx", "vy", "vz", "traffic", "inside"]
-SCHEDULER_COLUMNS = ["node", "dynamic", "retx", "reEvaluation", "rsrpThreshold", "mcs", "pkeep", "adaptive"]
+SCHEDULER_COLUMNS = ["node", "dynamic", "retx", "reEvaluation", "rsrpThreshold", "mcs", "pkeep", "adaptive", "priority",
+                     "preemption"]
 
 LOSS_NAMES = {0: "below sensitivity", 1: "half duplex", 2: "propagation", 3: "collision", 9: "decoded"}
-TRIGGER_NAMES = {0: "counter", 1: "latency and size", 2: "latency", 3: "size", 4: "re-evaluation"}
+TRIGGER_NAMES = {0: "counter", 1: "latency and size", 2: "latency", 3: "size", 4: "re-evaluation", 5: "pre-emption"}
+REEVALUATION_KINDS = {0: "re-evaluation", 1: "pre-emption"}
 
 FILES = {
     "ssps": ("SSPSlog.txt", SSPS_COLUMNS),

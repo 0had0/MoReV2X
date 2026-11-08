@@ -71,6 +71,7 @@ std::vector<bool> EnableTX;
 std::vector<uint8_t> VehicleTrafficType;
 
 std::vector<uint16_t> Pattern_index;
+std::vector<uint8_t> NodePriority; // SL priority of the packets of each node, 0 = none
 
 bool ETSITraffic, avgRRI;
 
@@ -132,6 +133,10 @@ void ApplySchedulerOption (Ptr<NrV2XUeMac> mac, const std::string &option)
     mac->SetAttribute ("RSRPthreshold", DoubleValue (std::stod (value)));
   else if (key == "mcs")
     mac->SetAttribute ("SlGrantMcs", UintegerValue (std::stoul (value)));
+  else if (key == "preempt")
+    mac->SetAttribute ("Preemption", BooleanValue (true));
+  else if (key == "prioaware")
+    mac->SetAttribute ("PriorityAwareSensing", BooleanValue (true));
   else
     NS_FATAL_ERROR ("Unknown scheduler option '" << option << "' in --SchedulerMap");
 }
@@ -154,7 +159,16 @@ void ApplySchedulerMap (const std::string &schedulerMap, NodeContainer VehicleUE
         continue;
       Ptr<NrV2XUeMac> mac = (*L)->GetDevice (0)->GetObject<NistLteUeNetDevice> ()->GetMac ();
       for (std::vector<std::string>::iterator option = options.begin (); option != options.end (); ++option)
-        ApplySchedulerOption (mac, *option);
+      {
+        if (option->compare (0, 5, "prio=") == 0)
+        {
+          const unsigned long priority = std::stoul (option->substr (5));
+          NS_ABORT_MSG_IF (priority < 1 || priority > 8, "prio= takes an SL priority from 1 to 8");
+          NodePriority[(*L)->GetId () - 1] = priority;
+        }
+        else
+          ApplySchedulerOption (mac, *option);
+      }
     }
   }
 
@@ -162,7 +176,7 @@ void ApplySchedulerMap (const std::string &schedulerMap, NodeContainer VehicleUE
   for (NodeContainer::Iterator L = VehicleUEs.Begin (); L != VehicleUEs.End (); ++L)
   {
     Ptr<NrV2XUeMac> mac = (*L)->GetDevice (0)->GetObject<NistLteUeNetDevice> ()->GetMac ();
-    BooleanValue dynamic, reTx, reEvaluation, adaptive;
+    BooleanValue dynamic, reTx, reEvaluation, adaptive, preemption;
     DoubleValue rsrp, pkeep;
     UintegerValue grantMcs;
     mac->GetAttribute ("DynamicScheduling", dynamic);
@@ -172,8 +186,10 @@ void ApplySchedulerMap (const std::string &schedulerMap, NodeContainer VehicleUE
     mac->GetAttribute ("SlGrantMcs", grantMcs);
     mac->GetAttribute ("Pkeep", pkeep);
     mac->GetAttribute ("AdaptiveReservation", adaptive);
+    mac->GetAttribute ("Preemption", preemption);
     mapFile << (*L)->GetId () << "," << dynamic.Get () << "," << reTx.Get () << "," << reEvaluation.Get ()
-            << "," << rsrp.Get () << "," << grantMcs.Get () << "," << pkeep.Get () << "," << adaptive.Get () << std::endl;
+            << "," << rsrp.Get () << "," << grantMcs.Get () << "," << pkeep.Get () << "," << adaptive.Get ()
+            << "," << (int) NodePriority[(*L)->GetId () - 1] << "," << preemption.Get () << std::endl;
   }
 }
 
@@ -242,7 +258,7 @@ UdpClient::Send (void)
     v2xTag.SetGenTime (Simulator::Now ().GetSeconds ());
     v2xTag.SetMessageType (0x00); //CAM, @LUCA just want to work with CAMs
     v2xTag.SetTrafficType (VehicleTrafficType[nodeId-1]); // Coexistence of periodic and aperiodic traffic
-    v2xTag.SetPPPP (0x00); // PPPP for CAM
+    v2xTag.SetPPPP (NodePriority[nodeId-1]); // 0 unless --SchedulerMap gives a prio=
     v2xTag.SetPrsvp ((double) (1000 * m_interval.GetSeconds ())); // the required PHY reservation interval. For periodic traffic is ok
     v2xTag.SetNodeId ((uint32_t) nodeId); // Encapsulate the nodeId. It will be used at MAC layer
     v2xTag.SetReselectionCounter((uint16_t)10000); //safe value for standard-compliant Cresel assignment
@@ -756,7 +772,7 @@ main (int argc, char *argv[])
   cmd.AddValue ("sumoSync", "Seconds between two SUMO position updates", MobilityConfig.syncInterval);
   cmd.AddValue ("sumoWarmup", "SUMO seconds simulated before ns-3 starts, to reach steady traffic", MobilityConfig.warmup);
   cmd.AddValue ("sumoOptions", "Extra options for the SUMO command line", MobilityConfig.extraOptions);
-  cmd.AddValue ("SchedulerMap", "Per-node scheduler, e.g. 1-10:sps;11-20:dynamic+retx+rsrp=-110", SchedulerMap);
+  cmd.AddValue ("SchedulerMap", "Per-node scheduler, e.g. 1-10:sps+prio=2;11-20:dynamic+retx+rsrp=-110+preempt", SchedulerMap);
   cmd.AddValue ("UdpFiles", "Write the application layer logs TxFile.txt and RxFile.txt", enableUDPfiles);
   cmd.AddValue ("PosLog", "Write vehicle positions to posFile.txt every 100 ms", PositionLog);
   cmd.AddValue ("AdaptiveRRI", "Adapt the RRI and the keep probability to the sensed load", AdaptiveRRI);
@@ -1506,6 +1522,7 @@ main (int argc, char *argv[])
    // NetDeviceContainer ueSendersDevs = lteHelper->InstallUeDevice (ueResponders);
    // ueDevs.Add (ueSendersDevs);
 
+  NodePriority.assign (ueResponders.GetN (), 0);
   ApplySchedulerMap (SchedulerMap, ueResponders, outputPath);
 
 

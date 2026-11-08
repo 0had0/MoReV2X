@@ -275,7 +275,7 @@ public:
 	virtual void NotifyChangeOfTiming (uint32_t frameNo, uint32_t subframeNo);
 
         virtual void ReportPsschRsrp (Time time, uint16_t rbStart, uint16_t rbLen, double rsrpDb);
-        virtual void ReportPsschRsrpReservation (Time time, uint16_t rbStart, uint16_t rbLen, double rsrpDb, SidelinkCommResourcePool::SubframeInfo receivedSubframe, SidelinkCommResourcePool::SubframeInfo reservedSubframe, uint32_t CreselRx, uint32_t nodeId, double RRI, bool isReTx, bool isSameTB);
+        virtual void ReportPsschRsrpReservation (Time time, uint16_t rbStart, uint16_t rbLen, double rsrpDb, SidelinkCommResourcePool::SubframeInfo receivedSubframe, SidelinkCommResourcePool::SubframeInfo reservedSubframe, uint32_t CreselRx, uint32_t nodeId, double RRI, bool isReTx, bool isSameTB, uint8_t priority);
         virtual void StoreTxInfo (SidelinkCommResourcePool::SubframeInfo subframe, uint16_t rbStart, uint16_t rbLen);
 
 private:
@@ -321,9 +321,9 @@ NistUeMemberLteUePhySapUser::ReportPsschRsrp (Time time, uint16_t rbStart, uint1
 }
 
 void
-NistUeMemberLteUePhySapUser::ReportPsschRsrpReservation (Time time, uint16_t rbStart, uint16_t rbLen, double rsrpDb, SidelinkCommResourcePool::SubframeInfo receivedSubframe, SidelinkCommResourcePool::SubframeInfo reservedSubframe, uint32_t CreselRx, uint32_t nodeId, double RRI, bool isReTx,  bool isSameTB)
+NistUeMemberLteUePhySapUser::ReportPsschRsrpReservation (Time time, uint16_t rbStart, uint16_t rbLen, double rsrpDb, SidelinkCommResourcePool::SubframeInfo receivedSubframe, SidelinkCommResourcePool::SubframeInfo reservedSubframe, uint32_t CreselRx, uint32_t nodeId, double RRI, bool isReTx,  bool isSameTB, uint8_t priority)
 {
-	m_mac->DoReportPsschRsrpReservation (time, rbStart, rbLen, rsrpDb, receivedSubframe, reservedSubframe, CreselRx, nodeId, RRI, isReTx, isSameTB);
+	m_mac->DoReportPsschRsrpReservation (time, rbStart, rbLen, rsrpDb, receivedSubframe, reservedSubframe, CreselRx, nodeId, RRI, isReTx, isSameTB, priority);
 }
 
 void
@@ -491,6 +491,39 @@ NrV2XUeMac::GetTypeId (void)
                                         BooleanValue (false),
                                         MakeBooleanAccessor (&NrV2XUeMac::m_legacyEvenUeOneShot),
                                         MakeBooleanChecker ())
+                .AddAttribute ("PriorityAwareSensing",
+                                        "Use the SCI priority in sensing: the RSRP threshold of step 5 depends on the pair "
+                                        "(received priority, own priority) and X% of step 6 on the own priority, TS 38.214 8.1.4",
+                                        BooleanValue (false),
+                                        MakeBooleanAccessor (&NrV2XUeMac::m_priorityAwareSensing),
+                                        MakeBooleanChecker ())
+                .AddAttribute ("PriorityThresholdStep",
+                                        "With PriorityAwareSensing and no ThresRsrpList: threshold = RSRPthreshold + step * (rxPriority - txPriority) dB",
+                                        DoubleValue (3.0),
+                                        MakeDoubleAccessor (&NrV2XUeMac::m_priorityThresholdStep),
+                                        MakeDoubleChecker<double> ())
+                .AddAttribute ("ThresRsrpList",
+                                        "sl-ThresRSRP-List: 64 comma-separated thresholds in dBm, entry (rxPriority-1)*8 + (txPriority-1). "
+                                        "Empty: use PriorityThresholdStep",
+                                        StringValue (""),
+                                        MakeStringAccessor (&NrV2XUeMac::SetThresRsrpList, &NrV2XUeMac::GetThresRsrpList),
+                                        MakeStringChecker ())
+                .AddAttribute ("SizeThresholdList",
+                                        "sl-xPercentage: 8 comma-separated fractions, X of step 6 for priorities 1 to 8. Empty: 0.2 for all",
+                                        StringValue (""),
+                                        MakeStringAccessor (&NrV2XUeMac::SetSizeThresholdList, &NrV2XUeMac::GetSizeThresholdList),
+                                        MakeStringChecker ())
+                .AddAttribute ("Preemption",
+                                        "Check every announced resource at T3 and re-select it when a reservation of higher priority "
+                                        "above its RSRP threshold overlaps it, TS 38.321 5.22.1.1",
+                                        BooleanValue (false),
+                                        MakeBooleanAccessor (&NrV2XUeMac::m_preemption),
+                                        MakeBooleanChecker ())
+                .AddAttribute ("PreemptionPriority",
+                                        "sl-PreemptionEnable: 0 lets any higher priority pre-empt, p in 1..8 only priorities below p",
+                                        UintegerValue (0),
+                                        MakeUintegerAccessor (&NrV2XUeMac::m_preemptionPriority),
+                                        MakeUintegerChecker<uint8_t> (0, 8))
                 .AddAttribute ("OutputPath",
                                         "Specifiy the output path where to store the results",
                                         StringValue ("results/sidelink/"),
@@ -540,7 +573,12 @@ NrV2XUeMac::NrV2XUeMac ()
    m_validReservation (false),
    m_updateReservation (false),
    m_adaptiveRri (0.0),
-   m_discardPdu (false)
+   m_discardPdu (false),
+   m_priorityAwareSensing (false),
+   m_priorityThresholdStep (3.0),
+   m_preemption (false),
+   m_preemptionPriority (0),
+   m_txPriority (0)
 {
    NS_LOG_FUNCTION (this);
    
@@ -603,6 +641,7 @@ NrV2XUeMac::~NrV2XUeMac ()
 void
 NrV2XUeMac::DoDispose ()
 {
+  FlushReEvaluationStats (true);
 	NS_LOG_FUNCTION (this);
 	m_miUlHarqProcessesPacket.clear ();
 	delete m_macSapProvider;
@@ -1803,6 +1842,7 @@ NrV2XUeMac::V2XSelectResources (uint32_t frameNo, uint32_t subframeNo, double pd
    tmp.nCSRinitial = nCSRinitial;
    tmp.pdb = pdb;
 
+   tmp.priority = m_txPriority;
    NrV2XUeMac::SelectedGrants.push_back(tmp);
 
    if (Simulator::Now ().GetSeconds() - NrV2XUeMac::prevPrintTime_selection > m_savingPeriod)
@@ -1818,7 +1858,7 @@ NrV2XUeMac::V2XSelectResources (uint32_t frameNo, uint32_t subframeNo, double pd
        << selIT->nCSRfinal << "," << selIT->nCSRpastTx << "," << selIT->nCSRinitial << "," << selIT->selGrant.m_Cresel << "," << selIT->selGrant.m_RRI << "," << (int)selIT->selGrant.m_RRI/m_slotDuration << ","
        << selIT->pdb << "," << selIT->selGrant.m_grantTransmissions.size() << "," << grantsIT->first << "," << grantsIT->second.m_SelectionTrigger << "," << grantsIT->second.m_nextReservedFrame << "," 
        << grantsIT->second.m_nextReservedSubframe << "," << grantsIT->second.m_rbStartPssch << "," << grantsIT->second.m_rbLenPssch << "," << grantsIT->second.m_EnableReEvaluation << "," 
-       << grantsIT->second.m_ReEvaluationFrame << "," << grantsIT->second.m_ReEvaluationSubframe << std::endl;
+       << grantsIT->second.m_ReEvaluationFrame << "," << grantsIT->second.m_ReEvaluationSubframe << "," << (int) selIT->priority << std::endl;
        }
      }
      SSPSlog.close();
@@ -2049,7 +2089,7 @@ V2XSidelinkGrant V2XGrant, double T_2, uint16_t NSubCh,  uint16_t L_SubCh, uint3
    }
 
    std::map < uint16_t, std::map < SidelinkCommResourcePool::SubframeInfo, std::vector<ReservedCSR> > >::iterator sensedIt;
-   double L1targetSize = m_sizeThreshold;
+   double L1targetSize = GetSizeThreshold (m_txPriority);
  //  double L1targetSize = 0.2;
    while (nCSRresidual < L1targetSize * nCSRtot)
    {
@@ -2119,7 +2159,7 @@ V2XSidelinkGrant V2XGrant, double T_2, uint16_t NSubCh,  uint16_t L_SubCh, uint3
              RRI_to_slot << ", RSRP = " << resIt->psschRsrpDb << ", Cresel = " << resIt->CreselRx << " from UE " << resIt->nodeId << ". Is a ReTx? " << resIt->isReTx << ", for the same TB? " << resIt->isSameTB);
              uint16_t Q;
              SidelinkCommResourcePool::SubframeInfo toRemoveSF;
-             if (resIt->psschRsrpDb >= *psschThresh)
+             if (resIt->psschRsrpDb >= *psschThresh + GetPriorityThresholdOffset (resIt->priority, m_txPriority))
              {
                if ((SubtractFrames( currentSF.frameNo, sensedSFIt->first.frameNo, currentSF.subframeNo, sensedSFIt->first.subframeNo) <= (resIt->RRI /m_slotDuration)) && (resIt->RRI  < T_2) && !(resIt->isReTx))
                {
@@ -2523,6 +2563,7 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
 	     aperiodicTraffic = true;
 	   }
 	   nodeId = itBsr->second.V2XNodeId;
+	   m_txPriority = itBsr->second.V2XPPPP;
          //  NS_LOG_DEBUG("Node ID = " << nodeId);
 
 	   break;
@@ -2780,6 +2821,11 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
 //               ReEvaluateResources(poolIt->second.m_currentV2XGrant, itBsr->second);
                ReEvaluateResources(currentSF, poolIt, itBsr->second);
              }
+             else if (m_preemption)
+             {
+               // Announced in an earlier SCI: only a higher priority reservation can take it
+               CheckPreemption (currentSF, poolIt, itBsr->second);
+             }
 
            }
            else if (SubtractFrames(poolIt->second.m_currentV2XGrant.m_grantTransmissions[poolIt->second.m_currentV2XGrant.m_TxIndex].m_ReEvaluationFrame, frameNo, 
@@ -2986,6 +3032,7 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
          NS_LOG_UNCOND("Now: " << Simulator::Now().GetSeconds()*1000 << " ms: Ok, now I should transmit data, Frame no. " << frameNo << ", Subframe no. " << subframeNo);
 	 NistV2XSciListElement_s sci1;
 	 sci1.m_rnti = m_rnti;
+	 sci1.m_pppp = itBsr->second.V2XPPPP;
          sci1.m_genTime = itBsr->second.V2XGenTime;
          sci1.m_packetID = itBsr->second.V2XPacketID;
          sci1.m_announcedTB = poolIt->second.m_currentV2XGrant.m_grantTransmissions[poolIt->second.m_currentV2XGrant.m_TxIndex].m_announced;
@@ -3292,6 +3339,253 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
 
 }
 
+double
+NrV2XUeMac::GetPriorityThresholdOffset (uint8_t rxPriority, uint8_t txPriority) const
+{
+  if (!m_priorityAwareSensing || rxPriority == 0 || txPriority == 0)
+    {
+      return 0.0;
+    }
+  NS_ASSERT_MSG (rxPriority <= 8 && txPriority <= 8, "SL priorities go from 1 to 8");
+  if (m_thresRsrpList.size () == 64)
+    {
+      return m_thresRsrpList[(rxPriority - 1) * 8 + (txPriority - 1)] - m_rsrpThreshold;
+    }
+  // A reservation of lower priority (larger value) than the own packet is easier to reuse
+  return m_priorityThresholdStep * ((double) rxPriority - (double) txPriority);
+}
+
+double
+NrV2XUeMac::GetSizeThreshold (uint8_t txPriority) const
+{
+  if (!m_priorityAwareSensing || txPriority == 0 || m_sizeThresholdList.size () != 8)
+    {
+      return m_sizeThreshold;
+    }
+  return m_sizeThresholdList[txPriority - 1];
+}
+
+static std::vector<double>
+ParseDoubleList (const std::string &text)
+{
+  std::vector<double> values;
+  std::stringstream stream (text);
+  std::string token;
+  while (std::getline (stream, token, ','))
+    {
+      if (token.find_first_not_of (" ") != std::string::npos)
+        {
+          values.push_back (std::stod (token));
+        }
+    }
+  return values;
+}
+
+void
+NrV2XUeMac::SetThresRsrpList (std::string list)
+{
+  m_thresRsrpList = ParseDoubleList (list);
+  if (!m_thresRsrpList.empty () && m_thresRsrpList.size () != 64)
+    {
+      NS_FATAL_ERROR ("ThresRsrpList needs 64 values, got " << m_thresRsrpList.size ());
+    }
+}
+
+std::string
+NrV2XUeMac::GetThresRsrpList (void) const
+{
+  std::ostringstream out;
+  for (std::size_t i = 0; i < m_thresRsrpList.size (); ++i)
+    {
+      out << (i ? "," : "") << m_thresRsrpList[i];
+    }
+  return out.str ();
+}
+
+void
+NrV2XUeMac::SetSizeThresholdList (std::string list)
+{
+  m_sizeThresholdList = ParseDoubleList (list);
+  if (!m_sizeThresholdList.empty () && m_sizeThresholdList.size () != 8)
+    {
+      NS_FATAL_ERROR ("SizeThresholdList needs 8 values, got " << m_sizeThresholdList.size ());
+    }
+}
+
+std::string
+NrV2XUeMac::GetSizeThresholdList (void) const
+{
+  std::ostringstream out;
+  for (std::size_t i = 0; i < m_sizeThresholdList.size (); ++i)
+    {
+      out << (i ? "," : "") << m_sizeThresholdList[i];
+    }
+  return out.str ();
+}
+
+bool
+NrV2XUeMac::IsPreempted (SidelinkCommResourcePool::SubframeInfo currentSF, SidelinkCommResourcePool::SubframeInfo checkSF, uint16_t csrStart, uint16_t L_SubCh, double T_2, double threshold, uint8_t txPriority, uint32_t *preemptingUe)
+{
+  NS_LOG_FUNCTION (this);
+  if (txPriority <= 1)
+    {
+      return false; // nothing has a higher priority than 1
+    }
+  uint8_t limit = txPriority;
+  if (m_preemptionPriority > 0)
+    {
+      limit = std::min (limit, m_preemptionPriority);
+    }
+  uint16_t Tproc0 = GetTproc0 (m_numerologyIndex);
+  for (uint16_t csr = csrStart; csr < csrStart + L_SubCh; ++csr)
+    {
+      std::map <uint16_t, std::map<SidelinkCommResourcePool::SubframeInfo, std::vector<ReservedCSR> > >::iterator sensedIt = m_sensedReservedCSRMap.find (csr);
+      if (sensedIt == m_sensedReservedCSRMap.end ())
+        {
+          continue;
+        }
+      for (std::map<SidelinkCommResourcePool::SubframeInfo, std::vector<ReservedCSR> >::iterator sfIt = sensedIt->second.begin (); sfIt != sensedIt->second.end (); ++sfIt)
+        {
+          uint32_t age = SubtractFrames (currentSF.frameNo, sfIt->first.frameNo, currentSF.subframeNo, sfIt->first.subframeNo);
+          if (age <= Tproc0)
+            {
+              continue; // received too late to be processed, as in step 5
+            }
+          for (std::vector<ReservedCSR>::iterator res = sfIt->second.begin (); res != sfIt->second.end (); ++res)
+            {
+              if (res->priority == 0 || res->priority >= limit || res->nodeId == m_rnti)
+                {
+                  continue;
+                }
+              if (res->psschRsrpDb < threshold + GetPriorityThresholdOffset (res->priority, txPriority))
+                {
+                  continue;
+                }
+              // The slots this reservation announces, projected as in step 5
+              uint16_t rriSlots = res->RRI / m_slotDuration;
+              uint16_t Q = 1;
+              if ((age <= rriSlots) && (res->RRI < T_2) && !res->isReTx)
+                {
+                  Q = std::ceil ((float) T_2 / res->RRI);
+                }
+              for (uint16_t q = 1; q <= Q; ++q)
+                {
+                  SidelinkCommResourcePool::SubframeInfo reserved;
+                  reserved.subframeNo = (sfIt->first.subframeNo + q * rriSlots) % 10;
+                  reserved.frameNo = (sfIt->first.frameNo + (sfIt->first.subframeNo + q * rriSlots) / 10) % 1024;
+                  if (reserved == checkSF)
+                    {
+                      *preemptingUe = res->nodeId;
+                      return true;
+                    }
+                }
+            }
+        }
+    }
+  return false;
+}
+
+void
+NrV2XUeMac::CheckPreemption (SidelinkCommResourcePool::SubframeInfo currentSF, std::map <uint32_t, PoolInfo>::iterator IT, NistLteMacSapProvider::NistReportBufferNistStatusParameters pktParams)
+{
+  NS_LOG_FUNCTION (this);
+  V2XSidelinkGrant grant = IT->second.m_currentV2XGrant;
+  currentSF.frameNo--;
+  currentSF.subframeNo--;
+
+  SidelinkCommResourcePool::SubframeInfo genTimeSF = SimulatorTimeToSubframe (Seconds (pktParams.V2XGenTime), m_slotDuration);
+  double elapsed = SubtractFrames (currentSF.frameNo+1, genTimeSF.frameNo, currentSF.subframeNo+1, genTimeSF.subframeNo) * m_slotDuration;
+  double newPDB = pktParams.V2XPdb - elapsed;
+  if (newPDB < 2 * m_slotDuration)
+    {
+      return;
+    }
+  uint16_t L_SubCh = (uint32_t) grant.m_grantTransmissions[grant.m_TxIndex].m_rbLenPssch / m_nsubCHsize;
+  uint16_t NSubCh = std::floor (m_BW_RBs / m_nsubCHsize);
+
+  // The threshold after the 3 dB steps of the selection procedure that would run now
+  std::map<uint16_t,std::list<SidelinkCommResourcePool::SubframeInfo> > Sa = SelectionWindow (currentSF, (uint32_t)((newPDB-m_slotDuration)/m_slotDuration +1), NSubCh - L_SubCh + 1);
+  uint32_t iterations = 0, nCSR;
+  double threshold = m_rsrpThreshold;
+  Mode2Step1 (Sa, currentSF, grant, newPDB, NSubCh, L_SubCh, &iterations, &threshold, &nCSR, m_UMHvariant);
+  threshold -= 3; // Mode2Step1 steps once more after its last pass
+
+  std::vector<uint16_t> toChange, ok;
+  for (std::map<uint16_t, V2XSchedulingInfo>::iterator tx = grant.m_grantTransmissions.begin (); tx != grant.m_grantTransmissions.end (); ++tx)
+    {
+      ok.push_back (tx->first);
+    }
+  uint16_t index = grant.m_TxIndex;
+  SidelinkCommResourcePool::SubframeInfo checkSF;
+  checkSF.frameNo = grant.m_grantTransmissions[index].m_nextReservedFrame - 1;
+  checkSF.subframeNo = grant.m_grantTransmissions[index].m_nextReservedSubframe - 1;
+  uint16_t csrStart = grant.m_grantTransmissions[index].m_rbStartPssch / m_nsubCHsize;
+  uint32_t preemptingUe = 0;
+  bool preempted = IsPreempted (currentSF, checkSF, csrStart, L_SubCh, newPDB, threshold, pktParams.V2XPPPP, &preemptingUe);
+  if (preempted)
+    {
+      NS_LOG_INFO ("UE " << m_rnti << ": resource at SF(" << checkSF.frameNo << "," << checkSF.subframeNo << ") pre-empted by UE " << preemptingUe);
+      toChange.push_back (index);
+      ok.erase (std::find (ok.begin (), ok.end (), index));
+      IT->second.m_currentV2XGrant = V2XChangeResources (IT->second.m_currentV2XGrant, toChange, ok, currentSF.frameNo+1, currentSF.subframeNo+1, newPDB+m_slotDuration, pktParams.V2XPacketSize, pktParams.V2XReservationSize, PREEMPTION);
+      IT->second.m_V2X_grant_fresh = true;
+    }
+
+  UeReEvaluationInfo record;
+  record.nodeId = m_rnti;
+  record.time = Simulator::Now ().GetSeconds ();
+  record.checkedTxIndex = index;
+  record.ReEvalSF = currentSF;
+  record.LastReEvalSF.frameNo = grant.m_grantTransmissions[index].m_ReEvaluationFrame;
+  record.LastReEvalSF.subframeNo = grant.m_grantTransmissions[index].m_ReEvaluationSubframe;
+  record.CheckSF = checkSF;
+  record.CheckCSR = csrStart;
+  record.freshGrant = IT->second.m_V2X_grant_fresh;
+  record.packetID = pktParams.V2XPacketID;
+  record.reSelection = preempted;
+  record.reSelectionType = 1; // pre-emption
+  record.priority = pktParams.V2XPPPP;
+  NrV2XUeMac::ReEvaluationStats.push_back (record);
+  FlushReEvaluationStats (false);
+}
+
+void
+NrV2XUeMac::FlushReEvaluationStats (bool force)
+{
+   if (force || Simulator::Now ().GetSeconds() - NrV2XUeMac::prevPrintTime_reEvaluation > m_savingPeriod)
+   {
+     NrV2XUeMac::prevPrintTime_reEvaluation = Simulator::Now ().GetSeconds();
+     //Check if the UE is within the central 2km
+     std::ofstream ReEvalFile;
+     ReEvalFile.open (m_outputPath + "ReEvaluationsLog.txt", std::ios_base::app);
+     for (std::vector<UeReEvaluationInfo>::iterator reEvalIT = NrV2XUeMac::ReEvaluationStats.begin(); reEvalIT != NrV2XUeMac::ReEvaluationStats.end(); reEvalIT++)
+     {
+       ReEvalFile << (int) reEvalIT->freshGrant << "," << reEvalIT->nodeId << "," << reEvalIT->time << "," << reEvalIT->packetID  << "," << reEvalIT->checkedTxIndex << "," << reEvalIT->ReEvalSF.frameNo+1 << "," << reEvalIT->ReEvalSF.subframeNo+1 << "," << reEvalIT->LastReEvalSF.frameNo << "," 
+       << reEvalIT->LastReEvalSF.subframeNo  << "," << reEvalIT->CheckCSR << "," << reEvalIT->CheckSF.frameNo+1 << "," << reEvalIT->CheckSF.subframeNo+1 << "," << (int) reEvalIT->reSelection << "," << reEvalIT->reSelectionType << "," << (int) reEvalIT->priority << std::endl;
+     }
+     ReEvalFile.close();
+
+  /*   std::ofstream ReEvalFileEXT;
+     ReEvalFileEXT.open (m_outputPath + "ReEvaluationsLog_EXT.txt", std::ios_base::app);
+     for (std::vector<UeReEvaluationInfo>::iterator reEvalIT = NrV2XUeMac::ReEvaluationStats.begin(); reEvalIT != NrV2XUeMac::ReEvaluationStats.end(); reEvalIT++)
+     {
+       if (reEvalIT->freshGrant)
+         ReEvalFileEXT << "Fresh grant, ";
+       else
+         ReEvalFileEXT << "Non-fresh grant, "; 
+       ReEvalFileEXT << "UE " << reEvalIT->nodeId << ", Re-evaluation now: " << reEvalIT->time << ", packet " << reEvalIT->packetID << " @ tx index " << reEvalIT->checkedTxIndex << " at SF(" << reEvalIT->ReEvalSF.frameNo+1 << "," << reEvalIT->ReEvalSF.subframeNo+1 << "). Last re-evaluation at SF(" 
+       << reEvalIT->LastReEvalSF.frameNo  << "," << reEvalIT->LastReEvalSF.subframeNo  << "). Checking CSR index " << reEvalIT->CheckCSR << " at SF(" << reEvalIT->CheckSF.frameNo+1 << "," << reEvalIT->CheckSF.subframeNo+1 << "):";
+       if (reEvalIT->reSelection)
+         ReEvalFileEXT << " CHANGE!" << std::endl;
+       else
+         ReEvalFileEXT << " don't change!" << std::endl;
+     }
+     ReEvalFileEXT.close();  */
+
+     NrV2XUeMac::ReEvaluationStats.clear();
+   }
+}
+
 void
 NrV2XUeMac::DiscardQueuedPacket (std::map <SidelinkLcIdentifier, NistLteMacSapProvider::NistReportBufferNistStatusParameters>::iterator itBsr, const std::string &reason)
 {
@@ -3385,7 +3679,7 @@ NrV2XUeMac::DoReportPsschRsrp (Time time, uint16_t rbStart, uint16_t rbLen, doub
 }
 
 void
-NrV2XUeMac::DoReportPsschRsrpReservation (Time time, uint16_t rbStart, uint16_t rbLen, double rsrpDb, SidelinkCommResourcePool::SubframeInfo receivedSubframe, SidelinkCommResourcePool::SubframeInfo reservedSubframe, uint32_t CreselRx, uint32_t nodeId, double RRI, bool isReTx, bool isSameTB)
+NrV2XUeMac::DoReportPsschRsrpReservation (Time time, uint16_t rbStart, uint16_t rbLen, double rsrpDb, SidelinkCommResourcePool::SubframeInfo receivedSubframe, SidelinkCommResourcePool::SubframeInfo reservedSubframe, uint32_t CreselRx, uint32_t nodeId, double RRI, bool isReTx, bool isSameTB, uint8_t priority)
 {
   NS_LOG_FUNCTION(this);
 
@@ -3409,6 +3703,7 @@ NrV2XUeMac::DoReportPsschRsrpReservation (Time time, uint16_t rbStart, uint16_t 
     newSensedReservedCSR.reservedSF.subframeNo = reservedSubframe.subframeNo;
     newSensedReservedCSR.isReTx = isReTx;
     newSensedReservedCSR.isSameTB = isSameTB;
+    newSensedReservedCSR.priority = priority;
 
     if (useCreselRx)
     {
@@ -3689,53 +3984,23 @@ NrV2XUeMac::ReEvaluateResources (SidelinkCommResourcePool::SubframeInfo currentS
      tmpStorage.CheckCSR = ((uint32_t) currentV2Xgrant.m_grantTransmissions[*ItIt].m_rbStartPssch) / m_nsubCHsize;
      tmpStorage.freshGrant = IT->second.m_V2X_grant_fresh;
      tmpStorage.packetID = pktParams.V2XPacketID;
+     tmpStorage.priority = pktParams.V2XPPPP;
 
      if(std::find(GrantsToChange.begin(), GrantsToChange.end(), (*ItIt)) != GrantsToChange.end())
      {
        tmpStorage.reSelection = true;  
-       tmpStorage.reSelectionType = 2; //fake value  
+       tmpStorage.reSelectionType = 0; // re-evaluation  
      } 
      else
      {
        tmpStorage.reSelection = false;  
-       tmpStorage.reSelectionType = 2; //fake value  
+       tmpStorage.reSelectionType = 0; // re-evaluation  
      }
   
      NrV2XUeMac::ReEvaluationStats.push_back(tmpStorage);
    }
 
-   if (Simulator::Now ().GetSeconds() - NrV2XUeMac::prevPrintTime_reEvaluation > m_savingPeriod)
-   {
-     NrV2XUeMac::prevPrintTime_reEvaluation = Simulator::Now ().GetSeconds();
-     //Check if the UE is within the central 2km
-     std::ofstream ReEvalFile;
-     ReEvalFile.open (m_outputPath + "ReEvaluationsLog.txt", std::ios_base::app);
-     for (std::vector<UeReEvaluationInfo>::iterator reEvalIT = NrV2XUeMac::ReEvaluationStats.begin(); reEvalIT != NrV2XUeMac::ReEvaluationStats.end(); reEvalIT++)
-     {
-       ReEvalFile << (int) reEvalIT->freshGrant << "," << reEvalIT->nodeId << "," << reEvalIT->time << "," << reEvalIT->packetID  << "," << reEvalIT->checkedTxIndex << "," << reEvalIT->ReEvalSF.frameNo+1 << "," << reEvalIT->ReEvalSF.subframeNo+1 << "," << reEvalIT->LastReEvalSF.frameNo << "," 
-       << reEvalIT->LastReEvalSF.subframeNo  << "," << reEvalIT->CheckCSR << "," << reEvalIT->CheckSF.frameNo+1 << "," << reEvalIT->CheckSF.subframeNo+1 << "," << (int) reEvalIT->reSelection << std::endl;
-     }
-     ReEvalFile.close();
-
-  /*   std::ofstream ReEvalFileEXT;
-     ReEvalFileEXT.open (m_outputPath + "ReEvaluationsLog_EXT.txt", std::ios_base::app);
-     for (std::vector<UeReEvaluationInfo>::iterator reEvalIT = NrV2XUeMac::ReEvaluationStats.begin(); reEvalIT != NrV2XUeMac::ReEvaluationStats.end(); reEvalIT++)
-     {
-       if (reEvalIT->freshGrant)
-         ReEvalFileEXT << "Fresh grant, ";
-       else
-         ReEvalFileEXT << "Non-fresh grant, "; 
-       ReEvalFileEXT << "UE " << reEvalIT->nodeId << ", Re-evaluation now: " << reEvalIT->time << ", packet " << reEvalIT->packetID << " @ tx index " << reEvalIT->checkedTxIndex << " at SF(" << reEvalIT->ReEvalSF.frameNo+1 << "," << reEvalIT->ReEvalSF.subframeNo+1 << "). Last re-evaluation at SF(" 
-       << reEvalIT->LastReEvalSF.frameNo  << "," << reEvalIT->LastReEvalSF.subframeNo  << "). Checking CSR index " << reEvalIT->CheckCSR << " at SF(" << reEvalIT->CheckSF.frameNo+1 << "," << reEvalIT->CheckSF.subframeNo+1 << "):";
-       if (reEvalIT->reSelection)
-         ReEvalFileEXT << " CHANGE!" << std::endl;
-       else
-         ReEvalFileEXT << " don't change!" << std::endl;
-     }
-     ReEvalFileEXT.close();  */
-
-     NrV2XUeMac::ReEvaluationStats.clear();
-   }
+   FlushReEvaluationStats (false);
 
 //  std::cin.get();
 }
@@ -4126,6 +4391,7 @@ NrV2XUeMac::V2XChangeResources (V2XSidelinkGrant OriginalGrant, std::vector<uint
    tmp.nCSRinitial = nCSRinitial;
    tmp.pdb = pdb;
 
+   tmp.priority = m_txPriority;
    NrV2XUeMac::SelectedGrants.push_back(tmp);
 
    return V2XGrant;

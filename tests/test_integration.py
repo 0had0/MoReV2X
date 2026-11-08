@@ -17,7 +17,7 @@ TIMEOUT = 600
 SSPS_COLUMNS = ["node", "time", "frame", "subframe", "iterations", "rsrpThreshold", "nCSRfinal",
                 "nCSRpastTx", "nCSRinitial", "Cresel", "RRI", "RRIslots", "PDB", "txPerTB",
                 "grantIndex", "trigger", "nextFrame", "nextSubframe", "rbStart", "rbLen",
-                "reEvalEnabled", "reEvalFrame", "reEvalSubframe"]
+                "reEvalEnabled", "reEvalFrame", "reEvalSubframe", "priority"]
 RX_COLUMNS = ["rxTime", "packetID", "distance", "txID", "rxID", "decoded", "lossType", "txIndex",
               "trigger", "announced", "latency"]
 TX_COLUMNS = ["node", "packet", "genTime", "txIndex", "txTime", "frame", "subframe", "Cresel", "RRI",
@@ -166,7 +166,8 @@ class PerNodeSchedulers(ScratchRuns):
         folder, _ = self.highway("--Vehicles=4", "--simTime=1", "--Periodic", "--mcs=13",
                                  "--SchedulerMap=2-3:dynamic+retx+rsrp=-110")
         applied = pd.read_csv(os.path.join(folder, "SchedulerMap.txt"), header=None,
-                              names=["node", "dynamic", "retx", "reeval", "rsrp", "mcs", "pkeep", "adaptive"]).set_index("node")
+                              names=["node", "dynamic", "retx", "reeval", "rsrp", "mcs", "pkeep", "adaptive",
+                                     "priority", "preemption"]).set_index("node")
         self.assertEqual(applied.dynamic.tolist(), [0, 1, 1, 0])
         self.assertEqual(applied.retx.tolist(), [0, 1, 1, 0])
         self.assertEqual(applied.rsrp.tolist(), [-128, -110, -110, -128])
@@ -264,6 +265,42 @@ class SumoMobility(ScratchRuns):
         self.assertLess((merged.x_x - merged.x_y).abs().max(), 0.5)
         tx = read(folder, "phyDebugShort.txt", TX_COLUMNS)
         self.assertGreater(len(tx), 0)
+
+
+class PriorityAndPreemption(ScratchRuns):
+    REEVAL_COLUMNS = ["freshGrant", "node", "time", "packet", "checkedTxIndex", "frame", "subframe", "lastFrame",
+                      "lastSubframe", "csr", "checkFrame", "checkSubframe", "reselected", "kind", "priority"]
+
+    def run_mixed(self, *extra):
+        # 40 UEs at 20 ms RRI on a 10 MHz channel: busy enough for reservations to overlap
+        return self.highway("--Vehicles=40", "--simTime=6", "--Periodic", "--mcs=13", "--PDB=20", "--ReEvaluation",
+                            "--SchedulerMap=1-20:prio=2+preempt;21-40:prio=6+preempt", *extra)
+
+    def test_only_lower_priorities_are_preempted(self):
+        folder, _ = self.run_mixed()
+        log = read(folder, "ReEvaluationsLog.txt", self.REEVAL_COLUMNS)
+        checks = log[log.kind == 1]
+        self.assertGreater(len(checks), 0, "announced resources are checked")
+        preempted = checks[checks.reselected == 1]
+        self.assertGreater(len(preempted), 0, "some priority 6 resources are taken by priority 2")
+        self.assertEqual(set(preempted.priority), {6})
+        self.assertTrue((preempted.node > 20).all())
+        ssps = read(folder, "SSPSlog.txt", SSPS_COLUMNS)
+        self.assertIn(5, set(ssps.trigger), "pre-emptions appear as trigger 5")
+        self.assertEqual(set(ssps[ssps.trigger == 5].priority), {6})
+
+    def test_priority_reaches_the_sci_and_the_log(self):
+        folder, _ = self.highway("--Vehicles=10", "--simTime=3", "--Periodic", "--mcs=13",
+                                 "--SchedulerMap=1-5:prio=3;6-10:prio=7")
+        ssps = read(folder, "SSPSlog.txt", SSPS_COLUMNS)
+        self.assertEqual(set(ssps[ssps.node <= 5].priority), {3})
+        self.assertEqual(set(ssps[ssps.node > 5].priority), {7})
+
+    def test_no_preemption_without_the_flag(self):
+        folder, _ = self.highway("--Vehicles=20", "--simTime=4", "--Periodic", "--mcs=13", "--PDB=20",
+                                 "--ReEvaluation", "--SchedulerMap=1-10:prio=2;11-20:prio=6")
+        log = read(folder, "ReEvaluationsLog.txt", self.REEVAL_COLUMNS)
+        self.assertEqual((log.kind == 1).sum(), 0)
 
 
 class UnservablePackets(ScratchRuns):

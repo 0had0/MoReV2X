@@ -6,6 +6,7 @@
 #include "ns3/boolean.h"
 #include "ns3/double.h"
 #include "ns3/nist-sl-pool.h"
+#include "ns3/string.h"
 #include "ns3/nr-v2x-amc.h"
 #include "ns3/nr-v2x-adaptive-reservation.h"
 #include "ns3/nr-v2x-ue-mac.h"
@@ -240,6 +241,89 @@ private:
   }
 };
 
+
+// sl-ThresRSRP-pi-pj and sl-xPercentage, TS 38.214 8.1.4 steps 5 and 6
+class PriorityThresholdTestCase : public TestCase
+{
+public:
+  PriorityThresholdTestCase () : TestCase ("Priority-aware RSRP thresholds and X%") {}
+private:
+  virtual void DoRun (void)
+  {
+    Ptr<NrV2XUeMac> mac = CreateObject<NrV2XUeMac> ();
+    NS_TEST_ASSERT_MSG_EQ_TOL (mac->GetPriorityThresholdOffset (2, 6), 0.0, 1e-12, "off by default");
+    NS_TEST_ASSERT_MSG_EQ_TOL (mac->GetSizeThreshold (3), 0.2, 1e-12, "X% is 20 % by default");
+
+    mac->SetAttribute ("PriorityAwareSensing", BooleanValue (true));
+    NS_TEST_ASSERT_MSG_EQ_TOL (mac->GetPriorityThresholdOffset (6, 2), 12.0, 1e-12,
+                               "a lower priority reservation is 4 x 3 dB easier to reuse");
+    NS_TEST_ASSERT_MSG_EQ_TOL (mac->GetPriorityThresholdOffset (2, 6), -12.0, 1e-12,
+                               "a higher priority reservation is excluded 12 dB earlier");
+    NS_TEST_ASSERT_MSG_EQ_TOL (mac->GetPriorityThresholdOffset (0, 6), 0.0, 1e-12, "no priority in the SCI");
+
+    std::ostringstream table;
+    for (int i = 0; i < 64; ++i)
+      {
+        table << (i ? "," : "") << -130 + i;
+      }
+    mac->SetAttribute ("ThresRsrpList", StringValue (table.str ()));
+    // entry (pi-1)*8 + (pj-1) = 1*8 + 4 = 12, threshold -118, base -128
+    NS_TEST_ASSERT_MSG_EQ_TOL (mac->GetPriorityThresholdOffset (2, 5), 10.0, 1e-12, "table entry relative to the base");
+
+    mac->SetAttribute ("SizeThresholdList", StringValue ("0.2,0.2,0.35,0.35,0.5,0.5,0.5,0.5"));
+    NS_TEST_ASSERT_MSG_EQ_TOL (mac->GetSizeThreshold (5), 0.5, 1e-12, "X% of priority 5");
+    NS_TEST_ASSERT_MSG_EQ_TOL (mac->GetSizeThreshold (0), 0.2, 1e-12, "no priority keeps 20 %");
+  }
+};
+
+// TS 38.321 5.22.1.1: an announced resource is pre-empted only by a higher priority reservation
+class PreemptionTestCase : public TestCase
+{
+public:
+  PreemptionTestCase () : TestCase ("Pre-emption needs a higher priority above the threshold") {}
+private:
+  bool Check (Ptr<NrV2XUeMac> mac, uint8_t txPriority, uint16_t csr, uint32_t checkFrame, double threshold)
+  {
+    SidelinkCommResourcePool::SubframeInfo now, check;
+    now.frameNo = 12;
+    now.subframeNo = 0;
+    check.frameNo = checkFrame;
+    check.subframeNo = 2;
+    uint32_t by = 0;
+    return mac->IsPreempted (now, check, csr, 1, 100.0, threshold, txPriority, &by);
+  }
+  virtual void DoRun (void)
+  {
+    Ptr<NrV2XUeMac> mac = CreateObject<NrV2XUeMac> ();
+    mac->SetAttribute ("NumerologyIndex", UintegerValue (0));
+    mac->SetAttribute ("SlotDuration", DoubleValue (1.0));
+    mac->SetAttribute ("SubchannelSize", UintegerValue (10));
+    // UE 7, priority 2, RSRP -90 dBm, received at SF(10,3) (1-based), RRI 100 ms on subchannel 0.
+    // 0-based it was received at (9,2) and reserves (19,2)
+    SidelinkCommResourcePool::SubframeInfo received, reserved;
+    received.frameNo = 10;
+    received.subframeNo = 3;
+    reserved.frameNo = 20;
+    reserved.subframeNo = 3;
+    mac->GetNistLteUePhySapUser ()->ReportPsschRsrpReservation (Seconds (0.1), 0, 10, -90.0, received, reserved,
+                                                                5, 7, 100.0, false, false, 2);
+    NS_TEST_ASSERT_MSG_EQ (Check (mac, 5, 0, 19, -110.0), true, "priority 2 pre-empts priority 5");
+    NS_TEST_ASSERT_MSG_EQ (Check (mac, 2, 0, 19, -110.0), false, "same priority does not pre-empt");
+    NS_TEST_ASSERT_MSG_EQ (Check (mac, 1, 0, 19, -110.0), false, "nothing pre-empts priority 1");
+    NS_TEST_ASSERT_MSG_EQ (Check (mac, 5, 0, 19, -80.0), false, "below the threshold");
+    NS_TEST_ASSERT_MSG_EQ (Check (mac, 5, 1, 19, -110.0), false, "another subchannel");
+    NS_TEST_ASSERT_MSG_EQ (Check (mac, 5, 0, 18, -110.0), false, "another slot");
+    mac->SetAttribute ("PreemptionPriority", UintegerValue (2));
+    NS_TEST_ASSERT_MSG_EQ (Check (mac, 5, 0, 19, -110.0), false, "sl-PreemptionEnable pl2 needs priority 1");
+    mac->SetAttribute ("PreemptionPriority", UintegerValue (3));
+    NS_TEST_ASSERT_MSG_EQ (Check (mac, 5, 0, 19, -110.0), true, "pl3 lets priority 2 pre-empt");
+    // With priority-aware thresholds the pair (2,5) is 9 dB stricter: -90 dBm clears -110 - 9
+    mac->SetAttribute ("PriorityAwareSensing", BooleanValue (true));
+    NS_TEST_ASSERT_MSG_EQ (Check (mac, 5, 0, 19, -85.0), true, "-90 > -85 - 9");
+    NS_TEST_ASSERT_MSG_EQ (Check (mac, 5, 0, 19, -75.0), false, "-90 < -75 - 9");
+  }
+};
+
 class NrV2XMode2TestSuite : public TestSuite
 {
 public:
@@ -255,6 +339,8 @@ public:
     AddTestCase (new AdaptiveReservationTestCase, TestCase::QUICK);
     AddTestCase (new LegacyHackDefaultTestCase, TestCase::QUICK);
     AddTestCase (new MaxTbSizeTestCase, TestCase::QUICK);
+    AddTestCase (new PriorityThresholdTestCase, TestCase::QUICK);
+    AddTestCase (new PreemptionTestCase, TestCase::QUICK);
   }
 };
 
