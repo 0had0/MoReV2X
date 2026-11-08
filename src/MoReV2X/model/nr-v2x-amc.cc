@@ -315,6 +315,56 @@ NrV2XAmc::GetSlSubchAndTbSizeFromMcs (uint32_t PDUsize, int mcs, uint16_t subcha
 }
 
 
+uint32_t
+NrV2XAmc::GetSlMaxTbSize (int mcs, uint16_t subchannelSize, uint16_t channelBW_RBs)
+{
+  NS_LOG_FUNCTION (this);
+  uint16_t rbs = std::floor (channelBW_RBs / subchannelSize) * subchannelSize;
+  uint16_t Nre_DMRS = PSSCH_DMRStimePattern.find (m_DMRSpattern)->second;
+  uint16_t actual_psschSymbols = m_psschSymbols - 2;
+  uint16_t Nre_pssch_PRB = m_PRBsubcarriers * (actual_psschSymbols - m_psfchSymbols) - m_overheadSymbols - Nre_DMRS;
+  uint16_t Nre_pscch = m_firstStageSciSymbols * m_PRBsubcarriers * subchannelSize;
+  uint16_t SecondStageSCI = GetSecondStageSCI (TargetCodeRateForMcs_1[mcs] / 1024, 2);
+  int32_t Nre_pssch = (int32_t) (Nre_pssch_PRB * rbs) - Nre_pscch - SecondStageSCI;
+  if (Nre_pssch <= 0)
+    {
+      return 0;
+    }
+  // Same TBS rule as GetSlSubchAndTbSizeFromMcs (TS 38.214 5.1.3.2), for all subchannels at once
+  double R = TargetCodeRateForMcs_1[mcs] / 1024;
+  uint32_t TBStemp = std::round (Nre_pssch * R * ModulationOrderForMcs_1[mcs]);
+  uint32_t TBS = 0;
+  if (TBStemp <= 3824)
+    {
+      uint16_t n = std::max (3, (int) std::floor (std::log2 (TBStemp)) - 6);
+      uint32_t Ninfo_prime = std::max (24, (int) (std::pow (2, n) * std::floor (TBStemp / std::pow (2, n))));
+      for (uint16_t i = 0; i < sizeof (TransportBlockSizeTable) / sizeof (TransportBlockSizeTable[0]); i++)
+        {
+          if (TransportBlockSizeTable[i] >= Ninfo_prime)
+            {
+              TBS = TransportBlockSizeTable[i];
+              break;
+            }
+        }
+    }
+  else
+    {
+      uint16_t n = std::floor (std::log2 (TBStemp - 24)) - 5;
+      uint32_t Ninfo_prime = std::max (3840, (int) (std::pow (2, n) * std::round ((TBStemp - 24) / std::pow (2, n))));
+      if (Ninfo_prime > 8424)
+        {
+          uint16_t C = std::ceil ((Ninfo_prime + 24) / 8424);
+          TBS = (8 * C * std::ceil ((Ninfo_prime + 24) / (8 * C))) - 24;
+        }
+      else
+        {
+          TBS = (8 * std::ceil ((Ninfo_prime + 24) / 8)) - 24;
+        }
+    }
+  return TBS / 8;
+}
+
+
 /*Implemented according to TS 38.212 and R1-2005796*/
 
 int

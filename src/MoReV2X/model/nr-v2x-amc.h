@@ -59,6 +59,12 @@ public:
    */
   /*static*/ int GetSlSubchAndTbSizeFromMcs (uint32_t PDUsize, int mcs, uint16_t subchannelSize, uint16_t Nsubchannels, uint16_t *TBlen_subChannels, uint16_t *TBlen_RBs);
 
+  /**
+   * Largest TB in bytes that one slot carries with every subchannel of the channel.
+   * Unlike GetSlSubchAndTbSizeFromMcs it never asserts, so it can test whether a PDU fits.
+   */
+  uint32_t GetSlMaxTbSize (int mcs, uint16_t subchannelSize, uint16_t channelBW_RBs);
+
 private:
  
   int GetSecondStageSCI (double R, uint16_t Qm);
