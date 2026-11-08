@@ -303,6 +303,27 @@ class PriorityAndPreemption(ScratchRuns):
         self.assertEqual((log.kind == 1).sum(), 0)
 
 
+class TransmissionsPerTb(ScratchRuns):
+    def test_three_transmissions_within_32_slots(self):
+        folder, _ = self.highway("--Vehicles=20", "--simTime=4", "--Periodic", "--mcs=13", "--ReEvaluation",
+                                 "--SchedulerMap=1-10:tx=3;11-20:tx=2")
+        ssps = read(folder, "SSPSlog.txt", SSPS_COLUMNS)
+        self.assertEqual(set(ssps[ssps.node <= 10].txPerTB), {3})
+        self.assertEqual(set(ssps[ssps.node > 10].txPerTB), {2})
+        tx = read(folder, "phyDebugShort.txt", TX_COLUMNS)
+        copies = tx[tx.node <= 10].groupby("packet")
+        self.assertEqual(copies.txIndex.max().max(), 3)
+        self.assertTrue((copies.txTime.nunique() == copies.size()).all(), "one slot per transmission")
+        span = copies.txTime.max() - copies.txTime.min()
+        self.assertLess(span.max(), 0.032 + 1e-9, "the transmissions of a TB fit in 32 slots")
+
+    def test_extra_copies_are_decoded(self):
+        folder, _ = self.highway("--Vehicles=20", "--simTime=4", "--Periodic", "--mcs=13", "--SchedulerMap=1-20:tx=3")
+        rx = read(folder, "ReceivedLog.txt", RX_COLUMNS)
+        self.assertEqual(set(rx.txIndex), {1, 2, 3})
+        self.assertGreater(rx[(rx.txIndex == 3) & (rx.distance < 200)].decoded.mean(), 0.8)
+
+
 class MultipleFlows(ScratchRuns):
     DROP_COLUMNS = ["node", "time", "packet", "genTime", "pdb", "bytes", "reason"]
 

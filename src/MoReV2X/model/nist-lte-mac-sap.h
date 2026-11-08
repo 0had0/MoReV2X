@@ -108,6 +108,7 @@ public:
     uint16_t V2XReservationSize; /**< the V2X Reservation Size in Bytes */
     uint32_t V2XNodeId; /**< the V2X traffic type code: 0x00 = Periodic, 0x01 = Aperiodic */
     uint8_t V2XPPPP; /**< the V2X ProSe Per-Packet Priority */
+    uint8_t V2XTxPerTb = 0; /**< transmissions of each TB, 0 = the MAC default (EnableReTx) */
     uint32_t V2XPdb;  /**< the V2X Packet Delay Budget */
     uint32_t V2XPrsvp;  /**< the V2X Packet Reservation Period --> only used for Mode 4 */
     uint32_t V2XMcs;  /**< the MCS to be used for transmission --> only used for Mode 4 */

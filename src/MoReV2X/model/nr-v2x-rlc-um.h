@@ -67,6 +67,7 @@ private:
 
 private:
   uint32_t m_maxTxBufferSize;
+  bool m_keepOnlyNewestSdu; //!< a new SDU replaces the ones still waiting, logged in MacDropLog.txt
   uint32_t m_txBufferSize;
   std::vector < Ptr<Packet> > m_txBuffer;       // Transmission buffer
   std::map <uint16_t, Ptr<Packet> > m_rxBuffer; // Reception buffer

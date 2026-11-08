@@ -782,11 +782,14 @@ NrV2XUePhy::UnimoreReceivedRssi (double rssi, std::vector <int> rbMap, uint16_t 
         std::map<SidelinkCommResourcePool::SubframeInfo, RSSImeas> tmp_elem;
         tmp_elem.insert (std::pair<SidelinkCommResourcePool::SubframeInfo, RSSImeas> (SF, tmp));
         m_receivedRSSI.insert (std::pair<uint16_t,std::map<SidelinkCommResourcePool::SubframeInfo, RSSImeas> > (subChannelIndex,tmp_elem));    
+        m_receivedRSSIorder[subChannelIndex].push_back (SF);
       }
       else
       {
         NS_LOG_DEBUG("Subchannel found");
-        std::map<SidelinkCommResourcePool::SubframeInfo, RSSImeas> tmp_elem = m_receivedRSSI[subChannelIndex];
+        // A reference: copying the whole history of the subchannel for every reception was the
+        // hottest spot of dense runs
+        std::map<SidelinkCommResourcePool::SubframeInfo, RSSImeas> &tmp_elem = m_receivedRSSI[subChannelIndex];
         std::map<SidelinkCommResourcePool::SubframeInfo, RSSImeas>::iterator tmpIT = tmp_elem.find(SF);
         if (tmpIT != tmp_elem.end())
         {
@@ -796,7 +799,6 @@ NrV2XUePhy::UnimoreReceivedRssi (double rssi, std::vector <int> rbMap, uint16_t 
           //if (meanRSSI > tmpIT->second.m_rssi)
           tmpIT->second.m_rssi = 10*std::log10(RSSIsum); 
           tmpIT->second.m_IDs.push_back(ID);
-          m_receivedRSSI[subChannelIndex] = tmp_elem;
         }  
         else
         {
@@ -805,7 +807,7 @@ NrV2XUePhy::UnimoreReceivedRssi (double rssi, std::vector <int> rbMap, uint16_t 
           tmp.m_IDs.push_back(ID);
           tmp.m_rssi = 10*std::log10(meanRSSI);
           tmp_elem.insert (std::pair<SidelinkCommResourcePool::SubframeInfo, RSSImeas> (SF, tmp));
-          m_receivedRSSI[subChannelIndex] = tmp_elem;
+          m_receivedRSSIorder[subChannelIndex].push_back (SF);
         }   
       }
     }
@@ -813,27 +815,17 @@ NrV2XUePhy::UnimoreReceivedRssi (double rssi, std::vector <int> rbMap, uint16_t 
 
 
   NS_LOG_DEBUG("Cleaning the new RSSI list");
-  for (RSSIit = m_receivedRSSI.begin(); RSSIit != m_receivedRSSI.end(); RSSIit++)
+  // Entries are created in time order, so the ones older than 100 ms are at the front of each
+  // queue: stop at the first recent one instead of scanning every entry for every reception
+  for (std::map <uint16_t, std::deque<SidelinkCommResourcePool::SubframeInfo> >::iterator orderIt = m_receivedRSSIorder.begin ();
+       orderIt != m_receivedRSSIorder.end (); ++orderIt)
   {
-  //  NS_LOG_DEBUG("CSR index " << RSSIit->first);
-    std::map<SidelinkCommResourcePool::SubframeInfo, RSSImeas>::iterator subframeIt;
-    for (subframeIt = RSSIit->second.begin(); subframeIt != RSSIit->second.end(); /*no increment*/)
+    std::map<SidelinkCommResourcePool::SubframeInfo, RSSImeas> &entries = m_receivedRSSI[orderIt->first];
+    while (!orderIt->second.empty ()
+           && SubtractFrames (SF.frameNo, orderIt->second.front ().frameNo, SF.subframeNo, orderIt->second.front ().subframeNo) > 100/m_slotDuration)
     {
-      if (SubtractFrames( SF.frameNo, subframeIt->first.frameNo, SF.subframeNo, subframeIt->first.subframeNo) > 100/m_slotDuration)
-      {
-     //   std::cout << "CSR index " << RSSIit->first << " SF(" << std::to_string(subframeIt->first.frameNo) << "," << std::to_string(subframeIt->first.subframeNo) << ") with IDs: ";
-     //   for (std::vector<uint16_t>::iterator vectIT = subframeIt->second.m_IDs.begin(); vectIT != subframeIt->second.m_IDs.end(); vectIT++)
-     //   {
-     //     std::cout << (*vectIT) << ", ";
-     //   }
-     //   std::cout << "and RSSI " << subframeIt->second.m_rssi << " -> Erasing (too old)" << std::endl;
-        subframeIt = RSSIit->second.erase(subframeIt);  
-      }
-      else
-      {
-        subframeIt++;
-      }
-    //  NS_LOG_DEBUG("SF(" << subframeIt->first.frameNo << "," << subframeIt->first.subframeNo << ")");
+      entries.erase (orderIt->second.front ());
+      orderIt->second.pop_front ();
     }
   }
 
@@ -889,7 +881,7 @@ NrV2XUePhy::UnimoreReceivedRssi (double rssi, std::vector <int> rbMap, uint16_t 
     CBRfile.open (m_outputPath + "CBR_OutputFile.txt", std::ios_base::app);
     for (std::vector<CBRInfo>::iterator CBRit = NrV2XUePhy::CBRValues.begin(); CBRit != NrV2XUePhy::CBRValues.end(); CBRit++)
     {
-      CBRfile << CBRit->nodeId << "," << CBRit->CBRvalue << "," << CBRit->time << std::endl;
+      CBRfile << CBRit->nodeId << "," << CBRit->CBRvalue << "," << CBRit->time << "\n";
     }
     CBRfile.close();
     NrV2XUePhy::CBRValues.clear();
@@ -1425,7 +1417,7 @@ NrV2XUePhy::SubframeIndication (uint32_t frameNo, uint32_t subframeNo)
                 for (std::vector<TxPacketInfo>::iterator txIT = NrV2XUePhy::txPackets.begin(); txIT != NrV2XUePhy::txPackets.end(); txIT++)
                 {
                   phyDebugShort << txIT->nodeId << "," <<  txIT->packetId << "," << txIT->genTime << "," << txIT->txIndex << "," << txIT->txTime << "," << txIT->txFrame.frameNo << "," << txIT->txFrame.subframeNo << "," << txIT->Cresel << "," << txIT->RRI
-                  << "," << txIT->psschRbStart << "," << txIT->psschRbLen << "," << txIT->psschRbLenTb << "," << txIT->pscchRbStart << "," << txIT->pscchRbLen << std::endl;
+                  << "," << txIT->psschRbStart << "," << txIT->psschRbLen << "," << txIT->psschRbLenTb << "," << txIT->pscchRbStart << "," << txIT->pscchRbLen << "\n";
                 }
                 phyDebugShort.close ();
 

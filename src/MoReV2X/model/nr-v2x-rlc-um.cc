@@ -21,6 +21,7 @@
  */
 
 #include "ns3/simulator.h"
+#include "ns3/boolean.h"
 #include "ns3/log.h"
 
 #include "ns3/nist-lte-rlc-header.h"
@@ -43,6 +44,7 @@ NS_OBJECT_ENSURE_REGISTERED (NistLteRlcUm);
 
 NistLteRlcUm::NistLteRlcUm ()
   : m_maxTxBufferSize (10 * 1024),
+    m_keepOnlyNewestSdu (false),
     m_txBufferSize (0),
     m_sequenceNumber (0),
     m_vrUr (0),
@@ -71,6 +73,13 @@ NistLteRlcUm::GetTypeId (void)
                    UintegerValue (10 * 1024),
                    MakeUintegerAccessor (&NistLteRlcUm::m_maxTxBufferSize),
                    MakeUintegerChecker<uint32_t> ())
+    .AddAttribute ("KeepOnlyNewestSdu",
+                   "A new SDU replaces the SDUs still waiting in the buffer, like an access layer that "
+                   "only keeps the freshest message of a flow. MoReV2X sends one SDU per TB, so without "
+                   "this two waiting SDUs travel together or are dropped as oversize",
+                   BooleanValue (false),
+                   MakeBooleanAccessor (&NistLteRlcUm::m_keepOnlyNewestSdu),
+                   MakeBooleanChecker ())
     .AddAttribute ("OutputPath",
                    "Specifiy the output path where to store the results",
                    StringValue ("results/sidelink/"),
@@ -99,6 +108,21 @@ NistLteRlcUm::DoTransmitPdcpPdu (Ptr<Packet> p)
 {
   NS_LOG_FUNCTION (this << m_rnti << (uint32_t) m_lcid << p->GetSize ());
 
+  if (m_keepOnlyNewestSdu && !m_txBuffer.empty ())
+    {
+      std::ofstream dropLog ((m_outputPath + "MacDropLog.txt").c_str (), std::ios_base::app);
+      for (std::vector<Ptr<Packet> >::iterator old = m_txBuffer.begin (); old != m_txBuffer.end (); ++old)
+        {
+          NrV2XTag oldTag;
+          if ((*old)->FindFirstMatchingByteTag (oldTag))
+            {
+              dropLog << m_rnti << "," << Simulator::Now ().GetSeconds () << "," << oldTag.GetPacketId () << ","
+                      << oldTag.GetGenTime () << "," << oldTag.GetPdb () << "," << (*old)->GetSize () << ",replaced" << std::endl;
+            }
+        }
+      m_txBuffer.clear ();
+      m_txBufferSize = 0;
+    }
   if (m_txBufferSize + p->GetSize () <= m_maxTxBufferSize)
     {
       /** Store arrival time */
@@ -1230,6 +1254,7 @@ NistLteRlcUm::DoReportBufferNistStatus (void)
             r.V2XMessageType = v2xTag.GetMessageType ();
             r.V2XTrafficType = v2xTag.GetTrafficType ();
             r.V2XPPPP = v2xTag.GetPPPP ();
+            r.V2XTxPerTb = v2xTag.GetTxPerTb ();
             r.V2XPdb = v2xTag.GetPdb ();
             r.V2XPrsvp = v2xTag.GetPrsvp ();
             r.V2XReselectionCounter = v2xTag.GetReselectionCounter();
