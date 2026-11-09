@@ -267,8 +267,10 @@ private:
         table << (i ? "," : "") << -130 + i;
       }
     mac->SetAttribute ("ThresRsrpList", StringValue (table.str ()));
-    // entry (pi-1)*8 + (pj-1) = 1*8 + 4 = 12, threshold -118, base -128
-    NS_TEST_ASSERT_MSG_EQ_TOL (mac->GetPriorityThresholdOffset (2, 5), 10.0, 1e-12, "table entry relative to the base");
+    // TS 38.214 field i = p_i + (p_j - 1) * 8 = 2 + 4 * 8 = 34 (1-based), entry 33: -97 dBm, base -128
+    NS_TEST_ASSERT_MSG_EQ_TOL (mac->GetPriorityThresholdOffset (2, 5), 31.0, 1e-12, "table entry relative to the base");
+    // and the transposed pair p_i = 5, p_j = 2: field 5 + 8 = 13, entry 12, -118 dBm
+    NS_TEST_ASSERT_MSG_EQ_TOL (mac->GetPriorityThresholdOffset (5, 2), 10.0, 1e-12, "the pair is ordered (received, own)");
 
     mac->SetAttribute ("SizeThresholdList", StringValue ("0.2,0.2,0.35,0.35,0.5,0.5,0.5,0.5"));
     NS_TEST_ASSERT_MSG_EQ_TOL (mac->GetSizeThreshold (5), 0.5, 1e-12, "X% of priority 5");
@@ -313,6 +315,16 @@ private:
     NS_TEST_ASSERT_MSG_EQ (Check (mac, 5, 0, 19, -80.0), false, "below the threshold");
     NS_TEST_ASSERT_MSG_EQ (Check (mac, 5, 1, 19, -110.0), false, "another subchannel");
     NS_TEST_ASSERT_MSG_EQ (Check (mac, 5, 0, 18, -110.0), false, "another slot");
+    // Step 6 (c) also counts the next periods of the resource: at (14,2) with a 50 ms RRI, its
+    // second period falls on the reserved (19,2)
+    SidelinkCommResourcePool::SubframeInfo now, own;
+    now.frameNo = 12;
+    now.subframeNo = 0;
+    own.frameNo = 14;
+    own.subframeNo = 2;
+    uint32_t by = 0;
+    NS_TEST_ASSERT_MSG_EQ (mac->IsPreempted (now, own, 0, 1, 100.0, -110.0, 5, &by, 50.0, 1), false, "first period is free");
+    NS_TEST_ASSERT_MSG_EQ (mac->IsPreempted (now, own, 0, 1, 100.0, -110.0, 5, &by, 50.0, 2), true, "the second is taken");
     mac->SetAttribute ("PreemptionPriority", UintegerValue (2));
     NS_TEST_ASSERT_MSG_EQ (Check (mac, 5, 0, 19, -110.0), false, "sl-PreemptionEnable pl2 needs priority 1");
     mac->SetAttribute ("PreemptionPriority", UintegerValue (3));

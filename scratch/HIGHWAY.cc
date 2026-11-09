@@ -72,6 +72,7 @@ std::vector<uint8_t> VehicleTrafficType;
 
 std::vector<uint16_t> Pattern_index;
 std::vector<uint8_t> NodePriority; // SL priority of the packets of each node, 0 = none
+std::vector<uint8_t> NodeTxPerTb;  // transmissions per TB of each node, 0 = --ReTx decides
 
 // --ExtraFlow: a second traffic class on every UE, on its own multicast group and logical channel
 struct ExtraFlowSpec
@@ -173,7 +174,13 @@ void ApplySchedulerMap (const std::string &schedulerMap, NodeContainer VehicleUE
       Ptr<NrV2XUeMac> mac = (*L)->GetDevice (0)->GetObject<NistLteUeNetDevice> ()->GetMac ();
       for (std::vector<std::string>::iterator option = options.begin (); option != options.end (); ++option)
       {
-        if (option->compare (0, 5, "prio=") == 0)
+        if (option->compare (0, 3, "tx=") == 0)
+        {
+          const unsigned long count = std::stoul (option->substr (3));
+          NS_ABORT_MSG_IF (count < 1 || count > 3, "tx= takes 1 to 3 transmissions per TB");
+          NodeTxPerTb[(*L)->GetId () - 1] = count;
+        }
+        else if (option->compare (0, 5, "prio=") == 0)
         {
           const unsigned long priority = std::stoul (option->substr (5));
           NS_ABORT_MSG_IF (priority < 1 || priority > 8, "prio= takes an SL priority from 1 to 8");
@@ -309,6 +316,7 @@ UdpClient::Send (void)
     v2xTag.SetMessageType (0x00); //CAM, @LUCA just want to work with CAMs
     v2xTag.SetTrafficType (VehicleTrafficType[nodeId-1]); // Coexistence of periodic and aperiodic traffic
     v2xTag.SetPPPP (NodePriority[nodeId-1]); // 0 unless --SchedulerMap gives a prio=
+    v2xTag.SetTxPerTb (NodeTxPerTb[nodeId-1]); // 0 unless --SchedulerMap gives a tx=
     v2xTag.SetPrsvp ((double) (1000 * m_interval.GetSeconds ())); // the required PHY reservation interval. For periodic traffic is ok
     v2xTag.SetNodeId ((uint32_t) nodeId); // Encapsulate the nodeId. It will be used at MAC layer
     v2xTag.SetReselectionCounter((uint16_t)10000); //safe value for standard-compliant Cresel assignment
@@ -822,13 +830,17 @@ main (int argc, char *argv[])
   cmd.AddValue ("sumoSync", "Seconds between two SUMO position updates", MobilityConfig.syncInterval);
   cmd.AddValue ("sumoWarmup", "SUMO seconds simulated before ns-3 starts, to reach steady traffic", MobilityConfig.warmup);
   cmd.AddValue ("sumoOptions", "Extra options for the SUMO command line", MobilityConfig.extraOptions);
-  cmd.AddValue ("SchedulerMap", "Per-node scheduler, e.g. 1-10:sps+prio=2;11-20:dynamic+retx+rsrp=-110+preempt", SchedulerMap);
+  cmd.AddValue ("SchedulerMap", "Per-node scheduler, e.g. 1-10:sps+prio=2+tx=3;11-20:dynamic+retx+rsrp=-110+preempt", SchedulerMap);
   cmd.AddValue ("UdpFiles", "Write the application layer logs TxFile.txt and RxFile.txt", enableUDPfiles);
   cmd.AddValue ("PosLog", "Write vehicle positions to posFile.txt every 100 ms", PositionLog);
   cmd.AddValue ("AdaptiveRRI", "Adapt the RRI and the keep probability to the sensed load", AdaptiveRRI);
   cmd.AddValue ("pkeep", "Probability of keeping the resources when Cresel expires", Pkeep);
   std::string extraFlowOption = "";
   cmd.AddValue ("ExtraFlow", "Second class on every UE: <period ms>:<PDB ms>:<payload B>:<priority>:<sps|dynamic>", extraFlowOption);
+  bool urbanChannel = false;
+  std::string buildingsFile = "";
+  cmd.AddValue ("UrbanChannel", "TR 37.885 urban channel: UMi pathloss, NLOS behind --Buildings", urbanChannel);
+  cmd.AddValue ("Buildings", "Building footprints, one per row: id,x0 y0 x1 y1 ...", buildingsFile);
   cmd.AddValue ("LegacyEvenUeOneShot", "Force Cresel=1 on even UEs, as upstream MoReV2X v4.1 did", LegacyEvenUeOneShot);
 
 
@@ -1221,7 +1233,9 @@ main (int argc, char *argv[])
   Config::SetDefault ("ns3::NrV2XPropagationLossModel::Frequency", DoubleValue (5.9));
   Config::SetDefault ("ns3::NrV2XPropagationLossModel::Sigma", DoubleValue (3.0));
   Config::SetDefault ("ns3::NrV2XPropagationLossModel::SigmaNLOSv", DoubleValue (4.0));
-  Config::SetDefault ("ns3::NrV2XPropagationLossModel::DecorrDistance", DoubleValue (25.0));
+  Config::SetDefault ("ns3::NrV2XPropagationLossModel::DecorrDistance", DoubleValue (urbanChannel ? 10.0 : 25.0));
+  Config::SetDefault ("ns3::NrV2XPropagationLossModel::Urban", BooleanValue (urbanChannel));
+  Config::SetDefault ("ns3::NrV2XPropagationLossModel::BuildingsFile", StringValue (buildingsFile));
 
   lteHelper->SetPathlossModelType ("ns3::NrV2XPropagationLossModel"); 
 
@@ -1591,6 +1605,7 @@ main (int argc, char *argv[])
    // ueDevs.Add (ueSendersDevs);
 
   NodePriority.assign (ueResponders.GetN (), 0);
+  NodeTxPerTb.assign (ueResponders.GetN (), 0);
   ApplySchedulerMap (SchedulerMap, ueResponders, outputPath);
 
 

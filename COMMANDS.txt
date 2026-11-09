@@ -70,10 +70,12 @@ Each key is a HIGHWAY option, and a list is swept. Summary in results/sweeps/<na
 --SchedulerMap="<first>-<last>:<option>+<option>;..."
 
 Options: sps dynamic retx noretx reeval noreeval allslots umh rsrp=<dBm> mcs=<index> pkeep=<p>
-         adaptive noadaptive prio=<1..8> preempt prioaware
+         adaptive noadaptive prio=<1..8> preempt prioaware tx=<1..3>
   prio=      SL priority of the node's packets, sent in the SCI. 1 is the highest. Without it: 0, none.
   preempt    pre-emption check at T3 before every announced resource (TS 38.321 5.22.1.1)
   prioaware  RSRP threshold per priority pair and X% per priority (TS 38.214 8.1.4)
+  tx=        transmissions per TB of the node's packets: 1 + blind retransmissions, up to 3, all
+             within 32 slots. Overrides --ReTx for that node
 UE node ids start at 1. Node 0 is the PGW.
 
 ./waf --run "HIGHWAY --Vehicles=20 --simTime=10 --Periodic --mcs=13 --SchedulerMap=1-10:sps;11-20:dynamic+retx"
@@ -99,6 +101,16 @@ flow leaves out the slots the other flows of the UE reserved. HIGHWAY adds one c
 ./waf --run "HIGHWAY --Vehicles=30 --simTime=4 --Periodic --mcs=13 --SchedulerMap=1-30:prio=5 --ExtraFlow=20:20:150:2:sps"
 
 
+URBAN CHANNEL (TR 37.885 urban grid)
+--UrbanChannel=true             UMi street canyon LOS pathloss, LOS or NLOSv by the urban LOS
+                                probability, shadowing decorrelated over 10 m
+--Buildings=<file.csv>          footprints, one per row: id,x0 y0 x1 y1 ... A link whose straight
+                                line crosses one is NLOS: 36.85 + 30 log10(d) + 18.9 log10(fc)
+Attributes: ns3::NrV2XPropagationLossModel::Urban, ::BuildingsFile, ::SigmaNLOS (4 dB).
+The highway model stays the default and ignores buildings.
+./waf --run "HIGHWAY --Vehicles=40 --simTime=3 --Periodic --mcs=13 --UrbanChannel=true --Buildings=buildings.csv"
+
+
 6. SUMO MOBILITY
 ----------------
 Live coupling over TraCI, ns-3 starts SUMO itself:
@@ -119,11 +131,64 @@ netconvert --node-files highway.nod.xml --edge-files highway.edg.xml -o highway.
 cd -
 
 
+QOS SCENARIOS (multi-class traffic, PQI 21/22/23/89/90/91, numerology 2, 20 MHz, MCS 14)
+-------------------------------------------------------------------------------------------
+Definitions, configuration and launch: docs/notebooks/10_qos_definitions.ipynb
+Results: 11_qos_results.ipynb. Re-evaluation and priorities: 12_reevaluation_priorities.ipynb
+
+Classes:   scenarios/qos/classes.yaml      sizes, rates, PDB, PER, SL priority, SPS or dynamic,
+                                            blind retransmissions (1 for PER 1e-4, 2 for 1e-5)
+Sweeps:    scenarios/qos/sweep_full.yaml    about 8 h on 30 jobs
+           scenarios/qos/sweep_smoke.yaml   every case once, short, about 10 min on 4 jobs
+
+Make a SUMO trace (trace.csv, roles.csv, buildings.csv for urban, meta.json, sumo/):
+tools/qos/make_traces.py highway_platoon --density low --seed 1 --out results/qos/traces/hp
+tools/qos/make_traces.py urban_intersection --density high --seed 2 --out results/qos/traces/ui
+tools/qos/make_traces.py highway_cpm --density 30 --seed 1 --out results/qos/traces/hc
+sumo-gui -c results/qos/traces/ui/sumo/scenario.sumocfg       look at it
+
+One run by hand, then its metrics:
+tools/qos/sweep.py scenarios/qos/sweep_smoke.yaml --dry-run    the runs and their ids
+build/optimized/scratch/QOS --trace=results/qos/traces/hp --flows=<flows.csv> --simTime=10 --ReEvaluation=1 --Preemption=1 --progress=1
+tools/qos/metrics.py results/qos/<run>/ results/qos/traces/hp
+  QOS options: --Urban=1  --Jammer=x,y,dBm,duty,periodMs,startS,stopS  --BurstLoss=roles|..;goodS;badS
+               --PriorityAware=1  --PreemptionPriority=<p>  --Numerology --ChannelBW --SubChannel --mcs
+  The flows CSV is what sweep.py writes to results/qos/<sweep>/flows/.
+
+Smoke check before every long sweep, here or on the host:
+tools/qos/smoke.sh
+
+Sweeps, here:
+tools/qos/sweep.py scenarios/qos/sweep_full.yaml --jobs 8
+tools/qos/sweep.py scenarios/qos/sweep_full.yaml --only scenario=highway_cpm --only policy=off|reeval
+tools/qos/sweep.py results/qos/qos_full/sweep.yaml --summarise --out results/qos/qos_full
+Output: results/qos/<name>/summary/*.csv, per run in runs/<id>/metrics/. Interrupted: run again.
+
+ON THE UBUNTU HOST (32 cores, 128 GB), everything in Docker. Needs git, docker, tmux.
+Step by step, with what to check after each step: docs/REMOTE_SWEEP.md
+cd ~/Documents && git clone git@github.com:0had0/MoReV2X.git MoReV2X-hadih
+cd ~/Documents/MoReV2X-hadih && git checkout feature/qos-evaluation
+tools/qos/remote/launch.sh scenarios/qos/sweep_smoke.yaml 8    builds the image, smoke sweep
+tools/qos/remote/status.sh qos_smoke                            when it says 0 failed:
+tmux kill-session -t qos
+tools/qos/remote/launch.sh                                      full sweep, detached tmux session "qos"
+tools/qos/remote/monitor.sh                                     tmux session "qos-monitor"
+  Ctrl-b d detaches, both keep running after you log out. tmux attach -t qos shows the sweep.
+  docker stop morev2x-qos-qos_full stops it, launch.sh again resumes it.
+Docker without the scripts:
+docker build -t morev2x-qos .
+docker run --rm --user $(id -u):$(id -g) -e HOME=/tmp -v "$PWD/results:/opt/morev2x/results" morev2x-qos tools/qos/smoke.sh
+
+Back on this machine:
+tools/qos/remote/download.sh user@host qos_full                 summaries and per-run metrics
+QOS_SWEEP=qos_full .venv/bin/jupyter lab docs/notebooks/11_qos_results.ipynb
+
+
 7. TESTS
 --------
 tools/gate.sh                   Everything: build, ns-3 suites and examples, scenario tests.
 tools/gate.sh --quick           Skips the ns-3 suites. Does not unlock a commit.
-tools/debug-check.sh            All 27 scheduler, priority and multi-flow modes with NS_ASSERT on, about 10 minutes the
+tools/debug-check.sh            All 29 scheduler, priority, multi-flow and retransmission modes with NS_ASSERT on, about 10 minutes the
                                 first time. Run it after changing the MAC: the optimized
                                 build ignores assertions, this one found 2 real bugs.
 ./test.py --nowaf               All ns-3 suites and examples.

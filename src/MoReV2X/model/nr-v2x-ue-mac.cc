@@ -42,6 +42,7 @@
 #include <bitset>
 #include <cmath>
 #include <algorithm>
+#include <unordered_set>
 
 #include <iostream>
 #include <fstream>
@@ -53,6 +54,10 @@
 namespace ns3 {
 
 NS_LOG_COMPONENT_DEFINE ("NrV2XUeMac");
+
+// Bytes a TB must hold on top of the queue the RLC reports: after NotifyTxOpportunity the MAC
+// checks that the queue is below the TB minus the RLC header, and MoReV2X does not segment
+static const uint32_t RLC_UM_HEADER_BYTES = 2;
 
 NS_OBJECT_ENSURE_REGISTERED (NrV2XUeMac);
 
@@ -499,7 +504,8 @@ NrV2XUeMac::GetTypeId (void)
                                         MakeDoubleAccessor (&NrV2XUeMac::m_priorityThresholdStep),
                                         MakeDoubleChecker<double> ())
                 .AddAttribute ("ThresRsrpList",
-                                        "sl-ThresRSRP-List: 64 comma-separated thresholds in dBm, entry (rxPriority-1)*8 + (txPriority-1). "
+                                        "sl-ThresRSRP-List: 64 comma-separated thresholds in dBm, 0-based entry (txPriority-1)*8 + (rxPriority-1), "
+                                        "that is field p_i + (p_j - 1) * 8 of TS 38.214 8.1.4. "
                                         "Empty: use PriorityThresholdStep",
                                         StringValue (""),
                                         MakeStringAccessor (&NrV2XUeMac::SetThresRsrpList, &NrV2XUeMac::GetThresRsrpList),
@@ -575,6 +581,7 @@ NrV2XUeMac::NrV2XUeMac ()
    m_preemption (false),
    m_preemptionPriority (0),
    m_txPriority (0),
+   m_txPerTb (0),
    m_currentPoolDst (0),
    m_lastSlTxTime (Seconds (-1))
 {
@@ -1682,7 +1689,15 @@ NrV2XUeMac::V2XSelectResources (uint32_t frameNo, uint32_t subframeNo, double pd
      firstSelection.m_SelectionTrigger = V2Xtrigger;
      firstSelection.m_announced = false;
 
-     if (m_EnableReTx)
+     uint16_t txPerTb = TransmissionsPerTb ();
+     if (txPerTb > 2)
+     {
+       // Two blind retransmissions: the general path. One retransmission keeps the code below
+       V2XGrant.m_grantTransmissions = SelectExtraTransmissions (finalL2, firstSelection, firstSelectedSF, txPerTb, currentSF,
+                                                                 nbRb_Pssch, nbRb_Pscch, V2Xtrigger);
+       V2XGrant.m_TxNumber = V2XGrant.m_grantTransmissions.size ();
+     }
+     else if (txPerTb == 2)
      {
 
 /*       NS_LOG_DEBUG ("Re-transmissions enabled! Selecting another SSR");
@@ -1856,7 +1871,7 @@ NrV2XUeMac::V2XSelectResources (uint32_t frameNo, uint32_t subframeNo, double pd
        << selIT->nCSRfinal << "," << selIT->nCSRpastTx << "," << selIT->nCSRinitial << "," << selIT->selGrant.m_Cresel << "," << selIT->selGrant.m_RRI << "," << (int)selIT->selGrant.m_RRI/m_slotDuration << ","
        << selIT->pdb << "," << selIT->selGrant.m_grantTransmissions.size() << "," << grantsIT->first << "," << grantsIT->second.m_SelectionTrigger << "," << grantsIT->second.m_nextReservedFrame << "," 
        << grantsIT->second.m_nextReservedSubframe << "," << grantsIT->second.m_rbStartPssch << "," << grantsIT->second.m_rbLenPssch << "," << grantsIT->second.m_EnableReEvaluation << "," 
-       << grantsIT->second.m_ReEvaluationFrame << "," << grantsIT->second.m_ReEvaluationSubframe << "," << (int) selIT->priority << std::endl;
+       << grantsIT->second.m_ReEvaluationFrame << "," << grantsIT->second.m_ReEvaluationSubframe << "," << (int) selIT->priority << "\n";
        }
      }
      SSPSlog.close();
@@ -1867,7 +1882,7 @@ NrV2XUeMac::V2XSelectResources (uint32_t frameNo, uint32_t subframeNo, double pd
      {
        SSPSlogEXT << "UE " << selIT->nodeId << ": at time " << selIT->time << ", SF(" << selIT->selFrame.frameNo+1 << "," <<  selIT->selFrame.subframeNo+1 << "), Number of iterations: " << selIT->iterations << ", PSSCH Threshold = " 
        << selIT->RSRPthresh << " dBm, final L1 size = " << selIT->nCSRfinal << ", partial L1 size = " << selIT->nCSRpastTx << ", total CSRs: " << selIT->nCSRinitial << ", Cresel: " << selIT->selGrant.m_Cresel << ", RRI[ms]: " << selIT->selGrant.m_RRI << ", RRI[slots] " 
-       << (int)selIT->selGrant.m_RRI/m_slotDuration << ", PDB = " << selIT->pdb << " ms, number of transmissions " << selIT->selGrant.m_grantTransmissions.size() << std::endl;
+       << (int)selIT->selGrant.m_RRI/m_slotDuration << ", PDB = " << selIT->pdb << " ms, number of transmissions " << selIT->selGrant.m_grantTransmissions.size() << "\n";
        for (std::map<uint16_t, V2XSchedulingInfo>::iterator grantsIT =  selIT->selGrant.m_grantTransmissions.begin(); grantsIT !=  selIT->selGrant.m_grantTransmissions.end(); grantsIT++) 
        { 
          SSPSlogEXT << "--- Index " << grantsIT->first << ": ";
@@ -1882,7 +1897,7 @@ NrV2XUeMac::V2XSelectResources (uint32_t frameNo, uint32_t subframeNo, double pd
          else
            SSPSlogEXT << "Re-evaluation";
          SSPSlogEXT << ", Next SF(" << grantsIT->second.m_nextReservedFrame << "," << grantsIT->second.m_nextReservedSubframe << ") from " << grantsIT->second.m_rbStartPssch << " for " 
-         << grantsIT->second.m_rbLenPssch << " RBs, ReEvaluation enabled ? " << grantsIT->second.m_EnableReEvaluation << " at SF(" << grantsIT->second.m_ReEvaluationFrame << "," << grantsIT->second.m_ReEvaluationSubframe << ")" << std::endl;
+         << grantsIT->second.m_rbLenPssch << " RBs, ReEvaluation enabled ? " << grantsIT->second.m_EnableReEvaluation << " at SF(" << grantsIT->second.m_ReEvaluationFrame << "," << grantsIT->second.m_ReEvaluationSubframe << ")" << "\n";
        }
      }
      SSPSlogEXT.close(); */
@@ -1960,93 +1975,48 @@ V2XSidelinkGrant V2XGrant, double T_2, uint16_t NSubCh,  uint16_t L_SubCh, uint3
 //   if (m_rnti == m_debugNode)
 //   std::cin.get();
 
-   // Create a list of the subframes to be removed from the selection window
+   // Slots made unusable by the UE's own past transmissions (half duplex), projected with every
+   // allowed RRI. A hash set of slot indices (frame*10 + subframe): the candidate checks below
+   // are a lookup each instead of a scan of a list
    std::vector<uint16_t>::iterator RRIit;
-   std::list<SidelinkCommResourcePool::SubframeInfo> rm_pastTx_frames;
+   std::unordered_set<uint32_t> rmPastTx;
    for(RRIit = m_RRIvalues.begin(); RRIit != m_RRIvalues.end(); RRIit++)
    {
      uint16_t RRI_to_slot = *RRIit/m_slotDuration;
-//     NS_LOG_DEBUG("Working with RRI: " << *RRIit << " ms, and " << RRI_to_slot << " slots at SF(" << currentSF.frameNo << ", " << currentSF.subframeNo << ")");
      for (pastTxIt = m_pastTxUnimore.begin (); pastTxIt != m_pastTxUnimore.end (); pastTxIt++)
      {
-     //  NS_LOG_DEBUG("Past transmission at SF(" << pastTxIt->second.frameNo << ", " << pastTxIt->second.subframeNo << ")");
-       uint16_t Q;
-       SidelinkCommResourcePool::SubframeInfo insert_pastTx;
+       uint16_t Q = 1;
        if ((SubtractFrames( currentSF.frameNo, pastTxIt->second.frameNo, currentSF.subframeNo, pastTxIt->second.subframeNo) <= *RRIit) && (*RRIit < (T_2 + 1)) )
        {
-//         Q = std::ceil( (float) (T_2 + 1)/ *RRIit );
          Q = std::ceil( (float) T_2/ *RRIit );
-//         NS_LOG_DEBUG("IF clause, Q= " << Q)  ;
-         for(uint16_t q = 1; q <= Q; q++)
-         {
-           insert_pastTx.subframeNo = (pastTxIt->second.subframeNo + q*RRI_to_slot)%10; // valid subframe index between 0 and 9
-           insert_pastTx.frameNo = (pastTxIt->second.frameNo  + (pastTxIt->second.subframeNo + q*RRI_to_slot) / 10) % 1024;  // valid frame index between 0 and 1023 
-//           NS_LOG_DEBUG("q= " << q << ", q*RRI= " << q*RRI_to_slot << " eliminate frame SF(" << insert_pastTx.frameNo << ", " << insert_pastTx.subframeNo << ")");
-           if ( find(rm_pastTx_frames.begin(), rm_pastTx_frames.end(), insert_pastTx) ==  rm_pastTx_frames.end())
-             rm_pastTx_frames.push_back(insert_pastTx);
-         }
        }
-       else
-       { 
-         Q = 1;
-//         NS_LOG_DEBUG("ELSE clause, Q= " << Q)  ;
-         insert_pastTx.subframeNo = (pastTxIt->second.subframeNo + Q*RRI_to_slot) % 10; // valid subframe index between 0 and 9
-         insert_pastTx.frameNo = (pastTxIt->second.frameNo  + (pastTxIt->second.subframeNo + Q*RRI_to_slot) / 10) % 1024;  // valid frame index between 0 and 1023 
-//         NS_LOG_DEBUG("q=Q= " << Q << ", Q*RRI= " << Q*RRI_to_slot << " eliminate frame SF(" << insert_pastTx.frameNo << ", " << insert_pastTx.subframeNo << ")");
-         if ( find(rm_pastTx_frames.begin(), rm_pastTx_frames.end(), insert_pastTx) ==  rm_pastTx_frames.end())
-           rm_pastTx_frames.push_back(insert_pastTx);
+       for(uint16_t q = 1; q <= Q; q++)
+       {
+         uint32_t subframe = (pastTxIt->second.subframeNo + q*RRI_to_slot)%10; // valid subframe index between 0 and 9
+         uint32_t frame = (pastTxIt->second.frameNo  + (pastTxIt->second.subframeNo + q*RRI_to_slot) / 10) % 1024;  // valid frame index between 0 and 1023
+         rmPastTx.insert (frame * 10 + subframe);
        }
      }
-   
    }
-
- /*  NS_LOG_DEBUG("Print the list of frames to be removed");
-   for(std::list<SidelinkCommResourcePool::SubframeInfo>::iterator rm_pastTxIt = rm_pastTx_frames.begin(); rm_pastTxIt != rm_pastTx_frames.end(); rm_pastTxIt++)
-   {
-     NS_LOG_DEBUG(rm_pastTxIt->frameNo << "," << rm_pastTxIt->subframeNo);
-   }*/
-//   if (m_rnti == m_debugNode)
-//     std::cin.get();
 
    // Now remove the frames, considering my future transmissions as well (reselection counter + RRI)
-   for(std::map<uint16_t,std::list<SidelinkCommResourcePool::SubframeInfo> >::iterator SaIt = Sa_pastTx.begin(); SaIt != Sa_pastTx.end(); SaIt++)
-   { 
-     NS_LOG_DEBUG("CSR index " << SaIt->first);
-     for(std::list<SidelinkCommResourcePool::SubframeInfo>::iterator FrameIT = SaIt->second.begin(); FrameIT != SaIt->second.end(); FrameIT++)
+   {
+     uint16_t RRI_slots = V2XGrant.m_RRI/m_slotDuration;
+     for(std::map<uint16_t,std::list<SidelinkCommResourcePool::SubframeInfo> >::iterator SaIt = Sa_pastTx.begin(); SaIt != Sa_pastTx.end(); SaIt++)
      {
-  //     NS_LOG_DEBUG("Frame " << FrameIT->frameNo << " subframe " << FrameIT->subframeNo << ", Cresel " << V2XGrant.m_Cresel);
-       SidelinkCommResourcePool::SubframeInfo futureTxFrame;
-       uint16_t RRI_slots = V2XGrant.m_RRI/m_slotDuration;
-       for(uint16_t Cresel = 0; Cresel < V2XGrant.m_Cresel; Cresel++)
-//       for(uint16_t Cresel = 0; Cresel <= (V2XGrant.m_Cresel*10-1); Cresel++)
+       for(std::list<SidelinkCommResourcePool::SubframeInfo>::iterator FrameIT = SaIt->second.begin(); FrameIT != SaIt->second.end(); )
        {
-         futureTxFrame.subframeNo = (FrameIT->subframeNo + Cresel*RRI_slots) % 10;  // valid subframe index between 0 and 9
-         futureTxFrame.frameNo = (FrameIT->frameNo + (FrameIT->subframeNo + Cresel*RRI_slots) / 10) % 1024; // valid frame index between 0 and 1023
-         std::list<SidelinkCommResourcePool::SubframeInfo>::iterator rm_pastTxIt;
-       //  NS_LOG_DEBUG("Future Frame " << futureTxFrame.frameNo << " subframe " << futureTxFrame.subframeNo << ", Cresel " << Cresel);
-         rm_pastTxIt = find(rm_pastTx_frames.begin(), rm_pastTx_frames.end(), futureTxFrame);
-         if (rm_pastTxIt != rm_pastTx_frames.end())
+         bool taken = false;
+         for(uint16_t Cresel = 0; Cresel < V2XGrant.m_Cresel && !taken; Cresel++)
          {
-     //    if ( find(rm_pastTx_frames.begin(), rm_pastTx_frames.end(), futureTxFrame) !=  rm_pastTx_frames.end())
-           NS_LOG_DEBUG("Erasing: list SF(" << FrameIT->frameNo << ", " << FrameIT->subframeNo << ") Future Tx SF(" << futureTxFrame.frameNo << ", " << futureTxFrame.subframeNo << ") past tx frame (" << rm_pastTxIt->frameNo << ", " << rm_pastTxIt->subframeNo << ")");
-           FrameIT = SaIt->second.erase(FrameIT);
-           FrameIT--;
-     //      NS_LOG_DEBUG("Current frame (" << FrameIT->frameNo << ", " << FrameIT->subframeNo << ")");
-           break;
+           uint32_t subframe = (FrameIT->subframeNo + Cresel*RRI_slots) % 10;  // valid subframe index between 0 and 9
+           uint32_t frame = (FrameIT->frameNo + (FrameIT->subframeNo + Cresel*RRI_slots) / 10) % 1024; // valid frame index between 0 and 1023
+           taken = rmPastTx.count (frame * 10 + subframe) > 0;
          }
+         FrameIT = taken ? SaIt->second.erase (FrameIT) : std::next (FrameIT);
        }
      }
- //  if (m_rnti == m_debugNode)
- //    std::cin.get();
    }
-
- 
-   // Print the list of CSRs (Sa)
-/*   NS_LOG_DEBUG("Printing the initial list Sa of candidate resources, after removing past transmissions");
-     UnimorePrintCSR(Sa_pastTx);*/
-
-//   if (m_rnti == m_debugNode)
-//   std::cin.get();
 
    uint32_t nCSRtot = 1; //ComputeResidualCSRs (L1)
    uint32_t nCSRresidual = 0;
@@ -2135,187 +2105,81 @@ V2XSidelinkGrant V2XGrant, double T_2, uint16_t NSubCh,  uint16_t L_SubCh, uint3
      {
        IT->second.clear();
      }*/
-     std::map<uint16_t,std::list<SidelinkCommResourcePool::SubframeInfo> > L1_out, L1_out_full;
+     // Slots reserved by others above the threshold, per subchannel, as hash sets of slot indices
+     std::map<uint16_t, std::unordered_set<uint32_t> > L1_out, L1_out_full;
      for (uint16_t subCH_index = 0; subCH_index < NSubCh; subCH_index++)
      {
-       std::list<SidelinkCommResourcePool::SubframeInfo> SFvector;
-       SidelinkCommResourcePool::SubframeInfo fakeSF;
-       fakeSF.subframeNo = 0;
-       fakeSF.frameNo = 0;
-       SFvector.push_back (fakeSF);           
-       L1_out.insert (std::pair<uint16_t,std::list<SidelinkCommResourcePool::SubframeInfo> > (subCH_index,SFvector)); 
-       L1_out_full.insert (std::pair<uint16_t,std::list<SidelinkCommResourcePool::SubframeInfo> > (subCH_index,SFvector)); 
+       L1_out[subCH_index];
+       L1_out_full[subCH_index];
      }
-     for(std::map<uint16_t,std::list<SidelinkCommResourcePool::SubframeInfo> >::iterator IT = L1_out.begin(); IT != L1_out.end(); IT++)
-     {
-       IT->second.clear();
-     }
-     for(std::map<uint16_t,std::list<SidelinkCommResourcePool::SubframeInfo> >::iterator IT = L1_out_full.begin(); IT != L1_out_full.end(); IT++)
-     {
-       IT->second.clear();
-     }
-
-     // Print the list of CSRs (L1)
-   /*  NS_LOG_DEBUG("Printing L1_out (initialized)");
-     UnimorePrintCSR(L1_out);*/
 
      uint16_t Tproc0 = GetTproc0 (m_numerologyIndex);
 
      NS_LOG_DEBUG("Now adding the resources to be removed. The RSRP threshold is " << *psschThresh << " dBm. Only re-txions? " << OnlyReTxions);
      for (sensedIt = m_sensedReservedCSRMap.begin (); sensedIt != m_sensedReservedCSRMap.end (); sensedIt++)
      {
-    //     NS_LOG_DEBUG("CSR index " << sensedIt->first);
        std::map<SidelinkCommResourcePool::SubframeInfo, std::vector<ReservedCSR> >::iterator sensedSFIt; 
        for (sensedSFIt = sensedIt->second.begin(); sensedSFIt != sensedIt->second.end(); sensedSFIt++)
        {
-      //   NS_LOG_DEBUG("Diff: " << SubtractFrames(currentSF.frameNo, sensedSFIt->first.frameNo, currentSF.subframeNo, sensedSFIt->first.subframeNo));
          if (SubtractFrames(currentSF.frameNo, sensedSFIt->first.frameNo, currentSF.subframeNo, sensedSFIt->first.subframeNo) > Tproc0)
          {
            for (std::vector<ReservedCSR>::iterator resIt = sensedSFIt->second.begin(); resIt != sensedSFIt->second.end(); resIt++)
            {
              uint16_t RRI_to_slot = resIt->RRI/m_slotDuration;
-             NS_LOG_DEBUG("Reservation received at SF(" << sensedSFIt->first.frameNo << "," << sensedSFIt->first.subframeNo << ") with RRI = " << resIt->RRI << " ms, RRI [slots] = " <<
-             RRI_to_slot << ", RSRP = " << resIt->psschRsrpDb << ", Cresel = " << resIt->CreselRx << " from UE " << resIt->nodeId << ". Is a ReTx? " << resIt->isReTx << ", for the same TB? " << resIt->isSameTB);
-             uint16_t Q;
-             SidelinkCommResourcePool::SubframeInfo toRemoveSF;
              if (resIt->psschRsrpDb >= *psschThresh + GetPriorityThresholdOffset (resIt->priority, m_txPriority))
              {
+               if (OnlyReTxions && !(resIt->isReTx && resIt->isSameTB))
+               {
+                 continue;
+               }
+               uint16_t Q = 1;
                if ((SubtractFrames( currentSF.frameNo, sensedSFIt->first.frameNo, currentSF.subframeNo, sensedSFIt->first.subframeNo) <= (resIt->RRI /m_slotDuration)) && (resIt->RRI  < T_2) && !(resIt->isReTx))
                {
                  Q = std::ceil( (float) T_2/ resIt->RRI );
-                // NS_LOG_DEBUG("-------IF clause, Q= " << Q)  ;
-                 for(uint16_t q = 1; q <= Q; q++)
-                 {
-                   toRemoveSF.subframeNo = (sensedSFIt->first.subframeNo + q*RRI_to_slot)%10; // valid subframe index between 0 and 9
-                   toRemoveSF.frameNo = (sensedSFIt->first.frameNo  + (sensedSFIt->first.subframeNo + q*RRI_to_slot) / 10) % 1024;  // valid frame index between 0 and 1023 
-//                   NS_LOG_DEBUG("q=" << q << ", q*RRI= " << q*RRI_to_slot << " slots, eliminate frame SF(" << toRemoveSF.frameNo << ", " << toRemoveSF.subframeNo << ")");
-                   if ( find(L1_out[sensedIt->first].begin(), L1_out[sensedIt->first].end(), toRemoveSF) ==  L1_out[sensedIt->first].end()) 
-                   {
-                     if (OnlyReTxions)
-                     {
-                       if (resIt->isReTx && resIt->isSameTB) 
-                       {
-                         NS_LOG_DEBUG("Pushing back for removal");
-                         L1_out[sensedIt->first].push_back(toRemoveSF);
-                       }
-                     }
-                     else
-                     {
-                       NS_LOG_DEBUG("Pushing back for removal");
-                       L1_out[sensedIt->first].push_back(toRemoveSF); 
-                     }
-                   }
-                 }
                }
-               else
+               for(uint16_t q = 1; q <= Q; q++)
                {
-                 Q = 1;
-//                 NS_LOG_DEBUG("-------ELSE clause, Q= " << Q)  ;
-                 toRemoveSF.subframeNo = (sensedSFIt->first.subframeNo + Q*RRI_to_slot)%10; // valid subframe index between 0 and 9
-                 toRemoveSF.frameNo = (sensedSFIt->first.frameNo  + (sensedSFIt->first.subframeNo + Q*RRI_to_slot) / 10) % 1024;  // valid frame index between 0 and 1023
-                 NS_LOG_DEBUG("q=Q= " << Q << ", Q*RRI= " << Q*RRI_to_slot << " slots, eliminate frame SF(" << toRemoveSF.frameNo << ", " << toRemoveSF.subframeNo << ")");
-                 if ( find(L1_out[sensedIt->first].begin(), L1_out[sensedIt->first].end(), toRemoveSF) ==  L1_out[sensedIt->first].end())
-                 {
-                   if (OnlyReTxions)
-                   {
-                     if (resIt->isReTx && resIt->isSameTB) 
-                     {
-                       NS_LOG_DEBUG("Pushing back for removal");
-                       L1_out[sensedIt->first].push_back(toRemoveSF);
-                     }
-                   }
-                   else
-                   {
-                     NS_LOG_DEBUG("Pushing back for removal");
-                     L1_out[sensedIt->first].push_back(toRemoveSF); 
-                   }
-                 }
+                 uint32_t subframe = (sensedSFIt->first.subframeNo + q*RRI_to_slot)%10; // valid subframe index between 0 and 9
+                 uint32_t frame = (sensedSFIt->first.frameNo  + (sensedSFIt->first.subframeNo + q*RRI_to_slot) / 10) % 1024;  // valid frame index between 0 and 1023
+                 L1_out[sensedIt->first].insert (frame * 10 + subframe);
                }
              }
-             else
-              NS_LOG_DEBUG("Reservation received with RSRP level below the threshold");
-           } //end for (std::vector<ReservedCSR>::iterator resIt = sensedSFIt->second.begin(); resIt != sensedSFIt->second.end(); resIt++)
-         }
-         else
-         {
-           NS_LOG_INFO("Reservation received too late");
-         }
-       } //end for (sensedSFIt = sensedIt->second.begin(); sensedSFIt != sensedIt->second.end(); sensedSFIt++)
-
-     } //end for (sensedIt = m_sensedReservedCSRMap.begin (); sensedIt != m_sensedReservedCSRMap.end (); sensedIt++)
-
-//    std::cin.get();
-    /* NS_LOG_DEBUG("Printing L1_out");
-     UnimorePrintCSR(L1_out);*/
-
-     NS_LOG_DEBUG("Extending L1_out. Number of occupied subchannels: " << L_SubCh);
-     L1_out_full = L1_out;
-     for (uint16_t subCH_index = 0; subCH_index < NSubCh; subCH_index++) // Iterating over the CSRs of L1_out
-     {
-      // NS_LOG_DEBUG("Now CSR " << subCH_index);
-       std::vector<uint16_t> extraCSR;
-       for (uint16_t j = 1; j < L_SubCh; j++) // Subtract
-       {
-         if ((subCH_index - j) >= 0)
-         {
-     //      NS_LOG_DEBUG("Subtract " << subCH_index - j);
-           extraCSR.push_back(subCH_index - j);
-         }
-       }
-   //    extraCSR.push_back(subCH_index);
-    /*   for (uint16_t j = 1; j < L_SubCh; j++) // Add
-       {
-         if ((subCH_index + j) < N_CSR_per_SF)
-         {
-           NS_LOG_DEBUG("Add " << subCH_index + j);
-           extraCSR.push_back(subCH_index + j);         
-         }
-       }*/
-       for (std::vector<uint16_t>::iterator extraCSR_it = extraCSR.begin(); extraCSR_it != extraCSR.end(); extraCSR_it++)
-       {
-     //    NS_LOG_DEBUG("Adding frames of CSR " << subCH_index << " to CSR " << *extraCSR_it);
-         std::list<SidelinkCommResourcePool::SubframeInfo> FrameIT_extra = L1_out_full[*extraCSR_it];
-         for(std::list<SidelinkCommResourcePool::SubframeInfo>::iterator FrameIT_subCH = L1_out[subCH_index].begin(); FrameIT_subCH != L1_out[subCH_index].end(); FrameIT_subCH++)
-         {
-      //     NS_LOG_DEBUG("SF(" << FrameIT_subCH->frameNo << "," << FrameIT_subCH->subframeNo << ")");
-           if (std::find(FrameIT_extra.begin(), FrameIT_extra.end(), *FrameIT_subCH) == FrameIT_extra.end())
-             L1_out_full[*extraCSR_it].push_back(*FrameIT_subCH);              
+           }
          }
        }
      }
-   
-   /*  NS_LOG_DEBUG("Printing L1_out_full");
-     UnimorePrintCSR(L1_out_full);*/
 
-  //   if (m_rnti == m_debugNode)
-  //   std::cin.get();
+     // A candidate starting at subchannel c spans c..c+L-1: a reservation on subchannel m also
+     // excludes the candidates c = m-L+1 .. m-1
+     L1_out_full = L1_out;
+     for (uint16_t subCH_index = 0; subCH_index < NSubCh; subCH_index++)
+     {
+       for (uint16_t j = 1; j < L_SubCh; j++)
+       {
+         if ((subCH_index - j) >= 0)
+         {
+           L1_out_full[subCH_index - j].insert (L1_out[subCH_index].begin (), L1_out[subCH_index].end ());
+         }
+       }
+     }
 
      NS_LOG_DEBUG("Now removing");
      // Now remove the frames, considering my future transmissions as well (reselection counter + RRI)
-     for(std::map<uint16_t,std::list<SidelinkCommResourcePool::SubframeInfo> >::iterator L1it = L1.begin(); L1it != L1.end(); L1it++)
-     { 
-       NS_LOG_DEBUG("CSR index " << L1it->first);
-       for(std::list<SidelinkCommResourcePool::SubframeInfo>::iterator FrameIT = L1it->second.begin(); FrameIT != L1it->second.end(); FrameIT++)
-       {
-     //    NS_LOG_DEBUG("Frame " << FrameIT->frameNo << " subframe " << FrameIT->subframeNo << ", Cresel " << V2XGrant.m_Cresel);
-         SidelinkCommResourcePool::SubframeInfo futureTxFrame;
-         uint16_t RRI_slots = V2XGrant.m_RRI/m_slotDuration;
-         for(uint16_t Cresel = 0; Cresel < V2XGrant.m_Cresel; Cresel++)
-  //       for(uint16_t Cresel = 0; Cresel <= (V2XGrant.m_Cresel*10-1); Cresel++)
+     {
+       uint16_t RRI_slots = V2XGrant.m_RRI/m_slotDuration;
+       for(std::map<uint16_t,std::list<SidelinkCommResourcePool::SubframeInfo> >::iterator L1it = L1.begin(); L1it != L1.end(); L1it++)
+       { 
+         const std::unordered_set<uint32_t> &reserved = L1_out_full[L1it->first];
+         for(std::list<SidelinkCommResourcePool::SubframeInfo>::iterator FrameIT = L1it->second.begin(); FrameIT != L1it->second.end(); )
          {
-           futureTxFrame.subframeNo = (FrameIT->subframeNo + Cresel*RRI_slots) % 10;  // valid subframe index between 0 and 9
-           futureTxFrame.frameNo = (FrameIT->frameNo + (FrameIT->subframeNo + Cresel*RRI_slots) / 10) % 1024; // valid frame index between 0 and 1023
-           std::list<SidelinkCommResourcePool::SubframeInfo>::iterator rm_reservedCSRit;
-           rm_reservedCSRit = find(L1_out_full[L1it->first].begin(), L1_out_full[L1it->first].end(), futureTxFrame);
-           if (rm_reservedCSRit != L1_out_full[L1it->first].end())
+           bool taken = false;
+           for(uint16_t Cresel = 0; Cresel < V2XGrant.m_Cresel && !taken && !reserved.empty (); Cresel++)
            {
-     //    if ( find(rm_pastTx_frames.begin(), rm_pastTx_frames.end(), futureTxFrame) !=  rm_pastTx_frames.end())
-             NS_LOG_DEBUG("Erasing: current frame (" << FrameIT->frameNo << ", " << FrameIT->subframeNo << ") Future frame (" << futureTxFrame.frameNo << ", " << futureTxFrame.subframeNo << ") reserved frame (" << rm_reservedCSRit->frameNo << ", " << rm_reservedCSRit->subframeNo << ")");
-             FrameIT = L1it->second.erase(FrameIT);
-             FrameIT--;
-       //      NS_LOG_DEBUG("Current frame (" << FrameIT->frameNo << ", " << FrameIT->subframeNo << ")");
-             break;
+             uint32_t subframe = (FrameIT->subframeNo + Cresel*RRI_slots) % 10;  // valid subframe index between 0 and 9
+             uint32_t frame = (FrameIT->frameNo + (FrameIT->subframeNo + Cresel*RRI_slots) / 10) % 1024; // valid frame index between 0 and 1023
+             taken = reserved.count (frame * 10 + subframe) > 0;
            }
+           FrameIT = taken ? L1it->second.erase (FrameIT) : std::next (FrameIT);
          }
        }
      }
@@ -2392,7 +2256,7 @@ NrV2XUeMac::UnimorePrintSensedCSR (std::map <uint16_t,std::map<SidelinkCommResou
       for (std::vector<ReservedCSR>::iterator resIt = sensedSFIt->second.begin(); resIt != sensedSFIt->second.end(); resIt++)
       {
         sensingDebug << "      SF(" << sensedSFIt->first.frameNo+1 << "," << sensedSFIt->first.subframeNo+1 << "), reception time: " << resIt->reservationTime 
-        << ", RRI = " << resIt->RRI << ", RSRP = " << resIt->psschRsrpDb << ", Cresel = " << resIt->CreselRx << " from UE " << resIt->nodeId << std::endl; 
+        << ", RRI = " << resIt->RRI << ", RSRP = " << resIt->psschRsrpDb << ", Cresel = " << resIt->CreselRx << " from UE " << resIt->nodeId << "\n";
       }
     }
   }
@@ -2601,6 +2465,7 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
 	   }
 	   nodeId = itBsr->second.V2XNodeId;
 	   m_txPriority = itBsr->second.V2XPPPP;
+	   m_txPerTb = itBsr->second.V2XTxPerTb;
          //  NS_LOG_DEBUG("Node ID = " << nodeId);
 
 	   break;
@@ -2674,7 +2539,7 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
          {
            // A packet larger than the whole channel can carry never fits a reservation: every slot would
            // trigger a size reselection and the packet would stay queued for ever. Drop it.
-           if (m_NRamc->GetSlMaxTbSize (m_slGrantMcs, m_nsubCHsize, m_BW_RBs) < (*itBsr).second.txQueueSize)
+           if (m_NRamc->GetSlMaxTbSize (m_slGrantMcs, m_nsubCHsize, m_BW_RBs) < (*itBsr).second.txQueueSize + RLC_UM_HEADER_BYTES)
            {
              DiscardQueuedPacket (itBsr, "oversize");
            }
@@ -2728,14 +2593,19 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
          NS_LOG_DEBUG("Reservation delay (current tx) = " << ReservationDelay << " ms, PDB = " << itBsr->second.V2XPdb << " ms");
 
          double ReTxReservationDelay;
+         ReTxReservationDelay = 0;
          if (poolIt->second.m_currentV2XGrant.m_TxIndex == 1 && poolIt->second.m_currentV2XGrant.m_TxNumber > 1)
-           ReTxReservationDelay = SubtractFrames(poolIt->second.m_currentV2XGrant.m_grantTransmissions[2].m_nextReservedFrame, SFpkt.frameNo, poolIt->second.m_currentV2XGrant.m_grantTransmissions[2].m_nextReservedSubframe, SFpkt.subframeNo)*m_slotDuration; //Expressed in ms
-         else 
-           ReTxReservationDelay = 0;
+         {
+           // the latest retransmission decides, with one retransmission this is index 2 as before
+           for (uint16_t k = 2; k <= poolIt->second.m_currentV2XGrant.m_TxNumber; k++)
+           {
+             ReTxReservationDelay = std::max (ReTxReservationDelay, (double) SubtractFrames(poolIt->second.m_currentV2XGrant.m_grantTransmissions[k].m_nextReservedFrame, SFpkt.frameNo, poolIt->second.m_currentV2XGrant.m_grantTransmissions[k].m_nextReservedSubframe, SFpkt.subframeNo)*m_slotDuration); //Expressed in ms
+           }
+         }
          NS_LOG_DEBUG("Reservation delay (next tx) = " << ReTxReservationDelay << " ms, PDB = " << itBsr->second.V2XPdb << " ms");
 
          uint16_t TBlen_subCH, TBLen_RBs;
-    	 poolIt->second.m_currentV2XGrant.m_tbSize = m_NRamc->GetSlSubchAndTbSizeFromMcs ((*itBsr).second.txQueueSize, poolIt->second.m_currentV2XGrant.m_mcs, m_nsubCHsize, m_BW_RBs, &TBlen_subCH, &TBLen_RBs) / 8;
+    	 poolIt->second.m_currentV2XGrant.m_tbSize = m_NRamc->GetSlSubchAndTbSizeFromMcs ((*itBsr).second.txQueueSize + RLC_UM_HEADER_BYTES, poolIt->second.m_currentV2XGrant.m_mcs, m_nsubCHsize, m_BW_RBs, &TBlen_subCH, &TBLen_RBs) / 8;
          TB_RBs  = TBLen_RBs;
          NS_LOG_DEBUG("Allocated " << poolIt->second.m_currentV2XGrant.m_tbSize << " B, with " <<  (*itBsr).second.txQueueSize << " B in the queue. PSSCH length = " << TBLen_RBs << " RBs, reservation is " << poolIt->second.m_currentV2XGrant.m_grantTransmissions[1].m_rbLenPssch << " RBs");
 
@@ -2923,7 +2793,7 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
 	   (*itBsr).second.alreadyUESelected = true; //FIXME please change the name of this member
            //Compute the TB size
            uint16_t TBlen_subCH, TBLen_RBs;
-    	   poolIt->second.m_currentV2XGrant.m_tbSize = m_NRamc->GetSlSubchAndTbSizeFromMcs ((*itBsr).second.txQueueSize, poolIt->second.m_currentV2XGrant.m_mcs, m_nsubCHsize, m_BW_RBs, &TBlen_subCH, &TBLen_RBs) / 8;
+    	   poolIt->second.m_currentV2XGrant.m_tbSize = m_NRamc->GetSlSubchAndTbSizeFromMcs ((*itBsr).second.txQueueSize + RLC_UM_HEADER_BYTES, poolIt->second.m_currentV2XGrant.m_mcs, m_nsubCHsize, m_BW_RBs, &TBlen_subCH, &TBLen_RBs) / 8;
  	//   poolIt->second.m_currentV2XGrant.m_tbSize = m_amc->GetUlTbSizeFromMcs ((int) poolIt->second.m_currentV2XGrant.m_mcs, (int) poolIt->second.m_currentV2XGrant.m_rbLenPssch) / 8;
            NS_LOG_DEBUG("Allocated " << poolIt->second.m_currentV2XGrant.m_tbSize << " B, with " <<  (*itBsr).second.txQueueSize << " B in the queue. PSSCH length = " << TBLen_RBs << " RBs, reservation is " << poolIt->second.m_currentV2XGrant.m_grantTransmissions[1].m_rbLenPssch << " RBs");
             
@@ -3075,7 +2945,7 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
            std::ofstream dropLog;
            dropLog.open (m_outputPath + "MacDropLog.txt", std::ios_base::app);
            dropLog << m_rnti << "," << Simulator::Now ().GetSeconds () << "," << itBsr->second.V2XPacketID << "," << itBsr->second.V2XGenTime
-                   << "," << itBsr->second.V2XPdb << "," << itBsr->second.txQueueSize << ",intra-ue-conflict" << std::endl;
+                   << "," << itBsr->second.V2XPdb << "," << itBsr->second.txQueueSize << ",intra-ue-conflict" << "\n";
            dropLog.close ();
          }
          NS_LOG_UNCOND("Now: " << Simulator::Now().GetSeconds()*1000 << " ms: Ok, now I should transmit data, Frame no. " << frameNo << ", Subframe no. " << subframeNo);
@@ -3186,7 +3056,7 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
                AvgUSR = -1;
 
              ResLOG << ResIT->first << "," << Simulator::Now ().GetSeconds() << ","  << AvgUSR << "," << ResIT->second.UnutilizedReservations << "," << ResIT->second.Reservations 
-             << "," << ResIT->second.LatencyReselections << "," << ResIT->second.SizeReselections << "," << ResIT->second.CounterReselections << "," << ResIT->second.TotalTransmissions << std::endl;
+             << "," << ResIT->second.LatencyReselections << "," << ResIT->second.SizeReselections << "," << ResIT->second.CounterReselections << "," << ResIT->second.TotalTransmissions << "\n";
 
              ResIT->second.UnutilizedSubchannelsRatio.clear();
              ResIT->second.UnutilizedReservations = 0;
@@ -3403,7 +3273,8 @@ NrV2XUeMac::GetPriorityThresholdOffset (uint8_t rxPriority, uint8_t txPriority) 
   NS_ASSERT_MSG (rxPriority <= 8 && txPriority <= 8, "SL priorities go from 1 to 8");
   if (m_thresRsrpList.size () == 64)
     {
-      return m_thresRsrpList[(rxPriority - 1) * 8 + (txPriority - 1)] - m_rsrpThreshold;
+      // TS 38.214 8.1.4 step 3: field i = p_i + (p_j - 1) * 8 (1-based), p_i received, p_j own
+      return m_thresRsrpList[(txPriority - 1) * 8 + (rxPriority - 1)] - m_rsrpThreshold;
     }
   // A reservation of lower priority (larger value) than the own packet is easier to reuse
   return m_priorityThresholdStep * ((double) rxPriority - (double) txPriority);
@@ -3478,8 +3349,22 @@ NrV2XUeMac::GetSizeThresholdList (void) const
 }
 
 bool
-NrV2XUeMac::IsPreempted (SidelinkCommResourcePool::SubframeInfo currentSF, SidelinkCommResourcePool::SubframeInfo checkSF, uint16_t csrStart, uint16_t L_SubCh, double T_2, double threshold, uint8_t txPriority, uint32_t *preemptingUe)
+NrV2XUeMac::IsPreempted (SidelinkCommResourcePool::SubframeInfo currentSF, SidelinkCommResourcePool::SubframeInfo checkSF, uint16_t csrStart, uint16_t L_SubCh, double T_2, double threshold, uint8_t txPriority, uint32_t *preemptingUe, double rriTx, uint32_t periods)
 {
+  // Step 6 (c): the resource and its next periods, j = 0 .. Cresel - 1, as in Mode2Step1
+  std::vector<SidelinkCommResourcePool::SubframeInfo> ownSlots;
+  uint32_t ownRriSlots = rriTx / m_slotDuration;
+  for (uint32_t j = 0; j < std::max ((uint32_t) 1, periods); ++j)
+    {
+      SidelinkCommResourcePool::SubframeInfo sf;
+      sf.subframeNo = (checkSF.subframeNo + j * ownRriSlots) % 10;
+      sf.frameNo = (checkSF.frameNo + (checkSF.subframeNo + j * ownRriSlots) / 10) % 1024;
+      ownSlots.push_back (sf);
+      if (ownRriSlots == 0)
+        {
+          break;
+        }
+    }
   NS_LOG_FUNCTION (this);
   if (txPriority <= 1)
     {
@@ -3527,7 +3412,7 @@ NrV2XUeMac::IsPreempted (SidelinkCommResourcePool::SubframeInfo currentSF, Sidel
                   SidelinkCommResourcePool::SubframeInfo reserved;
                   reserved.subframeNo = (sfIt->first.subframeNo + q * rriSlots) % 10;
                   reserved.frameNo = (sfIt->first.frameNo + (sfIt->first.subframeNo + q * rriSlots) / 10) % 1024;
-                  if (reserved == checkSF)
+                  if (std::find (ownSlots.begin (), ownSlots.end (), reserved) != ownSlots.end ())
                     {
                       *preemptingUe = res->nodeId;
                       return true;
@@ -3557,13 +3442,6 @@ NrV2XUeMac::CheckPreemption (SidelinkCommResourcePool::SubframeInfo currentSF, s
   uint16_t L_SubCh = (uint32_t) grant.m_grantTransmissions[grant.m_TxIndex].m_rbLenPssch / m_nsubCHsize;
   uint16_t NSubCh = std::floor (m_BW_RBs / m_nsubCHsize);
 
-  // The threshold after the 3 dB steps of the selection procedure that would run now
-  std::map<uint16_t,std::list<SidelinkCommResourcePool::SubframeInfo> > Sa = SelectionWindow (currentSF, (uint32_t)((newPDB-m_slotDuration)/m_slotDuration +1), NSubCh - L_SubCh + 1);
-  uint32_t iterations = 0, nCSR;
-  double threshold = m_rsrpThreshold;
-  Mode2Step1 (Sa, currentSF, grant, newPDB, NSubCh, L_SubCh, &iterations, &threshold, &nCSR, m_UMHvariant);
-  threshold -= 3; // Mode2Step1 steps once more after its last pass
-
   std::vector<uint16_t> toChange, ok;
   for (std::map<uint16_t, V2XSchedulingInfo>::iterator tx = grant.m_grantTransmissions.begin (); tx != grant.m_grantTransmissions.end (); ++tx)
     {
@@ -3575,7 +3453,21 @@ NrV2XUeMac::CheckPreemption (SidelinkCommResourcePool::SubframeInfo currentSF, s
   checkSF.subframeNo = grant.m_grantTransmissions[index].m_nextReservedSubframe - 1;
   uint16_t csrStart = grant.m_grantTransmissions[index].m_rbStartPssch / m_nsubCHsize;
   uint32_t preemptingUe = 0;
-  bool preempted = IsPreempted (currentSF, checkSF, csrStart, L_SubCh, newPDB, threshold, pktParams.V2XPPPP, &preemptingUe);
+  // The threshold that counts is the one after the 3 dB steps of the selection procedure that
+  // would run now, and the steps only raise it. A resource that nothing pre-empts at the starting
+  // threshold is safe at the final one too: run the whole procedure only when the cheap test hits
+  bool preempted = IsPreempted (currentSF, checkSF, csrStart, L_SubCh, newPDB, m_rsrpThreshold, pktParams.V2XPPPP, &preemptingUe,
+                                grant.m_RRI, grant.m_Cresel);
+  if (preempted)
+    {
+      std::map<uint16_t,std::list<SidelinkCommResourcePool::SubframeInfo> > Sa = SelectionWindow (currentSF, (uint32_t)((newPDB-m_slotDuration)/m_slotDuration +1), NSubCh - L_SubCh + 1);
+      uint32_t iterations = 0, nCSR;
+      double threshold = m_rsrpThreshold;
+      Mode2Step1 (Sa, currentSF, grant, newPDB, NSubCh, L_SubCh, &iterations, &threshold, &nCSR, m_UMHvariant);
+      threshold -= 3; // Mode2Step1 steps once more after its last pass
+      preempted = IsPreempted (currentSF, checkSF, csrStart, L_SubCh, newPDB, threshold, pktParams.V2XPPPP, &preemptingUe,
+                               grant.m_RRI, grant.m_Cresel);
+    }
   if (preempted)
     {
       NS_LOG_INFO ("UE " << m_rnti << ": resource at SF(" << checkSF.frameNo << "," << checkSF.subframeNo << ") pre-empted by UE " << preemptingUe);
@@ -3615,7 +3507,7 @@ NrV2XUeMac::FlushReEvaluationStats (bool force)
      for (std::vector<UeReEvaluationInfo>::iterator reEvalIT = NrV2XUeMac::ReEvaluationStats.begin(); reEvalIT != NrV2XUeMac::ReEvaluationStats.end(); reEvalIT++)
      {
        ReEvalFile << (int) reEvalIT->freshGrant << "," << reEvalIT->nodeId << "," << reEvalIT->time << "," << reEvalIT->packetID  << "," << reEvalIT->checkedTxIndex << "," << reEvalIT->ReEvalSF.frameNo+1 << "," << reEvalIT->ReEvalSF.subframeNo+1 << "," << reEvalIT->LastReEvalSF.frameNo << "," 
-       << reEvalIT->LastReEvalSF.subframeNo  << "," << reEvalIT->CheckCSR << "," << reEvalIT->CheckSF.frameNo+1 << "," << reEvalIT->CheckSF.subframeNo+1 << "," << (int) reEvalIT->reSelection << "," << reEvalIT->reSelectionType << "," << (int) reEvalIT->priority << std::endl;
+       << reEvalIT->LastReEvalSF.subframeNo  << "," << reEvalIT->CheckCSR << "," << reEvalIT->CheckSF.frameNo+1 << "," << reEvalIT->CheckSF.subframeNo+1 << "," << (int) reEvalIT->reSelection << "," << reEvalIT->reSelectionType << "," << (int) reEvalIT->priority << "\n";
      }
      ReEvalFile.close();
 
@@ -3638,6 +3530,104 @@ NrV2XUeMac::FlushReEvaluationStats (bool force)
 
      NrV2XUeMac::ReEvaluationStats.clear();
    }
+}
+
+uint16_t
+NrV2XUeMac::TransmissionsPerTb (void) const
+{
+  if (m_txPerTb > 0)
+    {
+      return m_txPerTb;
+    }
+  return m_EnableReTx ? 2 : 1;
+}
+
+void
+NrV2XUeMac::SetAnnouncements (std::map<uint16_t, V2XSchedulingInfo> &transmissions, uint16_t fromIndex)
+{
+  for (std::map<uint16_t, V2XSchedulingInfo>::iterator t = transmissions.begin (); t != transmissions.end (); ++t)
+    {
+      if (t->first < fromIndex || t->second.m_announced)
+        {
+          continue;
+        }
+      if (t->first == 1)
+        {
+          t->second.m_EnableReEvaluation = true;
+          continue;
+        }
+      const V2XSchedulingInfo &previous = transmissions[t->first - 1];
+      SidelinkCommResourcePool::SubframeInfo a, b;
+      a.frameNo = previous.m_nextReservedFrame;
+      a.subframeNo = previous.m_nextReservedSubframe;
+      b.frameNo = t->second.m_nextReservedFrame;
+      b.subframeNo = t->second.m_nextReservedSubframe;
+      // the SCI of the previous transmission announces this one when it is less than 32 slots later
+      t->second.m_EnableReEvaluation = EvaluateSlotsDifference (a, b, m_maxPDB/m_slotDuration) >= 32;
+    }
+}
+
+std::map<uint16_t, NrV2XUeMac::V2XSchedulingInfo>
+NrV2XUeMac::SelectExtraTransmissions (const std::vector<CandidateCSRl2> &candidates, const V2XSchedulingInfo &first,
+                                      SidelinkCommResourcePool::SubframeInfo firstSF, uint16_t count,
+                                      SidelinkCommResourcePool::SubframeInfo currentSF, uint16_t nbRbPssch, uint16_t nbRbPscch,
+                                      reselectionTrigger trigger)
+{
+  if (count > 3)
+    {
+      NS_FATAL_ERROR ("At most 3 transmissions per TB (sl-MaxNumPerReserve)");
+    }
+  Ptr<UniformRandomVariable> pick = CreateObject<UniformRandomVariable> ();
+  std::vector<V2XSchedulingInfo> chosen (1, first);
+  std::vector<SidelinkCommResourcePool::SubframeInfo> slots (1, firstSF);
+  for (uint16_t k = 1; k < count; ++k)
+    {
+      std::vector<CandidateCSRl2> near, anywhere;
+      for (std::vector<CandidateCSRl2>::const_iterator c = candidates.begin (); c != candidates.end (); ++c)
+        {
+          if (std::find (slots.begin (), slots.end (), c->subframe) != slots.end ())
+            continue;
+          anywhere.push_back (*c);
+          bool inWindow = true; // within 32 slots of every transmission already chosen
+          for (std::vector<SidelinkCommResourcePool::SubframeInfo>::const_iterator t = slots.begin (); t != slots.end () && inWindow; ++t)
+            inWindow = EvaluateSlotsDifference (*t, c->subframe, m_maxPDB/m_slotDuration) < 32;
+          if (inWindow)
+            near.push_back (*c);
+        }
+      // As with one retransmission: within 32 slots of the first if possible, anywhere otherwise
+      std::vector<CandidateCSRl2> &from = near.empty () ? anywhere : near;
+      if (from.empty ())
+        {
+          NS_LOG_INFO ("UE " << m_rnti << ": no slot left for transmission " << k + 1 << " of the TB");
+          break;
+        }
+      CandidateCSRl2 c = from[pick->GetInteger (0, from.size () - 1)];
+      V2XSchedulingInfo t = first;
+      t.m_rbLenPssch = nbRbPssch;
+      t.m_rbLenPscch = nbRbPscch;
+      t.m_nextReservedSubframe = c.subframe.subframeNo + 1;
+      t.m_nextReservedFrame = c.subframe.frameNo + 1;
+      t.m_rbStartPscch = c.CSRIndex * m_nsubCHsize;
+      t.m_rbStartPssch = c.CSRIndex * m_nsubCHsize;
+      SidelinkCommResourcePool::SubframeInfo reEvaluation = ComputeReEvaluationFrame (t.m_nextReservedFrame, t.m_nextReservedSubframe);
+      t.m_ReEvaluationFrame = reEvaluation.frameNo;
+      t.m_ReEvaluationSubframe = reEvaluation.subframeNo;
+      t.m_SelectionTrigger = trigger;
+      t.m_announced = false;
+      chosen.push_back (t);
+      slots.push_back (c.subframe);
+    }
+  std::sort (chosen.begin (), chosen.end (), [&currentSF] (const V2XSchedulingInfo &a, const V2XSchedulingInfo &b)
+             { return SubtractFrames (a.m_nextReservedFrame - 1, currentSF.frameNo, a.m_nextReservedSubframe - 1, currentSF.subframeNo)
+                      < SubtractFrames (b.m_nextReservedFrame - 1, currentSF.frameNo, b.m_nextReservedSubframe - 1, currentSF.subframeNo); });
+  std::map<uint16_t, V2XSchedulingInfo> transmissions;
+  for (std::size_t k = 0; k < chosen.size (); ++k)
+    {
+      transmissions[k + 1] = chosen[k];
+      transmissions[k + 1].m_EnableReEvaluation = true;
+    }
+  SetAnnouncements (transmissions, 1);
+  return transmissions;
 }
 
 uint8_t
@@ -3689,7 +3679,7 @@ NrV2XUeMac::DiscardQueuedPacket (std::map <SidelinkLcIdentifier, NistLteMacSapPr
   std::ofstream dropLog;
   dropLog.open (m_outputPath + "MacDropLog.txt", std::ios_base::app);
   dropLog << m_rnti << "," << Simulator::Now ().GetSeconds () << "," << itBsr->second.V2XPacketID << "," << itBsr->second.V2XGenTime
-          << "," << itBsr->second.V2XPdb << "," << itBsr->second.txQueueSize << "," << reason << std::endl;
+          << "," << itBsr->second.V2XPdb << "," << itBsr->second.txQueueSize << "," << reason << "\n";
   dropLog.close ();
   uint32_t bytes = itBsr->second.txQueueSize + 10; // room for the RLC header
   // The RLC hands the PDU to DoTransmitPdu, which throws it away while m_discardPdu is set
@@ -4215,7 +4205,82 @@ NrV2XUeMac::V2XChangeResources (V2XSidelinkGrant OriginalGrant, std::vector<uint
    uint16_t secondSelectedCSR;
    SidelinkCommResourcePool::SubframeInfo secondSelectedSF;
 
-   if (GrantsToChangeIndex.size() == OriginalGrant.m_TxNumber)
+   if (OriginalGrant.m_TxNumber > 2)
+   {
+     // Three transmissions: replace the ones to change by candidates within 32 slots of the
+     // transmissions that stay, on slots no other transmission of the TB uses
+     V2XGrant.m_TxIndex = OriginalGrant.m_TxIndex;
+     V2XGrant.m_grantTransmissions = OriginalGrant.m_grantTransmissions;
+     std::vector<SidelinkCommResourcePool::SubframeInfo> used;
+     for (std::map<uint16_t, V2XSchedulingInfo>::iterator t = V2XGrant.m_grantTransmissions.begin (); t != V2XGrant.m_grantTransmissions.end (); ++t)
+     {
+       SidelinkCommResourcePool::SubframeInfo sf;
+       sf.frameNo = t->second.m_nextReservedFrame - 1;
+       sf.subframeNo = t->second.m_nextReservedSubframe - 1;
+       used.push_back (sf);
+     }
+     Ptr<UniformRandomVariable> pick = CreateObject<UniformRandomVariable> ();
+     for (std::vector<uint16_t>::iterator index = GrantsToChangeIndex.begin (); index != GrantsToChangeIndex.end (); ++index)
+     {
+       std::vector<CandidateCSRl2> candidates, anywhere;
+       for (std::vector<CandidateCSRl2>::iterator c = finalL2.begin (); c != finalL2.end (); ++c)
+       {
+         if (std::find (used.begin (), used.end (), c->subframe) != used.end ())
+           continue;
+         anywhere.push_back (*c);
+         bool inWindow = true; // within 32 slots of every other transmission of the TB
+         for (std::map<uint16_t, V2XSchedulingInfo>::iterator other = V2XGrant.m_grantTransmissions.begin (); other != V2XGrant.m_grantTransmissions.end () && inWindow; ++other)
+         {
+           if (other->first == *index)
+             continue;
+           SidelinkCommResourcePool::SubframeInfo sf;
+           sf.frameNo = other->second.m_nextReservedFrame - 1;
+           sf.subframeNo = other->second.m_nextReservedSubframe - 1;
+           inWindow = EvaluateSlotsDifference (sf, c->subframe, m_maxPDB/m_slotDuration) < 32;
+         }
+         if (inWindow)
+           candidates.push_back (*c);
+       }
+       if (candidates.empty ())
+         candidates = anywhere;
+       if (candidates.empty ())
+       {
+         NS_LOG_INFO ("No free slot to move transmission " << *index << ", it keeps its resource");
+         continue;
+       }
+       CandidateCSRl2 chosen = candidates[pick->GetInteger (0, candidates.size () - 1)];
+       V2XSchedulingInfo &t = V2XGrant.m_grantTransmissions[*index];
+       t.m_rbLenPssch = nbRb_Pssch;
+       t.m_rbLenPscch = nbRb_Pscch;
+       t.m_nextReservedFrame = chosen.subframe.frameNo + 1;
+       t.m_nextReservedSubframe = chosen.subframe.subframeNo + 1;
+       t.m_rbStartPscch = chosen.CSRIndex * nsubCHsize;
+       t.m_rbStartPssch = chosen.CSRIndex * nsubCHsize;
+       SidelinkCommResourcePool::SubframeInfo reEvaluation = ComputeReEvaluationFrame (t.m_nextReservedFrame, t.m_nextReservedSubframe);
+       t.m_ReEvaluationFrame = reEvaluation.frameNo;
+       t.m_ReEvaluationSubframe = reEvaluation.subframeNo;
+       t.m_SelectionTrigger = V2Xtrigger;
+       t.m_announced = false;
+       t.m_EnableReEvaluation = true;
+       used.push_back (chosen.subframe);
+     }
+     // The transmissions still to come, in time order from the current index
+     std::vector<V2XSchedulingInfo> coming;
+     for (std::map<uint16_t, V2XSchedulingInfo>::iterator t = V2XGrant.m_grantTransmissions.begin (); t != V2XGrant.m_grantTransmissions.end (); ++t)
+     {
+       if (t->first >= V2XGrant.m_TxIndex)
+         coming.push_back (t->second);
+     }
+     std::sort (coming.begin (), coming.end (), [&currentSF] (const V2XSchedulingInfo &a, const V2XSchedulingInfo &b)
+                { return SubtractFrames (a.m_nextReservedFrame - 1, currentSF.frameNo, a.m_nextReservedSubframe - 1, currentSF.subframeNo)
+                         < SubtractFrames (b.m_nextReservedFrame - 1, currentSF.frameNo, b.m_nextReservedSubframe - 1, currentSF.subframeNo); });
+     for (std::size_t k = 0; k < coming.size (); ++k)
+     {
+       V2XGrant.m_grantTransmissions[V2XGrant.m_TxIndex + k] = coming[k];
+     }
+     SetAnnouncements (V2XGrant.m_grantTransmissions, V2XGrant.m_TxIndex);
+   }
+   else if (GrantsToChangeIndex.size() == OriginalGrant.m_TxNumber)
    {
      NS_LOG_INFO("UE " << m_rnti << " scheduled " << V2XGrant.m_TxNumber << " tranmissions: change all the resource(s)");
 
