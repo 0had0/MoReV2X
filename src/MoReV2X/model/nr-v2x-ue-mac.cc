@@ -504,7 +504,8 @@ NrV2XUeMac::GetTypeId (void)
                                         MakeDoubleAccessor (&NrV2XUeMac::m_priorityThresholdStep),
                                         MakeDoubleChecker<double> ())
                 .AddAttribute ("ThresRsrpList",
-                                        "sl-ThresRSRP-List: 64 comma-separated thresholds in dBm, entry (rxPriority-1)*8 + (txPriority-1). "
+                                        "sl-ThresRSRP-List: 64 comma-separated thresholds in dBm, 0-based entry (txPriority-1)*8 + (rxPriority-1), "
+                                        "that is field p_i + (p_j - 1) * 8 of TS 38.214 8.1.4. "
                                         "Empty: use PriorityThresholdStep",
                                         StringValue (""),
                                         MakeStringAccessor (&NrV2XUeMac::SetThresRsrpList, &NrV2XUeMac::GetThresRsrpList),
@@ -3272,7 +3273,8 @@ NrV2XUeMac::GetPriorityThresholdOffset (uint8_t rxPriority, uint8_t txPriority) 
   NS_ASSERT_MSG (rxPriority <= 8 && txPriority <= 8, "SL priorities go from 1 to 8");
   if (m_thresRsrpList.size () == 64)
     {
-      return m_thresRsrpList[(rxPriority - 1) * 8 + (txPriority - 1)] - m_rsrpThreshold;
+      // TS 38.214 8.1.4 step 3: field i = p_i + (p_j - 1) * 8 (1-based), p_i received, p_j own
+      return m_thresRsrpList[(txPriority - 1) * 8 + (rxPriority - 1)] - m_rsrpThreshold;
     }
   // A reservation of lower priority (larger value) than the own packet is easier to reuse
   return m_priorityThresholdStep * ((double) rxPriority - (double) txPriority);
@@ -3347,8 +3349,22 @@ NrV2XUeMac::GetSizeThresholdList (void) const
 }
 
 bool
-NrV2XUeMac::IsPreempted (SidelinkCommResourcePool::SubframeInfo currentSF, SidelinkCommResourcePool::SubframeInfo checkSF, uint16_t csrStart, uint16_t L_SubCh, double T_2, double threshold, uint8_t txPriority, uint32_t *preemptingUe)
+NrV2XUeMac::IsPreempted (SidelinkCommResourcePool::SubframeInfo currentSF, SidelinkCommResourcePool::SubframeInfo checkSF, uint16_t csrStart, uint16_t L_SubCh, double T_2, double threshold, uint8_t txPriority, uint32_t *preemptingUe, double rriTx, uint32_t periods)
 {
+  // Step 6 (c): the resource and its next periods, j = 0 .. Cresel - 1, as in Mode2Step1
+  std::vector<SidelinkCommResourcePool::SubframeInfo> ownSlots;
+  uint32_t ownRriSlots = rriTx / m_slotDuration;
+  for (uint32_t j = 0; j < std::max ((uint32_t) 1, periods); ++j)
+    {
+      SidelinkCommResourcePool::SubframeInfo sf;
+      sf.subframeNo = (checkSF.subframeNo + j * ownRriSlots) % 10;
+      sf.frameNo = (checkSF.frameNo + (checkSF.subframeNo + j * ownRriSlots) / 10) % 1024;
+      ownSlots.push_back (sf);
+      if (ownRriSlots == 0)
+        {
+          break;
+        }
+    }
   NS_LOG_FUNCTION (this);
   if (txPriority <= 1)
     {
@@ -3396,7 +3412,7 @@ NrV2XUeMac::IsPreempted (SidelinkCommResourcePool::SubframeInfo currentSF, Sidel
                   SidelinkCommResourcePool::SubframeInfo reserved;
                   reserved.subframeNo = (sfIt->first.subframeNo + q * rriSlots) % 10;
                   reserved.frameNo = (sfIt->first.frameNo + (sfIt->first.subframeNo + q * rriSlots) / 10) % 1024;
-                  if (reserved == checkSF)
+                  if (std::find (ownSlots.begin (), ownSlots.end (), reserved) != ownSlots.end ())
                     {
                       *preemptingUe = res->nodeId;
                       return true;
@@ -3426,13 +3442,6 @@ NrV2XUeMac::CheckPreemption (SidelinkCommResourcePool::SubframeInfo currentSF, s
   uint16_t L_SubCh = (uint32_t) grant.m_grantTransmissions[grant.m_TxIndex].m_rbLenPssch / m_nsubCHsize;
   uint16_t NSubCh = std::floor (m_BW_RBs / m_nsubCHsize);
 
-  // The threshold after the 3 dB steps of the selection procedure that would run now
-  std::map<uint16_t,std::list<SidelinkCommResourcePool::SubframeInfo> > Sa = SelectionWindow (currentSF, (uint32_t)((newPDB-m_slotDuration)/m_slotDuration +1), NSubCh - L_SubCh + 1);
-  uint32_t iterations = 0, nCSR;
-  double threshold = m_rsrpThreshold;
-  Mode2Step1 (Sa, currentSF, grant, newPDB, NSubCh, L_SubCh, &iterations, &threshold, &nCSR, m_UMHvariant);
-  threshold -= 3; // Mode2Step1 steps once more after its last pass
-
   std::vector<uint16_t> toChange, ok;
   for (std::map<uint16_t, V2XSchedulingInfo>::iterator tx = grant.m_grantTransmissions.begin (); tx != grant.m_grantTransmissions.end (); ++tx)
     {
@@ -3444,7 +3453,21 @@ NrV2XUeMac::CheckPreemption (SidelinkCommResourcePool::SubframeInfo currentSF, s
   checkSF.subframeNo = grant.m_grantTransmissions[index].m_nextReservedSubframe - 1;
   uint16_t csrStart = grant.m_grantTransmissions[index].m_rbStartPssch / m_nsubCHsize;
   uint32_t preemptingUe = 0;
-  bool preempted = IsPreempted (currentSF, checkSF, csrStart, L_SubCh, newPDB, threshold, pktParams.V2XPPPP, &preemptingUe);
+  // The threshold that counts is the one after the 3 dB steps of the selection procedure that
+  // would run now, and the steps only raise it. A resource that nothing pre-empts at the starting
+  // threshold is safe at the final one too: run the whole procedure only when the cheap test hits
+  bool preempted = IsPreempted (currentSF, checkSF, csrStart, L_SubCh, newPDB, m_rsrpThreshold, pktParams.V2XPPPP, &preemptingUe,
+                                grant.m_RRI, grant.m_Cresel);
+  if (preempted)
+    {
+      std::map<uint16_t,std::list<SidelinkCommResourcePool::SubframeInfo> > Sa = SelectionWindow (currentSF, (uint32_t)((newPDB-m_slotDuration)/m_slotDuration +1), NSubCh - L_SubCh + 1);
+      uint32_t iterations = 0, nCSR;
+      double threshold = m_rsrpThreshold;
+      Mode2Step1 (Sa, currentSF, grant, newPDB, NSubCh, L_SubCh, &iterations, &threshold, &nCSR, m_UMHvariant);
+      threshold -= 3; // Mode2Step1 steps once more after its last pass
+      preempted = IsPreempted (currentSF, checkSF, csrStart, L_SubCh, newPDB, threshold, pktParams.V2XPPPP, &preemptingUe,
+                               grant.m_RRI, grant.m_Cresel);
+    }
   if (preempted)
     {
       NS_LOG_INFO ("UE " << m_rnti << ": resource at SF(" << checkSF.frameNo << "," << checkSF.subframeNo << ") pre-empted by UE " << preemptingUe);
