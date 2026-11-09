@@ -158,8 +158,8 @@ concluding:
 * With one seed (smoke sweep) there is no interval and no conclusion.
 * Δ QoS-PDR of a class is bounded by its sensing-visible collision losses under `off`: if those
   are small, nothing can improve much.
-* A class that is dynamic (crash mitigation, emergency trajectory) is never pre-empted and never
-  pre-empts: its own resources are not announced, and it announces nothing.
+* A dynamic class (crash mitigation, emergency trajectory) is pre-empted, and pre-empts, only
+  through its retransmissions: the SCI of a copy announces the next one, nothing further.
 * Pre-emption re-selects with the remaining budget only, which for 20 ms platooning at T3 = 2.25 ms
   before the resource leaves a short window.
 ''')

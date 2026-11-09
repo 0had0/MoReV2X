@@ -740,10 +740,11 @@ public:
   std::string GetSizeThresholdList (void) const;
   /**
    * True when a reservation of higher priority than txPriority, above its RSRP threshold,
-   * covers the slot checkSF on one of the L_SubCh subchannels starting at csrStart.
-   * Same projection of periodic reservations as step 5. currentSF and checkSF are 0-based.
+   * covers the slot checkSF, or one of its next periods - 1 repetitions every rriTx ms, on one of the
+   * L_SubCh subchannels starting at csrStart (TS 38.214 8.1.4 step 6 c, with j < Cresel).
+   * Same projection of periodic reservations as step 6. currentSF and checkSF are 0-based.
    */
-  bool IsPreempted (SidelinkCommResourcePool::SubframeInfo currentSF, SidelinkCommResourcePool::SubframeInfo checkSF, uint16_t csrStart, uint16_t L_SubCh, double T_2, double threshold, uint8_t txPriority, uint32_t *preemptingUe);
+  bool IsPreempted (SidelinkCommResourcePool::SubframeInfo currentSF, SidelinkCommResourcePool::SubframeInfo checkSF, uint16_t csrStart, uint16_t L_SubCh, double T_2, double threshold, uint8_t txPriority, uint32_t *preemptingUe, double rriTx = 0, uint32_t periods = 1);
 
 private:
   /** Pre-emption check at T3 before an announced resource, TS 38.321 5.22.1.1 */

@@ -217,8 +217,8 @@ Three resource selection policies, the same for every class and every UE of a ru
   had it. Announced resources (the next SPS period, an announced retransmission) are not re-evaluated.
 * **Pre-emption** (TS 38.321 §5.22.1.1, new): at T3 before an **announced** resource, the UE checks
   the reservations it sensed. If one of priority $p_{rx}$ lower than its own $p_{tx}$ (more important),
-  with RSRP above $Th(p_{rx}, p_{tx})$ after the 3 dB steps of the procedure, covers the resource,
-  the resource is pre-empted and re-selected. `PreemptionPriority` (sl-PreemptionEnable) can limit
+  with RSRP above $Th(p_{rx}, p_{tx})$ after the 3 dB steps of the procedure, covers the resource
+  or one of its next periods (step 6 c, $j < C_{resel}$), the resource is pre-empted and re-selected. `PreemptionPriority` (sl-PreemptionEnable) can limit
   it to priorities below a level; the sweep uses 0, any higher priority.
 * **Priority-aware sensing** is implemented too (`--PriorityAware`): $Th(p_{rx}, p_{tx}) = Th_0 + 3\,(p_{rx} - p_{tx})$ dB
   or a full 64-entry sl-ThresRSRP-List, and X % per priority. The main sweep keeps one threshold so
@@ -375,9 +375,12 @@ a run are deleted once its metrics are written (`keep_raw: true` keeps them, abo
   of a copy announces the next one only, as MoReV2X always did, not both.
 * Crash mitigation has a 3 ms PDB: 10 candidate slots, and after the 20 % rule of step 6 the
   candidates sometimes lie on two slots only, so a few of its packets get 2 copies instead of 3.
-* Dynamic classes announce nothing ahead, so they cannot pre-empt anyone: in Mode 2 pre-emption
-  needs the higher-priority reservation to be in an SCI first. Only SPS classes (platooning,
-  advanced driving, CAM, CPM, VAM) pre-empt.
+* Pre-emption needs the higher-priority reservation to be in an SCI first. SPS classes announce
+  their next period; dynamic classes only announce their next copy, so crash mitigation and
+  emergency trajectory pre-empt only through their retransmissions, within 32 slots.
+* C_resel: MoReV2X projects reservations over SL_RESOURCE_RESELECTION_COUNTER periods, where
+  TS 38.214 8.1.5 uses 10 times the counter. This is the original MoReV2X model and applies to
+  every policy alike.
 * The jammer raises interference but not the measured CBR.
 * Packets above 637 B payload do not fit one slot and are not segmented; a packet still waiting
   when the next one of its class arrives is replaced.
