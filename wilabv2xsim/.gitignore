@@ -1,0 +1,6 @@
+# rebuilt by setup.sh: upstream clone with patches/ applied, micromamba and Octave
+WiLabV2Xsim/
+.octave/
+.tools/
+# simulation output
+results/

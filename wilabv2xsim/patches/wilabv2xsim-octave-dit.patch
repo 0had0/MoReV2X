@@ -1,0 +1,628 @@
+diff --git a/MainFiles/mainInit.m b/MainFiles/mainInit.m
+index effe15e..933cab1 100644
+--- a/MainFiles/mainInit.m
++++ b/MainFiles/mainInit.m
+@@ -134,7 +134,7 @@ if appParams.nRSUs>0 && ~strcmpi(appParams.RSU_pckTypeString,'CAM')
+ end
+ %timeManagement.generationIntervalDeterministicPart(stationManagement.activeIDsCV2X) = appParams.averageTbeacon;
+ timeManagement.timeNextPacket = Inf * ones(simValues.maxID,1);
+-timeManagement.timeNextPacket(stationManagement.activeIDs) = round(timeManagement.generationIntervalDeterministicPart(stationManagement.activeIDs) .* rand(length(stationManagement.activeIDs),1), 10);
++timeManagement.timeNextPacket(stationManagement.activeIDs) = roundDigits(timeManagement.generationIntervalDeterministicPart(stationManagement.activeIDs) .* rand(length(stationManagement.activeIDs),1), 10);
+ timeManagement.timeLastPacket = -1 * ones(simValues.maxID,1); % needed for the calculation of the CBR
+ 
+ timeManagement.dcc_minInterval = zeros(simValues.maxID,1);
+@@ -226,7 +226,7 @@ dUpdate = zeros(outputValues.Nvehicles,outputValues.Nvehicles);
+ [positionManagement,stationManagement] = computeNeighbors(stationManagement,positionManagement,phyParams);
+ 
+ % The variable 'timeManagement.timeNextPosUpdate' is used for updating the positions
+-timeManagement.timeNextPosUpdate = round(simParams.positionTimeResolution, 10);
++timeManagement.timeNextPosUpdate = roundDigits(simParams.positionTimeResolution, 10);
+ positionManagement.NposUpdates = 1;
+ 
+ % Number of neighbors
+@@ -434,6 +434,18 @@ if ismember(constants.V_STATE_LTE_TXRX, stationManagement.vehicleState(stationMa
+         stationManagement.sensingMatrixCV2X = zeros(ceil(simParams.TsensingPeriod/appParams.allocationPeriod),appParams.Nbeacons,simValues.maxID);
+         stationManagement.knownUsedMatrixCV2X = zeros(appParams.Nbeacons,simValues.maxID);
+ 
++        % DIT: first packet after a reselection, and the reservations announced by DIT
++        % first transmissions (high priority, the only ones that can pre-empt)
++        if simParams.DIT
++            if phyParams.cv2xNumberOfReplicasMax ~= 2
++                error('Error: DIT needs cv2xNumberOfReplicasMax = 2');
++            end
++            stationManagement.ditFirstPacket = true(simValues.maxID,1);
++            stationManagement.knownHighPrioMatrixCV2X = zeros(appParams.Nbeacons,simValues.maxID);
++            stationManagement.ditPreemptionChecks = 0;
++            stationManagement.ditPreemptions = 0;
++        end
++
+         % First random allocation 
+         %[stationManagement.BRid,~] = BRreassignmentRandom(simValues.IDvehicle,stationManagement.BRid,simParams,sinrManagement,appParams);
+         %[stationManagement.BRid(stationManagement.activeIDs,1),~] = BRreassignmentRandom(stationManagement.activeIDs,simParams,timeManagement,sinrManagement,stationManagement,phyParams,appParams);
+diff --git a/MainFiles/mainPositionUpdate.m b/MainFiles/mainPositionUpdate.m
+index f696ac7..57cdf60 100644
+--- a/MainFiles/mainPositionUpdate.m
++++ b/MainFiles/mainPositionUpdate.m
+@@ -8,10 +8,10 @@ if simParams.typeOfScenario ~= constants.SCENARIO_TRACE % Not traffic trace
+ else
+     % Store IDs of vehicles at the previous beacon period and update positions
+     [positionManagement.XvehicleReal,positionManagement.YvehicleReal,stationManagement.activeIDs,indexNewVehicles,indexOldVehicles,indexOldVehiclesToOld,stationManagement.activeIDsExit,positionManagement.v,positionManagement.direction] = updatePositionFile( ...
+-        round(timeManagement.timeNextPosUpdate,2), ...
++        roundDigits(timeManagement.timeNextPosUpdate,2), ...
+         simValues.dataTrace,stationManagement.activeIDs, ...
+         positionManagement.XvehicleReal,positionManagement.YvehicleReal, ...
+-        round(timeManagement.timeNextPosUpdate,2)-simParams.positionTimeResolution,simValues,outParams);
++        roundDigits(timeManagement.timeNextPosUpdate,2)-simParams.positionTimeResolution,simValues,outParams);
+     %% ONLY LTE
+     if sum(stationManagement.vehicleState(stationManagement.activeIDs)==100)>0
+     %if simParams.technology ~= 2 % not only 11p
+@@ -208,7 +208,7 @@ if sum(stationManagement.vehicleState(stationManagement.activeIDs)~=100)>0
+ end
+ 
+ % Generate time values of new vehicles entering the scenario
+-timeManagement.timeNextPacket(stationManagement.activeIDs(indexNewVehicles)) = round(timeManagement.timeNow + appParams.allocationPeriod * rand(1,length(indexNewVehicles)), 10);
++timeManagement.timeNextPacket(stationManagement.activeIDs(indexNewVehicles)) = roundDigits(timeManagement.timeNow + appParams.allocationPeriod * rand(1,length(indexNewVehicles)), 10);
+ if appParams.variabilityGenerationInterval == constants.PACKET_GENERATION_ETSI_CAM
+     timeManagement.generationIntervalDeterministicPart(stationManagement.activeIDs(indexNewVehicles)) = generationPeriodFromSpeed(positionManagement.v(indexNewVehicles),appParams);
+ else
+diff --git a/MainFiles/mainV2X.m b/MainFiles/mainV2X.m
+index be9a261..131de00 100644
+--- a/MainFiles/mainV2X.m
++++ b/MainFiles/mainV2X.m
+@@ -102,7 +102,7 @@ while timeManagement.timeNow < simParams.simulationTime
+     
+     % If the time instant exceeds or is equal to the duration of the
+     % simulation, the simulation is ended
+-    if round(timeManagement.timeNow, 10) >= round(simParams.simulationTime, 10)
++    if roundDigits(timeManagement.timeNow, 10) >= roundDigits(simParams.simulationTime, 10)
+         break;
+     end
+ 
+@@ -134,7 +134,7 @@ while timeManagement.timeNow < simParams.simulationTime
+         % printDebugImage('position update',timeManagement,stationManagement,positionManagement,simParams,simValues);
+ 
+         % Set value of next position update
+-        timeManagement.timeNextPosUpdate = round(timeManagement.timeNextPosUpdate + simParams.positionTimeResolution, 10);
++        timeManagement.timeNextPosUpdate = roundDigits(timeManagement.timeNextPosUpdate + simParams.positionTimeResolution, 10);
+         positionManagement.NposUpdates = positionManagement.NposUpdates+1;
+ 
+     elseif timeEvent == timeManagement.timeNextCBRupdate && ~delayCBRupdate
+@@ -173,7 +173,7 @@ while timeManagement.timeNow < simParams.simulationTime
+                 cbrUpdateCV2X(timeManagement,vehiclesToConsider,stationManagement,positionManagement,sinrManagement,appParams,simParams,phyParams,outParams,outputValues);
+         end
+         
+-        timeManagement.timeNextCBRupdate = round(timeManagement.timeNextCBRupdate + (simParams.cbrSensingInterval/simParams.cbrSensingIntervalDesynchN), 10);
++        timeManagement.timeNextCBRupdate = roundDigits(timeManagement.timeNextCBRupdate + (simParams.cbrSensingInterval/simParams.cbrSensingIntervalDesynchN), 10);
+ 
+     elseif timeEvent == minNextSuperframe && ~delay_minNextSuperframe
+         % only possible in coexistence with mitigation methods
+@@ -212,7 +212,7 @@ while timeManagement.timeNow < simParams.simulationTime
+             % printDebugTx(timeManagement.timeNow,true,-1,stationManagement,positionManagement,sinrManagement,outParams,phyParams);
+ 
+             timeManagement.ttiCV2Xstarts = false;
+-            timeManagement.timeNextCV2X = round(timeManagement.timeNextCV2X + (phyParams.TTI - phyParams.TsfGap), 10);
++            timeManagement.timeNextCV2X = roundDigits(timeManagement.timeNextCV2X + (phyParams.TTI - phyParams.TsfGap), 10);
+ 
+             % DEBUG IMAGE
+             % if isfield(stationManagement,'IDvehicleTXLTE') && ~isempty(stationManagement.transmittingIDsLTE)
+@@ -232,7 +232,7 @@ while timeManagement.timeNow < simParams.simulationTime
+             % end
+ 
+             timeManagement.ttiCV2Xstarts = true;
+-            timeManagement.timeNextCV2X = round(timeManagement.timeNextCV2X + phyParams.TsfGap, 10);
++            timeManagement.timeNextCV2X = roundDigits(timeManagement.timeNextCV2X + phyParams.TsfGap, 10);
+ 
+             % DEBUG IMAGE
+             % if isfield(stationManagement,'IDvehicleTXLTE') && ~isempty(stationManagement.transmittingIDsLTE)
+@@ -284,9 +284,9 @@ while timeManagement.timeNow < simParams.simulationTime
+         % deterministic part and a random part. The random component is active only when enabled.
+         generationInterval = timeManagement.generationIntervalDeterministicPart(idEvent) + exprnd(appParams.generationIntervalAverageRandomPart);
+         if generationInterval >= timeManagement.dcc_minInterval(idEvent)
+-            timeManagement.timeNextPacket(idEvent) = round(timeManagement.timeNow + generationInterval, 10);
++            timeManagement.timeNextPacket(idEvent) = roundDigits(timeManagement.timeNow + generationInterval, 10);
+         else
+-            timeManagement.timeNextPacket(idEvent) = round(timeManagement.timeNow + timeManagement.dcc_minInterval(idEvent), 10);
++            timeManagement.timeNextPacket(idEvent) = roundDigits(timeManagement.timeNow + timeManagement.dcc_minInterval(idEvent), 10);
+             if ismember(idEvent, stationManagement.activeIDs11p)
+                 stationManagement.dcc11pTriggered(stationManagement.vehicleChannel(idEvent)) = true;
+             elseif ismember(idEvent, stationManagement.activeIDsCV2X)
+@@ -356,6 +356,16 @@ end
+ msg = sprintf('%.1f / %.1fs',simParams.simulationTime,simParams.simulationTime);
+ fprintf([reverseStr, msg]);
+ 
++% DIT pre-emption counters
++if isfield(simParams,'DIT') && simParams.DIT && isfield(stationManagement,'ditPreemptionChecks')
++    fprintf('\nDIT pre-emption checks %d, resources pre-empted %d\n', stationManagement.ditPreemptionChecks, stationManagement.ditPreemptions);
++    if ~isempty(outParams.outputFolder)
++        fid = fopen(fullfile(outParams.outputFolder,'dit_preemption.txt'),'w');
++        fprintf(fid,'checks\t%d\npreempted\t%d\n', stationManagement.ditPreemptionChecks, stationManagement.ditPreemptions);
++        fclose(fid);
++    end
++end
++
+ % Number of position updates
+ simValues.snapshots = positionManagement.NposUpdates;
+ 
+diff --git a/MainFilesCV2X/mainCV2XttiEnds.m b/MainFilesCV2X/mainCV2XttiEnds.m
+index d8feaaa..e263917 100644
+--- a/MainFilesCV2X/mainCV2XttiEnds.m
++++ b/MainFilesCV2X/mainCV2XttiEnds.m
+@@ -126,6 +126,17 @@ end
+ % Incremental sum of successfully reassigned and unlocked vehicles
+ outputValues.NreassignCV2X = outputValues.NreassignCV2X + Nreassign;
+ 
++% DIT: once the second transmission of the first packet is sent, the first
++% resource is released and the second one is kept by the SPS
++if simParams.BRAlgorithm == constants.REASSIGN_BR_STD_MODE_4 && simParams.DIT && ~isempty(stationManagement.transmittingIDsCV2X)
++    txIDs = stationManagement.transmittingIDsCV2X(:);
++    done = txIDs(stationManagement.ditFirstPacket(txIDs) & stationManagement.pckTxOccurring(txIDs)==2);
++    stationManagement.BRid(done,1) = stationManagement.BRid(done,2);
++    stationManagement.BRid(done,2) = -1;
++    stationManagement.cv2xNumberOfReplicas(done) = 1;
++    stationManagement.ditFirstPacket(done) = false;
++end
++
+ % Update KPIs for blocked vehicles
+ blockedIndex = find(stationManagement.BRid(stationManagement.transmittingIDsCV2X,1)==-1);
+ Nblocked = length(blockedIndex);
+diff --git a/MainFilesIEEE802.11p/endOfBackoff11p.m b/MainFilesIEEE802.11p/endOfBackoff11p.m
+index ffd6042..958ec6a 100644
+--- a/MainFilesIEEE802.11p/endOfBackoff11p.m
++++ b/MainFilesIEEE802.11p/endOfBackoff11p.m
+@@ -25,11 +25,11 @@ end
+ 
+ if stationManagement.ifBeaconLarge 
+     % If the vehicle transmits a large packet
+-    timeManagement.timeNextTxRx11p(idEvent) = round(timeManagement.timeNow + phyParams.tPck11p, 10);
++    timeManagement.timeNextTxRx11p(idEvent) = roundDigits(timeManagement.timeNow + phyParams.tPck11p, 10);
+ else
+     % if only 11p and variable beacons
+     % If the vehicle transmits a small packet
+-    timeManagement.timeNextTxRx11p(idEvent) = round(timeManagement.timeNow + phyParams.tPck11pSmall, 10);
++    timeManagement.timeNextTxRx11p(idEvent) = roundDigits(timeManagement.timeNow + phyParams.tPck11pSmall, 10);
+ end
+ 
+ % The average SINR is updated
+diff --git a/MainFilesIEEE802.11p/resumeBackoff11p.m b/MainFilesIEEE802.11p/resumeBackoff11p.m
+index e763291..860c2df 100644
+--- a/MainFilesIEEE802.11p/resumeBackoff11p.m
++++ b/MainFilesIEEE802.11p/resumeBackoff11p.m
+@@ -1,6 +1,6 @@
+ function timeNextTxRx = resumeBackoff11p(timeNow,nSlotBackoff,tAifs,tSlot)
+ % The backoff is resumed after having been freezed
+ 
+-timeNextTxRx = round(timeNow + tAifs + nSlotBackoff * tSlot, 10);
++timeNextTxRx = roundDigits(timeNow + tAifs + nSlotBackoff * tSlot, 10);
+ 
+ end
+\ No newline at end of file
+diff --git a/MainFilesIEEE802.11p/startNewBackoff11p.m b/MainFilesIEEE802.11p/startNewBackoff11p.m
+index 4953f53..4467a8e 100644
+--- a/MainFilesIEEE802.11p/startNewBackoff11p.m
++++ b/MainFilesIEEE802.11p/startNewBackoff11p.m
+@@ -2,5 +2,5 @@ function [nSlot, timeNextTxRx] = startNewBackoff11p(timeNow,CW,tAifs,tSlot)
+ % Function that performs backoff in IEEE 802.11p
+ 
+ nSlot = randi(CW);
+-timeNextTxRx = round(timeNow + tAifs + nSlot * tSlot, 10);
++timeNextTxRx = roundDigits(timeNow + tAifs + nSlot * tSlot, 10);
+ 
+diff --git a/MatFilesCoexistence/coexistenceImprovements.m b/MatFilesCoexistence/coexistenceImprovements.m
+index bb00732..edfc856 100644
+--- a/MatFilesCoexistence/coexistenceImprovements.m
++++ b/MatFilesCoexistence/coexistenceImprovements.m
+@@ -50,7 +50,7 @@ if simParams.technology==constants.TECH_COEX_STD_INTERF && simParams.coexMethod=
+         ifInLTEslot = (t-tA) < simParams.coex_endOfLTE;
+         % tNEW is the new time, added only during the LTE slot
+         timeManagement.timeNextPacket(active11p) = ...
+-            round(timeOriginal(active11p) .* ~ifInLTEslot + ...
++            roundDigits(timeOriginal(active11p) .* ~ifInLTEslot + ...
+             (tB + (t-tA) .* TB./TA) .* ifInLTEslot, 10);
+ 
+     elseif simParams.coexA_improvements == 2 || simParams.coexA_improvements == 3
+@@ -59,7 +59,7 @@ if simParams.technology==constants.TECH_COEX_STD_INTERF && simParams.coexMethod=
+         t_x = mod(timeOriginal(active11p)+simParams.coex_guardTimeBefore,simParams.coex_superFlength);
+         t_2 = simParams.coex_superFlength - simParams.coex_knownEndOfLTE(active11p) - simParams.coex_guardTimeBefore - simParams.coex_guardTimeAfter;
+         t_y = t_x .* t_2 ./ simParams.coex_superFlength;
+-        timeManagement.timeNextPacket(active11p) = round(timeOriginal(active11p) - t_x + simParams.coex_knownEndOfLTE(active11p) + simParams.coex_guardTimeBefore + simParams.coex_guardTimeAfter + t_y, 10);       
++        timeManagement.timeNextPacket(active11p) = roundDigits(timeOriginal(active11p) - t_x + simParams.coex_knownEndOfLTE(active11p) + simParams.coex_guardTimeBefore + simParams.coex_guardTimeAfter + t_y, 10);       
+     else
+         error('coexA_improvements not allowed');
+     end
+@@ -67,4 +67,4 @@ end
+ 
+ timeNextPacketAfter = timeManagement.timeNextPacket;
+ 
+-timeManagement.addedToGenerationTime(active11p) = round(timeManagement.addedToGenerationTime(active11p) + timeNextPacketAfter(active11p)-timeNextPacketBefore(active11p), 10);
++timeManagement.addedToGenerationTime(active11p) = roundDigits(timeManagement.addedToGenerationTime(active11p) + timeNextPacketAfter(active11p)-timeNextPacketBefore(active11p), 10);
+diff --git a/MatFilesCoexistence/coexistenceSetNAV_C.m b/MatFilesCoexistence/coexistenceSetNAV_C.m
+index 07d97c0..f61de7d 100644
+--- a/MatFilesCoexistence/coexistenceSetNAV_C.m
++++ b/MatFilesCoexistence/coexistenceSetNAV_C.m
+@@ -42,7 +42,7 @@ timeCV2XtoTTIEnd = simParams.coex_endOfLTE-(thisTinSuperframe * phyParams.TTI);
+ 
+ % In the NAV, a maximum of 32 can be advertised
+ % round( , 10) is added to cope with comparisons including float numbers
+-timeInNAV = round(timeManagement.timeNow+min(timeCV2XtoTTIEnd,simParams.coexC_maxLengthIndicated*phyParams.TTI), 10);
++timeInNAV = roundDigits(timeManagement.timeNow+min(timeCV2XtoTTIEnd,simParams.coexC_maxLengthIndicated*phyParams.TTI), 10);
+ 
+ sinrManagement.coex_virtualInterference(indexOfSensing11p(sensingNodesReceivingNAV)) = inf;
+ sinrManagement.coex_NAVexpiring(indexOfSensing11p(sensingNodesReceivingNAV)) = max(sinrManagement.coex_NAVexpiring(indexOfSensing11p(sensingNodesReceivingNAV)),timeInNAV);
+diff --git a/MatFilesCoexistence/coexistenceStartNewBackoff11pModified.m b/MatFilesCoexistence/coexistenceStartNewBackoff11pModified.m
+index 9f81bfe..b31aa51 100644
+--- a/MatFilesCoexistence/coexistenceStartNewBackoff11pModified.m
++++ b/MatFilesCoexistence/coexistenceStartNewBackoff11pModified.m
+@@ -3,6 +3,6 @@ function [nSlot, timeNextTxRx] = coexistenceStartNewBackoff11pModified(timeNow,C
+ 
+ CWmodified = max(1,CW*floor(10*(superframeLength-subframeIndex)/superframeLength));
+ nSlot = randi(CWmodified);
+-timeNextTxRx = round(timeNow + tAifs + nSlot * tSlot, 10);
++timeNextTxRx = roundDigits(timeNow + tAifs + nSlot * tSlot, 10);
+ 
+ end
+\ No newline at end of file
+diff --git a/MatFilesCoexistence/mainInitCoexistence.m b/MatFilesCoexistence/mainInitCoexistence.m
+index 9dc8f90..edcb839 100644
+--- a/MatFilesCoexistence/mainInitCoexistence.m
++++ b/MatFilesCoexistence/mainInitCoexistence.m
+@@ -57,7 +57,7 @@ elseif simParams.coex_slotManagement == constants.COEX_SLOT_DYNAMIC
+ else
+     error('Something wrong in "mainInitCoexistence"');
+ end
+-simParams.coex_knownEndOfLTE = round(simParams.coex_endOfLTE * ones(simValues.maxID,1), 10);
++simParams.coex_knownEndOfLTE = roundDigits(simParams.coex_endOfLTE * ones(simValues.maxID,1), 10);
+ 
+ %% From v 5.4.11 method C is modified
+ if ismember(simParams.coexMethod, constants.COEX_METHODS_IMPLEMENTED)
+@@ -72,18 +72,18 @@ if ismember(simParams.coexMethod, constants.COEX_METHODS_IMPLEMENTED)
+         %OPTIONALLY - IMPROVEMENT
+         if simParams.coexA_improvements == 1        
+             % Setting "before" and "after" differently
+-            simParams.coex_guardTimeBefore = round(phyParams.tPck11p, 10);
++            simParams.coex_guardTimeBefore = roundDigits(phyParams.tPck11p, 10);
+             simParams.coex_guardTimeAfter = 0;
+             % Setting "before" and "after" differently
+         elseif simParams.coexA_improvements == 2
+-            simParams.coex_guardTimeBefore = round(phyParams.tPck11p + simParams.coexA_desynchError, 10);
++            simParams.coex_guardTimeBefore = roundDigits(phyParams.tPck11p + simParams.coexA_desynchError, 10);
+             simParams.coex_guardTimeAfter = simParams.coexA_desynchError;
+         elseif simParams.coexA_improvements == 3
+-            simParams.coex_guardTimeBefore = round(phyParams.tPck11p, 10);
++            simParams.coex_guardTimeBefore = roundDigits(phyParams.tPck11p, 10);
+             simParams.coex_guardTimeAfter = 0;
+         else
+             % Accurate to tenth decimal place to cope with floating numbers
+-            simParams.coex_guardTimeBefore = round(simParams.coexA_guardTime, 10);
++            simParams.coex_guardTimeBefore = roundDigits(simParams.coexA_guardTime, 10);
+             simParams.coex_guardTimeAfter = simParams.coexA_guardTime;
+         end            
+     elseif simParams.coexMethod==constants.COEX_METHOD_B %B
+@@ -92,7 +92,7 @@ if ismember(simParams.coexMethod, constants.COEX_METHODS_IMPLEMENTED)
+             simParams.coexB_timeBeforeLTEstarts = phyParams.tPck11p;
+         end    
+         % Accurate to tenth decimal place to cope with floating numbers
+-        simParams.coex_guardTimeBefore = round(simParams.coexB_timeBeforeLTEstarts, 10);
++        simParams.coex_guardTimeBefore = roundDigits(simParams.coexB_timeBeforeLTEstarts, 10);
+         simParams.coex_guardTimeAfter = 0;
+ 
+         % The gap at the end of the transmission is reduced to 0 as it is
+@@ -118,7 +118,7 @@ if ismember(simParams.coexMethod, constants.COEX_METHODS_IMPLEMENTED)
+ 
+         if (simParams.coexMethod==6 && simParams.coexF_guardTime) || ...
+            (simParams.coexMethod==3 && simParams.coexC_timegapVariant==2)
+-            simParams.coex_guardTimeBefore = round(phyParams.tPck11p, 10);
++            simParams.coex_guardTimeBefore = roundDigits(phyParams.tPck11p, 10);
+         end
+ 
+         if simParams.coexMethod == constants.COEX_METHOD_F
+@@ -150,7 +150,7 @@ if ismember(simParams.coexMethod, constants.COEX_METHODS_IMPLEMENTED)
+     % Thus the first superframe boundary is at the end of the 11p part
+     timeManagement.coex_timeNextSuperframe(stationManagement.activeIDs) = (simParams.coex_knownEndOfLTE(stationManagement.activeIDs) + simParams.coex_guardTimeAfter) .* ones(length(stationManagement.activeIDs),1);
+     timeManagement.coex_timeNextSuperframe(stationManagement.activeIDs) = timeManagement.coex_timeNextSuperframe(stationManagement.activeIDs) + ( rand(length(stationManagement.activeIDs),1) * (2*simParams.coexA_desynchError) - simParams.coexA_desynchError);
+-    timeManagement.coex_timeNextSuperframe(stationManagement.activeIDs) = round(timeManagement.coex_timeNextSuperframe(stationManagement.activeIDs), 10);
++    timeManagement.coex_timeNextSuperframe(stationManagement.activeIDs) = roundDigits(timeManagement.coex_timeNextSuperframe(stationManagement.activeIDs), 10);
+     timeManagement.coex_superframeThisIsLTEPart = true(simValues.maxID,1);
+         
+     % Coexistence, method A
+diff --git a/MatFilesCoexistence/superframeManagement.m b/MatFilesCoexistence/superframeManagement.m
+index a7b546a..f44ea4d 100644
+--- a/MatFilesCoexistence/superframeManagement.m
++++ b/MatFilesCoexistence/superframeManagement.m
+@@ -25,7 +25,7 @@ if simParams.coexMethod~=constants.COEX_METHOD_F && simParams.coexMethod~=consta
+     end
+ end
+ 
+-timeManagement.coex_timeNextSuperframe(vehiclesLTEstart) = round(timeManagement.coex_timeNextSuperframe(vehiclesLTEstart) + simParams.coex_knownEndOfLTE(vehiclesLTEstart) + simParams.coex_guardTimeBefore + simParams.coex_guardTimeAfter, 10);
++timeManagement.coex_timeNextSuperframe(vehiclesLTEstart) = roundDigits(timeManagement.coex_timeNextSuperframe(vehiclesLTEstart) + simParams.coex_knownEndOfLTE(vehiclesLTEstart) + simParams.coex_guardTimeBefore + simParams.coex_guardTimeAfter, 10);
+ 
+ %else % ~timeManagement.coex_superframeThisIsLTEPart
+ %% Second portion: 11p
+@@ -41,6 +41,6 @@ if simParams.coexMethod~=constants.COEX_METHOD_F && simParams.coexMethod~=consta
+     end
+ end
+ 
+-timeManagement.coex_timeNextSuperframe(vehiclesITSG5start) = round(timeManagement.coex_timeNextSuperframe(vehiclesITSG5start) + (simParams.coex_superFlength - simParams.coex_knownEndOfLTE(vehiclesITSG5start) - simParams.coex_guardTimeBefore - simParams.coex_guardTimeAfter), 10);
++timeManagement.coex_timeNextSuperframe(vehiclesITSG5start) = roundDigits(timeManagement.coex_timeNextSuperframe(vehiclesITSG5start) + (simParams.coex_superFlength - simParams.coex_knownEndOfLTE(vehiclesITSG5start) - simParams.coex_guardTimeBefore - simParams.coex_guardTimeAfter), 10);
+ 
+ %end
+diff --git a/MatFilesInit/constants.m b/MatFilesInit/constants.m
+index eed80b3..8a1e438 100644
+--- a/MatFilesInit/constants.m
++++ b/MatFilesInit/constants.m
+@@ -82,9 +82,9 @@ classdef constants
+     COEX_METHOD_F = 6;
+ 
+     % METHOD HAVE BEEN IMPLEMENTED (COEX_METHOD_NON NOT INCLUDED HERE)
+-    COEX_METHODS_IMPLEMENTED = [constants.COEX_METHOD_A,...
+-    constants.COEX_METHOD_B, constants.COEX_METHOD_C,...
+-    constants.COEX_METHOD_F];
++    % Octave: a Constant property cannot refer to its own class (infinite recursion),
++    % so the values of COEX_METHOD_A, _B, _C and _F are written out
++    COEX_METHODS_IMPLEMENTED = [1, 2, 3, 6];
+ 
+     % METHOD A IMPROVEMENT: TOBE NAMED
+     
+diff --git a/MatFilesInit/getseed.m b/MatFilesInit/getseed.m
+index a0f47c8..f0663e1 100644
+--- a/MatFilesInit/getseed.m
++++ b/MatFilesInit/getseed.m
+@@ -2,12 +2,8 @@ function [seed] = getseed()
+ %GETSEED Summary of this function goes here
+ %   Detailed explanation goes here
+ t = clock;
+-tstring = string(t);
+-seed = "";
+-for i = 1:length(tstring)
+-    seed = seed + tstring(i);
+-end
+-seed = mod(str2double(seed)*1e4, 2^32);
++% Octave has no string class: concatenate the clock fields as text with sprintf
++seed = mod(str2double(sprintf('%g', fix(t)))*1e4, 2^32);
+ seed = ceil(seed);
+ end
+ 
+diff --git a/MatFilesInit/initiateBRAssignmentAlgorithm.m b/MatFilesInit/initiateBRAssignmentAlgorithm.m
+index a3b536f..4b1a320 100644
+--- a/MatFilesInit/initiateBRAssignmentAlgorithm.m
++++ b/MatFilesInit/initiateBRAssignmentAlgorithm.m
+@@ -117,6 +117,26 @@ switch simParams.BRAlgorithm
+             error('Error: "simParams.reEvalAfterEmptyResource" cannot be true when resourceReEvaluation is false');
+         end
+ 
++        % [DIT]
++        % Double Initial Transmission (Todisco, Wu, Bazzi, IEEE VNC 2024): after every
++        % reselection the first packet is sent on two resources, the first one is
++        % released (RRI 0) and the second one is kept by the SPS. Needs
++        % cv2xNumberOfReplicasMax = 2
++        [simParams,varargin]= addNewParam(simParams,'DIT',false,'Double Initial Transmission at each SPS reselection','bool',fileCfg,varargin{1});
++        if simParams.DIT == true && simParams.mode5G ~=1
++            error('Error: "simParams.mode5G" must be equal to: 5G-V2X when DIT is active');
++        end
++
++        % [DITpreemption]
++        % With DIT, pre-emption check of the second resource T3 before it is used:
++        % the first transmission announces the second resource with a high priority,
++        % so a UE whose second resource is announced by another first transmission
++        % (and is no longer in Sa) selects another one
++        [simParams,varargin]= addNewParam(simParams,'DITpreemption',false,'Pre-emption check of the DIT second resource','bool',fileCfg,varargin{1});
++        if simParams.DITpreemption == true && simParams.DIT == false
++            error('Error: "simParams.DITpreemption" needs DIT');
++        end
++
+         % [dynamicScheduling]
+         % Enables the dynamic scheduling: resources are changed at each generation
+         [simParams,varargin]= addNewParam(simParams,'dynamicScheduling',false,'Probability to keep the previously selected BR','bool',fileCfg,varargin{1});
+diff --git a/MatFilesInit/searchParamInCfgFile.m b/MatFilesInit/searchParamInCfgFile.m
+index 1b29016..8372454 100644
+--- a/MatFilesInit/searchParamInCfgFile.m
++++ b/MatFilesInit/searchParamInCfgFile.m
+@@ -7,13 +7,33 @@ fid = fopen(filename);
+ if fid==-1
+     return    
+ end
+-[C]=textscan(fid,'%s %s','CommentStyle','%');
++% Read line by line: Octave's textscan with CommentStyle skips some lines of a
++% commented file, and a value may contain spaces (e.g. [Raw] [150 200])
++params = {};
++values = {};
++while true
++    line = fgetl(fid);
++    if ~ischar(line)
++        break
++    end
++    k = strfind(line,'%');
++    if ~isempty(k)
++        line = line(1:k(1)-1);
++    end
++    line = strtrim(line);
++    if isempty(line)
++        continue
++    end
++    [token,rest] = strtok(line);
++    params{end+1} = token; %#ok<AGROW>
++    values{end+1} = strtrim(rest); %#ok<AGROW>
++end
+ fclose(fid);
+-
+-params = C{1};
+-values = C{2};
+ for i=1:length(params)
+     parameter = char(params(i));
++    if isempty(parameter)   % Octave's textscan can return empty tokens
++        continue
++    end
+     if parameter(1)=='[' && parameter(end)==']' && strcmpi(parameter(2:end-1),paramname)
+ 
+         if strcmpi(paramType,'integer') || strcmpi(paramType,'double')
+diff --git a/MatFilesOut/outputToFiles.m b/MatFilesOut/outputToFiles.m
+index 199f83a..362a63d 100644
+--- a/MatFilesOut/outputToFiles.m
++++ b/MatFilesOut/outputToFiles.m
+@@ -436,14 +436,14 @@ if outputValues.AvgNvehiclesCV2X>0
+         fprintf(fileMainID,',Treassign=%.1f',simParams.Treassign);
+     elseif simParams.BRAlgorithm==18
+         fprintf(fileMainID,'TsensPer=%.2f,pKeep=%.2f,',simParams.TsensingPeriod,simParams.probResKeep);
+-        fprintf(fileMainID,"dynamicScheduling="+simParams.dynamicScheduling+",");
+-        fprintf(fileMainID,"resourceReEvaluation="+simParams.resourceReEvaluation+",");
+-        fprintf(fileMainID,"reEvalAfterEmptyResource="+simParams.reEvalAfterEmptyResource+",");
++        fprintf(fileMainID,'dynamicScheduling=%d,',simParams.dynamicScheduling);
++        fprintf(fileMainID,'resourceReEvaluation=%d,',simParams.resourceReEvaluation);
++        fprintf(fileMainID,'reEvalAfterEmptyResource=%d,',simParams.reEvalAfterEmptyResource);
+         fprintf(fileMainID,'rRes=%.2f,minR=%d,maxR=%d,',simParams.ratioSelectedAutonomousMode,simParams.minRandValueMode4,simParams.maxRandValueMode4);
+         fprintf(fileMainID,'T1=%.2f,T2=%.2f,',simParams.T1autonomousMode,simParams.T2autonomousMode);
+         fprintf(fileMainID,'Pthr=%d,minSCIsinr=%.2f,',10*log10(simParams.powerThresholdAutonomous)+30,10*log10(phyParams.minSCIsinr));
+-        fprintf(fileMainID,"L2active="+simParams.L2active+",");
+-        fprintf(fileMainID,"averageSensingActive="+simParams.averageSensingActive+",");
++        fprintf(fileMainID,'L2active=%d,',simParams.L2active);
++        fprintf(fileMainID,'averageSensingActive=%d,',simParams.averageSensingActive);
+         fprintf(fileMainID,'Ksic=%f',phyParams.Ksic);
+         if phyParams.Ksic<1
+             fprintf(fileMainID,',%0.f sic iterations',phyParams.nsic);
+diff --git a/MatFilesPosition/initVehiclePositions.m b/MatFilesPosition/initVehiclePositions.m
+index 3468d6f..2f0256d 100644
+--- a/MatFilesPosition/initVehiclePositions.m
++++ b/MatFilesPosition/initVehiclePositions.m
+@@ -194,7 +194,7 @@ else
+     [simValues,simParams] = interpolateTrace(dataLoaded,simParams,appParams.allocationPeriod);
+     
+     % Round time column (representation format)
+-    simValues.dataTrace(:,1) = round(simValues.dataTrace(:,1), 2);
++    simValues.dataTrace(:,1) = roundDigits(simValues.dataTrace(:,1), 2);
+     
+     % Find trace details (Xmin,Xmax,Ymin,Ymax,maxID)
+     positionManagement.Xmin = min(simValues.dataTrace(:,3));     % Min X coordinate Trace
+diff --git a/MatFilesResourceAllocationCV2X/BRreassignment3GPPautonomous.m b/MatFilesResourceAllocationCV2X/BRreassignment3GPPautonomous.m
+index 18518ee..ec5248c 100644
+--- a/MatFilesResourceAllocationCV2X/BRreassignment3GPPautonomous.m
++++ b/MatFilesResourceAllocationCV2X/BRreassignment3GPPautonomous.m
+@@ -82,6 +82,18 @@ scheduledID_PHY(timeManagement.timeLastPacket(scheduledID_PHY)<0) = [];
+ scheduledID_ReEval = activeIDsCV2X(resourceReEvaluationConditionMet);
+ scheduledID_ReEval(timeManagement.timeLastPacket(scheduledID_ReEval)<0) = []; % re-evaluation initially disabled
+ 
++% DIT pre-emption check: T3 = 3 slots before the second transmission of the first
++% packet after a reselection, once the first transmission (which announced the
++% second resource) has been sent
++scheduledID_Preempt = [];
++if simParams.DIT && simParams.DITpreemption
++    F = stationManagement.ditFirstPacket(activeIDsCV2X) & stationManagement.cv2xNumberOfReplicas(activeIDsCV2X)==2 & ...
++        stationManagement.BRid(activeIDsCV2X,2)>0 & subframesToNextAlloc(activeIDsCV2X,2)==3 & ...
++        stationManagement.pckNextAttempt(activeIDsCV2X)==2 & stationManagement.pckBuffer(activeIDsCV2X)>0;
++    scheduledID_Preempt = activeIDsCV2X(F);
++    scheduledID_Preempt(timeManagement.timeLastPacket(scheduledID_Preempt)<0) = [];
++end
++
+ 
+ 
+ %% 2a - reselection counter to 1
+@@ -140,7 +152,7 @@ scheduledID_MAC = activeIDsCV2X( hasNewPacketThisTbeacon & (stationManagement.re
+ % 2. For users with enforced reselection
+ % 3. For user that need to update the reselection counter instead of reselecting
+ needReselectionCounterRestart = [scheduledID_PHY;scheduledID_MAC;updateCounter_MAC]; % union removed to speed up coding, there might be repetitions but it's faster
+-stationManagement.resReselectionCounterCV2X(needReselectionCounterRestart) = (~simParams.dynamicScheduling)*((simParams.minRandValueMode4-1) + randi((simParams.maxRandValueMode4-simParams.minRandValueMode4)+1,1,length(needReselectionCounterRestart)))'++simParams.dynamicScheduling;
++stationManagement.resReselectionCounterCV2X(needReselectionCounterRestart) = (~simParams.dynamicScheduling)*((simParams.minRandValueMode4-1) + randi((simParams.maxRandValueMode4-simParams.minRandValueMode4)+1,1,length(needReselectionCounterRestart)))'+simParams.dynamicScheduling;
+ 
+ 
+ if simParams.FDalgorithm==1 %adaptive pKeep
+@@ -153,7 +165,13 @@ end
+ %% SECOND PART is performing the reselection
+ % Merge the scheduled IDs
+ scheduledID_PHY_MAC = unique(cat(2, [scheduledID_PHY;scheduledID_MAC]));
+-scheduledID = unique(cat(2, [scheduledID_PHY_MAC;scheduledID_ReEval])); % replace union for improved speed
++scheduledID = unique(cat(2, [scheduledID_PHY_MAC;scheduledID_ReEval;scheduledID_Preempt(:)])); % replace union for improved speed
++
++% DIT: every reselection starts a new sequence whose first packet uses two resources
++if simParams.DIT
++    stationManagement.ditFirstPacket(scheduledID_PHY_MAC) = true;
++    stationManagement.cv2xNumberOfReplicas(scheduledID_PHY_MAC) = 2;
++end
+ Nscheduled = length(scheduledID);
+ 
+ % Reset number of successfully reassigned vehicles
+@@ -281,6 +299,22 @@ for indexSensingV = 1:Nscheduled
+     % Keep the best M canditates
+     bestBR = bestBR(1:MBest);
+ 
++    % DIT pre-emption check of the second resource: it is left only if it is no
++    % longer in Sa AND a DIT first transmission (high priority) announced it
++    if simParams.DIT && simParams.DITpreemption && any(scheduledID_Preempt==scheduledID(indexSensingV)) && ...
++            ~any(scheduledID_PHY_MAC==scheduledID(indexSensingV))
++        idP = scheduledID(indexSensingV);
++        BR2 = mod(stationManagement.BRid(idP,2)-1,Nbeacons)+1;
++        stationManagement.ditPreemptionChecks = stationManagement.ditPreemptionChecks + 1;
++        if ~any(bestBR==BR2) && stationManagement.knownHighPrioMatrixCV2X(BR2,idP)==1
++            % Sa only holds resources after now and before the PDB of this packet
++            stationManagement.BRid(idP,2) = bestBR(randi(MBest));
++            stationManagement.ditPreemptions = stationManagement.ditPreemptions + 1;
++            Nreassign = Nreassign + 1;
++        end
++        continue
++    end
++
+     % Reassign, selecting a random BR among the bestBR
+     BRindex = randi(MBest);
+     BR = bestBR(BRindex);
+@@ -295,7 +329,7 @@ for indexSensingV = 1:Nscheduled
+                 continue   % exit as both resources are still available
+             elseif BRtoChange(1,1)==0
+                 BR=BRidOriginal(1,1);   % maintains first resource
+-            elseif BRtoChange(1,2)==0
++            elseif numel(BRtoChange)>1 && BRtoChange(1,2)==0   % a single transmission has no second resource
+                 BR=BRidOriginal(1,2);   % maintains second resource
+             end
+         end
+@@ -372,6 +406,11 @@ for indexSensingV = 1:Nscheduled
+         end
+             
+         stationManagement.BRid(scheduledID(indexSensingV),2) = BR2;
++        if simParams.DIT && BR2 == -1
++            % no second resource in the window: plain SPS on the first one
++            stationManagement.ditFirstPacket(scheduledID(indexSensingV)) = false;
++            stationManagement.cv2xNumberOfReplicas(scheduledID(indexSensingV)) = 1;
++        end
+     end
+ end
+ 
+diff --git a/MatFilesResourceAllocationCV2X/CV2XsensingProcedure.m b/MatFilesResourceAllocationCV2X/CV2XsensingProcedure.m
+index d4e3a2b..7124e5a 100644
+--- a/MatFilesResourceAllocationCV2X/CV2XsensingProcedure.m
++++ b/MatFilesResourceAllocationCV2X/CV2XsensingProcedure.m
+@@ -71,6 +71,9 @@ stationManagement.sensingMatrixCV2X(1,BRids_currentSF,stationManagement.activeID
+ % Cycle that updates per each vehicle and BR the knownUsedMatrix
+ % The known used matrix of this TTI (next beacon interval) is reset
+ stationManagement.knownUsedMatrixCV2X(BRids_currentSF,:) = 0;
++if simParams.DIT
++    stationManagement.knownHighPrioMatrixCV2X(BRids_currentSF,:) = 0;
++end
+ 
+ 
+ % Reset of matrix of received SCIs for the current subframe
+@@ -94,6 +97,9 @@ if ~isempty(stationManagement.transmittingIDsCV2X)
+         else
+             BRnextReservedTransmission=-1;
+         end
++        % DIT: the first transmission after a reselection does not reserve its own
++        % resource for the next period (RRI 0) and announces the second resource
++        isDITfirstTx = simParams.DIT && stationManagement.ditFirstPacket(idVtx) && hasFirstResourceThisTbeacon;
+             
+         for indexNeighborsOfVtx = 1:length(stationManagement.neighborsIDLTE(indexVtxLte,:))
+            idVrx = stationManagement.neighborsIDLTE(indexVtxLte,indexNeighborsOfVtx);
+@@ -115,7 +121,7 @@ if ~isempty(stationManagement.transmittingIDsCV2X)
+                % 'knownUsedMatrix' set to 0 advertise that the resource is
+                % not used for the next transmission period.
+ 
+-               if stationManagement.resReselectionCounterCV2X(idVtx)>1
++               if stationManagement.resReselectionCounterCV2X(idVtx)>1 && ~isDITfirstTx
+                    % Reserve the next resource
+                     stationManagement.knownUsedMatrixCV2X(BRtx,idVrx) = 1;                    
+                else
+@@ -126,6 +132,10 @@ if ~isempty(stationManagement.transmittingIDsCV2X)
+                if phyParams.cv2xNumberOfReplicasMax>1 && hasFirstResourceThisTbeacon && BRnextReservedTransmission~=-1 && simParams.mode5G
+                     % BR of the next reserved resource (blind retransmission)
+                     stationManagement.knownUsedMatrixCV2X(BRnextReservedTransmission,idVrx) = 1;
++                    if isDITfirstTx && simParams.DITpreemption
++                        % announced with the high priority of the DIT first transmission
++                        stationManagement.knownHighPrioMatrixCV2X(BRnextReservedTransmission,idVrx) = 1;
++                    end
+                     % Power associated to the future reservation
+                     % max between previous sensing and retransmission reservation
+                     reservationRetransmissionPower = max(stationManagement.sensingMatrixCV2X(1,BRnextReservedTransmission,idVrx),stationManagement.sensingMatrixCV2X(1,BRtx,idVrx));
