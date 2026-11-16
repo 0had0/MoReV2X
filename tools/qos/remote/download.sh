@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copies the results of a sweep from the Ubuntu host to this machine: summaries, per-run
-# metrics, commands and errors. Raw logs stay on the host (they are deleted unless keep_raw).
+# metrics, commands, errors and the SUMO traces (about 20 MB, for the scenario maps). Raw logs stay on the host (they are deleted unless keep_raw).
 #
 #   tools/qos/remote/download.sh user@host [sweep name, default qos_full] [remote repository path]
 #
@@ -16,6 +16,7 @@ rsync -az --info=progress2 --prune-empty-dirs \
   --include='summary/***' --include='flows/***' \
   --include='runs/*/metrics/***' --include='runs/*/command.txt' --include='runs/*/error.txt' \
   --include='runs/*/done' --include='traces/*/meta.json' --include='traces/*/roles.csv' \
+  --include='traces/*/trace.csv' --include='traces/*/buildings.csv' --include='traces/*/sumo/*.net.xml' \
   --include='progress.json' --include='sweep.yaml' --include='sweep.log' \
   --exclude='*' \
   "$host:$remote/results/qos/$name/" "results/qos/$name/"

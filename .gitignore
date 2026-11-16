@@ -46,4 +46,5 @@ __pycache__/
 /tagFile.txt
 /*.pcap
 /*.tr
+/docs/figures/qos/
 /docs/notebooks/src/
