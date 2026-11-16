@@ -82,6 +82,16 @@ alone:
 QOS_SWEEP=qos_full .venv/bin/jupyter nbconvert --to notebook --execute --inplace docs/notebooks/1[12]_*.ipynb
 ```
 
+A sweep summarised before November 9, 2026 counted superseded CPMs (replaced in the queue by a
+newer CPM before they were sent) as failures. `metrics.py` now leaves them out of every metric.
+Convert such a sweep, then rebuild its summary; CPM disconnection times stay empty until the
+sweep is rerun, since they need the raw logs:
+
+```bash
+.venv/bin/python tools/qos/exclude_superseded.py results/qos/qos_full
+.venv/bin/python tools/qos/sweep.py results/qos/qos_full/sweep.yaml --summarise --out results/qos/qos_full
+```
+
 ## What is where on the host
 
 | Path | What |
