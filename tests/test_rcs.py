@@ -1,14 +1,16 @@
 """Repeated Contention Scheduling (tools/rcs, NrV2XRcsContention) on real HIGHWAY runs."""
+import importlib.util
 import os
-import sys
 import unittest
 
 import numpy as np
-import pandas as pd
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "rcs"))
-import metrics  # noqa: E402
-from test_integration import TX_COLUMNS, ScratchRuns, read  # noqa: E402
+from test_integration import ROOT, TX_COLUMNS, ScratchRuns, read
+
+# Loaded under its own name: other tests put a different metrics.py on the path
+_spec = importlib.util.spec_from_file_location("rcs_metrics", os.path.join(ROOT, "tools", "rcs", "metrics.py"))
+metrics = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(metrics)
 
 RCS_COLUMNS = ["time", "node", "packet", "genMs", "rcsFrame", "contention", "outcome", "sc", "delayMs"]
 TX_FILE = ["packet", "genTime", "node", "x", "y", "trafficType", "messageType", "size"]
