@@ -55,8 +55,12 @@ def run(name, model, scheme, mu, load, seed, groups=None, tone=None):
         arguments += ["--Rcs=1", "--RcsGroups=%d" % groups] + TONES[tone or "all"]
     else:
         arguments += BASELINES[scheme]
+    # The paper's Figs 7 and 8 (ideal, mu = 1, RCS J = 1 and 36, SPS, DS) and the highway get the
+    # full simulation time; the rest of the J sweep the short one (the ideal channel makes every
+    # UE decode every transmission, so a dense 50 s run takes hours)
+    headline = model == "highway" or (mu == 1 and (scheme != "rcs" or groups in (1, 36)))
     return {"name": name, "model": model, "scheme": scheme, "mu": mu, "load": load, "n": n, "seed": seed,
-            "groups": groups, "tone": tone, "arguments": arguments}
+            "groups": groups, "tone": tone, "headline": headline, "arguments": arguments}
 
 
 def grid(seeds):
@@ -93,13 +97,24 @@ def grid(seeds):
     return queue
 
 
-def execute(spec, root, sim_time, binary):
+def longest_first(queue, sim_time, short_sim_time):
+    """Longest runs first, so the grid ends soonest. Cost ~ time x n^2; the highway's PHY
+    skips the far receivers and runs about 8 times faster than the ideal square."""
+    def cost(r):
+        t = sim_time if r["headline"] or not short_sim_time else short_sim_time
+        return t * r["n"] ** 2 / (8.0 if r["model"] == "highway" else 1.0)
+    return sorted(queue, key=lambda r: (r["seed"], -cost(r)))
+
+
+def execute(spec, root, sim_time, binary, short_sim_time=None):
     folder = os.path.join(root, spec["name"])
     metrics = os.path.join(folder, "metrics.json")
     if os.path.exists(metrics):
         return spec["name"], "done before", 0.0
     shutil.rmtree(os.path.join(folder, "results"), ignore_errors=True)
     os.makedirs(folder, exist_ok=True)
+    if short_sim_time and not spec["headline"]:
+        sim_time = short_sim_time
     arguments = spec["arguments"] + ["--simTime=%g" % sim_time]
     with open(os.path.join(folder, "spec.json"), "w") as f:
         json.dump(dict(spec, arguments=arguments), f, indent=1)
@@ -120,6 +135,7 @@ def execute(spec, root, sim_time, binary):
         values = json.load(f)
     values.update({k: spec[k] for k in ("name", "model", "scheme", "mu", "load", "n", "seed", "groups", "tone")})
     values["wall_s"] = wall
+    values["sim_time"] = sim_time
     with open(metrics + ".tmp", "w") as f:
         json.dump(values, f, indent=1)
     os.replace(metrics + ".tmp", metrics)
@@ -156,6 +172,8 @@ def main():
     parser.add_argument("--jobs", type=int, default=max(1, os.cpu_count() - 2))
     parser.add_argument("--root", default=os.path.join(ROOT, "results", "rcs"))
     parser.add_argument("--sim-time", type=float, default=50.0)
+    parser.add_argument("--short-sim-time", type=float, help="simulation time of the runs outside Figs 7, 8 and the highway")
+    parser.add_argument("--headline", action="store_true", help="only the runs of Figs 7, 8 and the highway")
     parser.add_argument("--seeds", type=int, nargs="+", default=[1])
     parser.add_argument("--only", help="run the names that contain this text")
     parser.add_argument("--binary", default=os.path.join(ROOT, "build", "optimized", "scratch", "HIGHWAY"))
@@ -165,6 +183,8 @@ def main():
     queue = grid(args.seeds)
     if args.only:
         queue = [r for r in queue if args.only in r["name"]]
+    if args.headline:
+        queue = [r for r in queue if r["headline"]]
     if args.list:
         for r in queue:
             print(r["name"], " ".join(r["arguments"]))
@@ -177,7 +197,8 @@ def main():
     log = open(os.path.join(args.root, "progress.log"), "a")
     log.write("%s start %d runs, %d jobs\n" % (time.strftime("%F %T"), len(queue), args.jobs))
     log.flush()
-    tasks = [(r, args.root, args.sim_time, args.binary) for r in queue]
+    queue = longest_first(queue, args.sim_time, args.short_sim_time)
+    tasks = [(r, args.root, args.sim_time, args.binary, args.short_sim_time) for r in queue]
     with Pool(args.jobs) as pool:
         for i, (name, status, wall) in enumerate(pool.imap_unordered(safe_execute, tasks)):
             log.write("%s %d/%d %s %s %.0f s\n" % (time.strftime("%F %T"), i + 1, len(queue), name, status, wall))

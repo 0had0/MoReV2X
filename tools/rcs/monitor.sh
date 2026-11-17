@@ -19,14 +19,17 @@ if [ -n "$failed" ]; then
   echo "failures:"; echo "$failed" | tail -5
 fi
 if [ "$since" -gt 0 ]; then
-  python3 - "$started" "$since" "$total" <<'EOF'
+  # times from the log itself: the grid may log in another time zone (UTC in Docker)
+  last="$(tail -1 "$log" | awk '{print $1" "$2}')"
+  python3 - "$started" "$last" "$since" "$total" <<'EOF'
 import sys, datetime as dt
-start = dt.datetime.strptime(sys.argv[1], "%Y-%m-%d %H:%M:%S")
-done, total = int(sys.argv[2]), int(sys.argv[3])
-elapsed = (dt.datetime.now() - start).total_seconds()
+parse = lambda s: dt.datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+start, last = parse(sys.argv[1]), parse(sys.argv[2])
+done, total = int(sys.argv[3]), int(sys.argv[4])
+elapsed = (last - start).total_seconds()
 left = elapsed / done * (total - done)
-print("elapsed %.1f h, about %.1f h left (ends near %s)" % (elapsed / 3600, left / 3600,
-      (dt.datetime.now() + dt.timedelta(seconds=left)).strftime("%H:%M")))
+print("%.1f h for %d runs, about %.1f h left (ends near %s in the log's clock)" % (
+      elapsed / 3600, done, left / 3600, (last + dt.timedelta(seconds=left)).strftime("%H:%M")))
 EOF
 fi
 echo "last:"; tail -3 "$log"

@@ -84,9 +84,28 @@ Where MoReV2X differs from the paper's simulator:
 ## Running
 
 ```bash
-tools/rcs/grid.py --list | tail -1                 # 315 runs, one seed
-tools/rcs/grid.py --jobs 30 --sim-time 50          # results/rcs/<run>/metrics.json, summary.csv
-tools/rcs/monitor.sh
+tools/rcs/grid.py --list | tail -1                 # 315 runs per seed
+tools/rcs/grid.py --jobs 30 --sim-time 50 --short-sim-time 20
+tools/rcs/monitor.sh                               # progress and estimated end
+tools/rcs/plots.py results/rcs/summary.csv --out docs/figures/rcs
 ```
 
-On a remote host the grid runs in the `morev2x-qos` Docker image, see the commit that set it up.
+The ideal square is expensive. Every UE decodes every transmission, so a run costs about
+n^2 per simulated second, and the densest 50 s run (SPS, a = 1.1, 440 UEs) takes 3.5 to 4 h on one thread of an i9-13900K
+running alongside 29 others. `--short-sim-time` gives the runs outside the paper's Figs 7 and 8
+(the rest of the J sweep, and SPS and DS at mu = 0) a shorter time. The Fig 7-8 runs and the
+highway keep `--sim-time` (the highway's PHY skips far receivers and runs about 8 times faster).
+The queue starts with the longest runs.
+
+On ease-rtx the grid runs in the `morev2x-qos` Docker image of the QoS branch, with this branch
+in a separate clone mounted at `/work` (the image's entrypoint ignores `-w`, hence the `cd`):
+
+```bash
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/work" morev2x-qos bash -c \
+  "cd /work && python2 ./waf configure --disable-python --disable-examples --disable-tests \
+     --build-profile=optimized --out=build/optimized --enable-modules=MoReV2X,traci \
+   && python2 ./waf build -j32 \
+   && /opt/morev2x/.venv/bin/python tools/rcs/grid.py --jobs 30 --sim-time 50 --short-sim-time 20"
+```
+
+The same build gives the same numbers on the Mac (clang) and in Docker (gcc 11), run for run.
