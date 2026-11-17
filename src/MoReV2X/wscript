@@ -76,6 +76,7 @@ def build(bld):
         'model/nr-v2x-amc.cc',
         'model/nr-v2x-utils.cc',
         'model/nr-v2x-rcs-contention.cc',
+        'model/nr-v2x-rcs-choice.cc',
         'model/nr-v2x-adaptive-reservation.cc',
         ]
 
@@ -162,6 +163,7 @@ def build(bld):
         'model/nr-v2x-amc.h',
         'model/nr-v2x-utils.h',
         'model/nr-v2x-rcs-contention.h',
+        'model/nr-v2x-rcs-choice.h',
         'model/nr-v2x-adaptive-reservation.h',
         ]
 

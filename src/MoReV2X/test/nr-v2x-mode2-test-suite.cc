@@ -342,6 +342,74 @@ private:
   }
 };
 
+class RcsDrawTestCase : public TestCase
+{
+public:
+  RcsDrawTestCase () : TestCase ("RCS: the choices follow the weights of their distribution") {}
+
+private:
+  virtual void DoRun (void)
+  {
+    Ptr<NrV2XRcsChoice> choice = CreateObject<NrV2XRcsChoice> ();
+    std::vector<double> only1 (3, 0.0);
+    only1[1] = 2.5;
+    std::vector<double> threeToOne (2, 1.0);
+    threeToOne[0] = 3.0;
+    uint32_t first = 0;
+    for (uint32_t i = 0; i < 20000; i++)
+      {
+        NS_TEST_ASSERT_MSG_EQ (choice->Draw (only1), 1u, "zero weights are never drawn");
+        first += choice->Draw (threeToOne) == 0 ? 1 : 0;
+      }
+    NS_TEST_ASSERT_MSG_EQ_TOL (first / 20000.0, 0.75, 0.02, "weights 3 and 1");
+    NrV2XRcsPacket packet;
+    NS_TEST_ASSERT_MSG_EQ (choice->GroupDistribution (6, packet).size (), 6u, "one weight per group");
+    NS_TEST_ASSERT_MSG_EQ (choice->ToneDistribution (11, 0, packet).size (), 11u, "one weight per sub-carrier");
+  }
+};
+
+// A choice skewed by priority: priority 1 always takes the lowest sub-carrier of group 2,
+// any other packet the highest sub-carrier of group 2
+class RcsPriorityChoice : public NrV2XRcsChoice
+{
+public:
+  virtual std::vector<double> GroupDistribution (uint32_t groups, const NrV2XRcsPacket &packet) const
+  {
+    std::vector<double> weights (groups, 0.0);
+    weights[2] = 1.0;
+    return weights;
+  }
+  virtual std::vector<double> ToneDistribution (uint32_t subcarriers, uint32_t round, const NrV2XRcsPacket &packet) const
+  {
+    std::vector<double> weights (subcarriers, 0.0);
+    weights[packet.priority == 1 ? 0 : subcarriers - 1] = 1.0;
+    return weights;
+  }
+};
+
+class RcsSkewedChoiceTestCase : public TestCase
+{
+public:
+  RcsSkewedChoiceTestCase () : TestCase ("RCS: a skewed distribution decides the group and the SC") {}
+
+private:
+  virtual void DoRun (void)
+  {
+    // J = 6: w = 6 SCs and m = 66 sub-carriers per group, group 2 holds SCs 12 to 17
+    Ptr<NrV2XRcsContention> channel = RcsChannel (6, 36, 400, NrV2XRcsContention::TONE_ALL);
+    channel->SetChoice (CreateObject<RcsPriorityChoice> ());
+    NrV2XRcsPacket urgent;
+    urgent.priority = 1;
+    NrV2XRcsPacket background;
+    background.priority = 8;
+    channel->Register (5, 1, At (0), background);
+    channel->Register (5, 2, At (0), urgent);
+    NS_TEST_ASSERT_MSG_EQ (channel->GetResult (5, 2), 12, "lowest tone, first SC of group 2");
+    NS_TEST_ASSERT_MSG_EQ (channel->GetResult (5, 1), 13, "heard one lower tone, second SC of group 2");
+    NrV2XRcsContention::Reset ();
+  }
+};
+
 class RcsToneHearingTestCase : public TestCase
 {
 public:
@@ -485,6 +553,8 @@ public:
     AddTestCase (new RcsFewContendersAllWinTestCase, TestCase::QUICK);
     AddTestCase (new RcsOneScPerGroupTestCase, TestCase::QUICK);
     AddTestCase (new RcsToneHearingTestCase, TestCase::QUICK);
+    AddTestCase (new RcsDrawTestCase, TestCase::QUICK);
+    AddTestCase (new RcsSkewedChoiceTestCase, TestCase::QUICK);
     AddTestCase (new PriorityThresholdTestCase, TestCase::QUICK);
     AddTestCase (new PreemptionTestCase, TestCase::QUICK);
   }

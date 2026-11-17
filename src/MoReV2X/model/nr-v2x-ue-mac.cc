@@ -4661,7 +4661,7 @@ NrV2XUeMac::RcsSchedule (std::map <uint32_t, PoolInfo>::iterator poolIt,
       m_rcsPacketId = packetId;
       m_rcsFrameIndex = (now + frameSlots - 1) / frameSlots;
       m_rcsContentions = 1;
-      contention->Register (m_rcsFrameIndex, m_rnti, m_rcsMobility);
+      contention->Register (m_rcsFrameIndex, m_rnti, m_rcsMobility, RcsPacket (itBsr, frameSlots));
       return;
     }
 
@@ -4729,7 +4729,19 @@ NrV2XUeMac::RcsSchedule (std::map <uint32_t, PoolInfo>::iterator poolIt,
   RcsLog (packetId, genMs, m_rcsFrameIndex, 1, -1, nextDelay);
   m_rcsFrameIndex = next;
   m_rcsContentions++;
-  contention->Register (m_rcsFrameIndex, m_rnti, m_rcsMobility);
+  contention->Register (m_rcsFrameIndex, m_rnti, m_rcsMobility, RcsPacket (itBsr, frameSlots));
+}
+
+NrV2XRcsPacket
+NrV2XUeMac::RcsPacket (std::map <SidelinkLcIdentifier, NistLteMacSapProvider::NistReportBufferNistStatusParameters>::iterator itBsr,
+                       uint32_t frameSlots) const
+{
+  NrV2XRcsPacket packet;
+  packet.priority = itBsr->second.V2XPPPP;
+  packet.pdbMs = itBsr->second.V2XPdb;
+  packet.waitedMs = m_rcsFrameIndex * frameSlots * m_slotDuration - itBsr->second.V2XGenTime * 1000.0;
+  packet.contention = m_rcsContentions;
+  return packet;
 }
 
 void

@@ -18,6 +18,7 @@ delay budget, in which case the packet is dropped.
 | File | What |
 |---|---|
 | `src/MoReV2X/model/nr-v2x-rcs-contention.{h,cc}` | `NrV2XRcsContention`: the contention of every frame for all UEs. Attributes `Groups` (J), `Rounds` (r), `Subcarriers` (M), `ScPerFrame` (K), `ToneMode`, `ToneRange`, `ToneThreshold`, `TonePower`, `OutputPath`. Writes `RcsContentionLog.txt`. |
+| `src/MoReV2X/model/nr-v2x-rcs-choice.{h,cc}` | `NrV2XRcsChoice`: the distributions the group and the tones are drawn from, uniform. `NrV2XRcsPacket`: what they see of the packet (priority, PDB, time waited, contention number). |
 | `src/MoReV2X/model/nr-v2x-ue-mac.{h,cc}` | `NrV2XUeMac::RcsSchedule`, called from `DoSubframeIndication` in place of the sensing-based selection when the `Rcs` attribute is set. `RcsFrame`, `RcsContentionTime`. Writes `RcsLog.txt`. |
 | `scratch/HIGHWAY.cc` | Options `--Rcs`, `--RcsGroups`, `--RcsRounds`, `--RcsSubcarriers`, `--RcsFrame`, `--RcsContention`, `--RcsTone`, `--RcsToneRange`, `--RcsToneThreshold`, `--RcsTonePower`; and for the paper's setup `--Ideal`, `--IdealSide`, `--UniformPeriod`, `--RxFile`, `--RxLog`. |
 | `tools/rcs/grid.py` | The paper's grid and the highway variant, resumable, one `metrics.json` per run. |
@@ -43,6 +44,16 @@ The numerology only changes the frame geometry. With 20 MHz and 25-RB sub-channe
 106 RBs, 4 SCs per slot, 1 contention slot and 9 data slots (K = 36, M = 400); mu = 1 has 51 RBs,
 2 SCs per slot, 2 contention slots and 18 data slots (K = 36, M = 200). `--RcsSubcarriers=0`
 takes one sub-carrier out of three of the band, as the paper does.
+
+## The group and the tones
+
+A contender draws its group from `NrV2XRcsChoice::GroupDistribution (J, packet)` and, in each
+round, its tone from `ToneDistribution (m, round, packet)`. Both return one weight per group or
+sub-carrier, sub-carrier 0 being the lowest, the one that beats all others. Both are uniform, as
+in the paper. A subclass can skew them with the packet in contention (`NrV2XRcsPacket`): its SL
+priority (the default priority level of its PQI), its PDB, how long it has waited and how many
+contentions it has lost. Skewing the tones towards the low sub-carriers raises the chance to win;
+skewing the groups moves packets to some SCs of the frame.
 
 ## Who hears a tone
 

@@ -739,6 +739,9 @@ private:
   /// RCS: the packet missed its delay budget; RLC hands it over and it is discarded
   void RcsDrop (std::map <SidelinkLcIdentifier, NistLteMacSapProvider::NistReportBufferNistStatusParameters>::iterator itBsr,
                 uint8_t reason);
+  /// RCS: the packet in contention, as the group and tone distributions see it
+  NrV2XRcsPacket RcsPacket (std::map <SidelinkLcIdentifier, NistLteMacSapProvider::NistReportBufferNistStatusParameters>::iterator itBsr,
+                            uint32_t frameSlots) const;
   /// RCS: one line of RcsLog.txt
   void RcsLog (uint64_t packetId, double genTime, uint64_t frame, uint8_t outcome, int32_t sc, double delay);
   static void RcsCloseLog (void);
