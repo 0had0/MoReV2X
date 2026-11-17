@@ -81,6 +81,12 @@ Where MoReV2X differs from the paper's simulator:
   split (20 % of the UEs every 20 ms).
 - Packets generated in the first second are not counted, so that SPS has its sensing history.
 
+## Results
+
+`notebooks/07_rcs_reproduction.ipynb` compares seed 1 of the grid with the paper's Figs 2 to 8,
+claim by claim, and shows the highway with each tone setting. Its figures go to
+`figures/rcs/`, which git does not track.
+
 ## Running
 
 ```bash
