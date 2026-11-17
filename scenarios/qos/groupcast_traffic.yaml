@@ -1,0 +1,76 @@
+# The traffic models of groupcast-adaptation-ns3 (scratch_overlay/common/traffic,
+# CustomTrafficApplication) as QOS classes. "traffic" sets the arrivals and the sizes; QOS
+# (ApplyTrafficModel) defines them:
+#
+#   traffic     arrivals                                   payload
+#   periodic1   every 100 ms                               300, 190, 190, 190, 190 B in turn
+#   periodic2   every 10 ms                                1200 B (p = 0.2) or 800 B
+#   periodic4   every 20 ms                                1200 B (p = 0.2) or 800 B
+#   periodic5   every 50 ms                                1200 B
+#   aperiodic1  50 ms + Exp(mean 50 ms), whole ms          200 to 2000 B by 200 B, uniform
+#
+# periodic3 (30-60 kB) and aperiodic2 (10-30 kB) do not fit one transport block and are refused.
+#
+# The rest is not defined by groupcast-adaptation and is set here for a first evaluation:
+#   - rri_ms is the period and pdb_ms the RRI (groupcast-adaptation's rule: PDB defaults to the
+#     RRI); aperiodic1 is dynamic with a 100 ms PDB (its fallback for dynamic flows).
+#   - priority ranks the classes by PDB, the tightest first. pqi and per are 0: no PQI given.
+# Change them per study.
+#
+# Payload limit: one slot must carry the largest packet plus 35 B of headers. QOS prints the
+# limit at start-up. The QoS sweeps' radio settings (60 kHz, 12-RB subchannels, MCS 14) carry
+# 637 B, so only periodic1 fits there; periodic2/4/5 and aperiodic1 need for instance
+# --Numerology=0 --SubChannel=25 on 20 MHz (3163 B at MCS 14).
+#
+# Use with include: [classes.yaml, groupcast_traffic.yaml] in a sweep, then list the classes.
+
+classes:
+  gc_periodic1:
+    traffic: periodic1
+    pqi: 0
+    priority: 4
+    pdb_ms: 100
+    per: 0
+    roles: [car, truck, platoon, emergency]
+    rri_ms: 100
+    scheduling: sps
+
+  gc_periodic2:
+    traffic: periodic2
+    pqi: 0
+    priority: 1
+    pdb_ms: 10
+    per: 0
+    roles: [car, truck, platoon, emergency]
+    rri_ms: 10
+    scheduling: sps
+
+  gc_periodic4:
+    traffic: periodic4
+    pqi: 0
+    priority: 2
+    pdb_ms: 20
+    per: 0
+    roles: [car, truck, platoon, emergency]
+    rri_ms: 20
+    scheduling: sps
+
+  gc_periodic5:
+    traffic: periodic5
+    pqi: 0
+    priority: 3
+    pdb_ms: 50
+    per: 0
+    roles: [car, truck, platoon, emergency]
+    rri_ms: 50
+    scheduling: sps
+
+  gc_aperiodic1:
+    traffic: aperiodic1
+    pqi: 0
+    priority: 4
+    pdb_ms: 100
+    per: 0
+    roles: [car, truck, platoon, emergency]
+    rri_ms: 100
+    scheduling: dynamic

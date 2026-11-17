@@ -7,7 +7,9 @@ import sys
 import tempfile
 import unittest
 
+import numpy as np
 import pandas as pd
+import yaml
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
@@ -171,6 +173,77 @@ class QosScenario(QosRun):
         self.assertLess(urban.set_index("name").pdr["cam"], open_air.set_index("name").pdr["cam"])
 
 
+class GroupcastTraffic(QosRun):
+    """The traffic models of groupcast-adaptation-ns3 (scenarios/qos/groupcast_traffic.yaml)."""
+
+    def test_packets_follow_each_model(self):
+        classes = yaml.safe_load(open(os.path.join(ROOT, "scenarios", "qos", "groupcast_traffic.yaml")))["classes"]
+        names = list(classes)
+        rows = [sweep.flow_row(n, classes[n], {n: {"share": 0.3}}) for n in names]
+        flows = os.path.join(self.work, "groupcast.csv")
+        pd.DataFrame(rows, columns=sweep.FLOW_HEADER).to_csv(flows, index=False)
+        folder = trace("highway_platoon", length=1000, platoons=2, platoon_size=4, density="low")
+        out = os.path.join(self.work, "logs") + "/"
+        # 20 MHz at 15 kHz with 25-RB subchannels: one slot carries the 2000 B of aperiodic1
+        command = [QOS, "--trace=" + folder, "--flows=" + flows, "--out=" + out, "--simTime=4",
+                   "--Numerology=0", "--ChannelBW=20", "--SubChannel=25", "--mcs=14", "--SavingPeriod=0.5",
+                   "--ns3::NrV2XSpectrumPhy::MetricsMaxDistance=1000"]
+        env = dict(os.environ, DYLD_LIBRARY_PATH=BUILD, LD_LIBRARY_PATH=BUILD)
+        done = subprocess.run(command, cwd=self.work, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              text=True, timeout=900)
+        self.assertEqual(done.returncode, 0, done.stdout[-3000:])
+        self.assertNotIn("dropped as oversize", done.stdout)
+        app = pd.read_csv(os.path.join(out, "AppTxLog.txt"), header=None, names=metrics.APP_COLUMNS)
+        app = app.sort_values(["flow", "node", "genTime"])
+        app["gap"] = app.groupby(["flow", "node"]).genTime.diff()
+        flow = {name: app[app.flow == i] for i, name in enumerate(names)}
+        for name in names:
+            self.assertGreater(len(flow[name]), 20, name)
+
+        def whole_periods(frame, period_ms):
+            # AppTxLog keeps 6 significant digits: a few microseconds of rounding
+            gap_ms = frame.gap.dropna() * 1000.0
+            periods = np.round(gap_ms / period_ms)
+            return bool((np.abs(gap_ms - periods * period_ms) < 0.01).all() and (periods >= 1).all())
+
+        p1 = flow["gc_periodic1"]
+        self.assertEqual(set(p1["size"]), {300, 190})
+        self.assertTrue(whole_periods(p1, 100))
+        for _, sizes in p1.groupby("node")["size"]:
+            big = np.flatnonzero(sizes.to_numpy() == 300)
+            self.assertTrue((np.diff(big) == 5).all(), "300 B every fifth packet")
+        p2 = flow["gc_periodic2"]
+        self.assertEqual(set(p2["size"]), {800, 1200})
+        self.assertTrue(whole_periods(p2, 10))
+        self.assertAlmostEqual((p2["size"] == 1200).mean(), 0.2, delta=0.05)
+        self.assertTrue(whole_periods(flow["gc_periodic4"], 20))
+        p5 = flow["gc_periodic5"]
+        self.assertEqual(set(p5["size"]), {1200})
+        self.assertTrue(whole_periods(p5, 50))
+        a1 = flow["gc_aperiodic1"]
+        self.assertTrue(set(a1["size"]) <= set(range(200, 2001, 200)))
+        self.assertGreater(a1["size"].nunique(), 5)
+        self.assertTrue(whole_periods(a1, 1), "the exponential part is in whole ms")
+        self.assertGreaterEqual(a1.gap.min(), 0.05 - 1e-5)
+
+        summary = self.summary(out, folder).set_index("name")
+        for name in names:
+            self.assertGreater(summary.at[name, "pdr"], 0, name)
+
+    def test_refused_models(self):
+        rows = [sweep.flow_row("big", {"traffic": "periodic3", "pqi": 0, "priority": 1, "pdb_ms": 30, "per": 0,
+                                       "roles": ["car"], "rri_ms": 30}, {})]
+        flows = os.path.join(self.work, "big.csv")
+        pd.DataFrame(rows, columns=sweep.FLOW_HEADER).to_csv(flows, index=False)
+        folder = trace("highway_platoon", length=1000, platoons=2, platoon_size=4, density="low")
+        env = dict(os.environ, DYLD_LIBRARY_PATH=BUILD, LD_LIBRARY_PATH=BUILD)
+        done = subprocess.run([QOS, "--trace=" + folder, "--flows=" + flows, "--out=" + self.work + "/x/", "--simTime=1"],
+                              cwd=self.work, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                              timeout=300)
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("larger than a transport block", done.stdout)
+
+
 class SweepRunner(unittest.TestCase):
     def test_expand_and_flows(self):
         config = sweep.load_config(os.path.join(ROOT, "scenarios", "qos", "sweep_full.yaml"))
@@ -181,6 +254,15 @@ class SweepRunner(unittest.TestCase):
         self.assertEqual({r["scenario"] for r in smoke}, {r["scenario"] for r in runs})
         self.assertEqual({r["condition"] for r in smoke}, {r["condition"] for r in runs})
         self.assertEqual({r["variant"] for r in smoke} - {"default"}, {r["variant"] for r in runs} - {"default"})
+
+    def test_traffic_classes_set_their_own_arrivals(self):
+        row = sweep.flow_row("p2", {"traffic": "periodic2", "pqi": 0, "priority": 1, "pdb_ms": 10, "per": 0,
+                                    "roles": ["car"], "rri_ms": 10}, {})
+        self.assertEqual(len(row), len(sweep.FLOW_HEADER))
+        self.assertEqual(row[-1], "periodic2")
+        with self.assertRaises(ValueError):
+            sweep.flow_row("p2", {"traffic": "periodic2", "sizes": [800], "pqi": 0, "priority": 1, "pdb_ms": 10,
+                                  "per": 0, "roles": ["car"], "rri_ms": 10}, {})
 
 
 if __name__ == "__main__":

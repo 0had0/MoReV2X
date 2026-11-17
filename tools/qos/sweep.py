@@ -39,7 +39,10 @@ import metrics  # noqa: E402
 
 FLOW_HEADER = ["name", "pqi", "priority", "pdb_ms", "per", "gbr", "roles", "share", "model", "period_ms",
                "exp_mean_ms", "event_rate", "burst", "burst_interval_ms", "sizes", "size_probs",
-               "reservation_size", "rri_ms", "scheduling", "stack_delay_ms", "stack_jitter_ms", "retx"]
+               "reservation_size", "rri_ms", "scheduling", "stack_delay_ms", "stack_jitter_ms", "retx", "traffic"]
+# A class with traffic: <model> takes its arrivals and sizes from that groupcast-adaptation traffic
+# model (scratch/QOS.cc, ApplyTrafficModel) and must not set them itself
+TRAFFIC_FIELDS = ["model", "period_ms", "exp_mean_ms", "event_rate", "burst", "burst_interval_ms", "sizes", "probs"]
 RAW_LOGS = ["ReceivedLog.txt", "phyDebugShort.txt", "SSPSlog.txt", "ReEvaluationsLog.txt", "CBR_OutputFile.txt",
             "ReservationsLog.txt", "AppTxLog.txt", "MacDropLog.txt"]
 
@@ -61,14 +64,19 @@ def load_config(path):
 
 def flow_row(name, spec, overrides):
     spec = dict(spec, **overrides.get(name, {}))
-    sizes = spec["sizes"]
-    probs = spec.get("probs", [1.0 / len(sizes)] * len(sizes))
+    traffic = spec.get("traffic", "")
+    if traffic:
+        given = [field for field in TRAFFIC_FIELDS if field in spec]
+        if given:
+            raise ValueError("class %s: traffic %s sets %s itself" % (name, traffic, ", ".join(given)))
+    sizes = spec.get("sizes", [])
+    probs = spec.get("probs", [1.0 / len(sizes)] * len(sizes) if sizes else [])
     return [name, spec["pqi"], spec["priority"], spec["pdb_ms"], spec["per"], int(spec.get("gbr", 0)),
-            "|".join(spec["roles"]), spec.get("share", 1.0), spec["model"], spec.get("period_ms", 0),
+            "|".join(spec["roles"]), spec.get("share", 1.0), spec.get("model", ""), spec.get("period_ms", 0),
             spec.get("exp_mean_ms", 0), spec.get("event_rate", 0), spec.get("burst", 1),
             spec.get("burst_interval_ms", 0), "|".join(str(s) for s in sizes), "|".join(str(p) for p in probs),
-            spec.get("reservation_size", max(sizes)), spec["rri_ms"], spec.get("scheduling", "sps"),
-            spec.get("stack_delay_ms", 0), spec.get("stack_jitter_ms", 0), spec.get("retx", 0)]
+            spec.get("reservation_size", max(sizes, default=0)), spec["rri_ms"], spec.get("scheduling", "sps"),
+            spec.get("stack_delay_ms", 0), spec.get("stack_jitter_ms", 0), spec.get("retx", 0), traffic]
 
 
 def expand(config):

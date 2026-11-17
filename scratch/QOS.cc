@@ -9,6 +9,19 @@
  * it from a YAML file, the columns are listed in ReadFlows). Each class gets its own multicast
  * group, hence its own sidelink logical channel and its own Mode 2 process in every UE.
  *
+ * The optional last column, traffic, names one of the traffic models of groupcast-adaptation-ns3
+ * (scratch_overlay/common/traffic, CustomTrafficApplication). It sets the arrivals and the sizes
+ * of the flow, in place of model, period_ms, exp_mean_ms, sizes and size_probs:
+ *
+ *   periodic1   every 100 ms, sizes 300, 190, 190, 190, 190 B in turn from a random start
+ *   periodic2   every 10 ms, 1200 B with probability 0.2, else 800 B
+ *   periodic4   every 20 ms, as periodic2
+ *   periodic5   every 50 ms, 1200 B
+ *   aperiodic1  every 50 ms + Exp(mean 50 ms) truncated to whole ms, uniform 200..2000 B by 200 B
+ *
+ * periodic3 (30-60 kB) and aperiodic2 (10-30 kB) are refused: one MoReV2X packet travels in one
+ * transport block, and those do not fit one.
+ *
  * Logs written next to the MoReV2X ones in results/<run>/:
  *   AppTxLog.txt   packet,node,flow,pqi,priority,genTime,size,pdb   one row per generated packet
  *   FlowMap.txt    flow index,name,pqi,priority,pdb,per,gbr,scheduling,rri,group L2 id
@@ -35,6 +48,8 @@
 #include "ns3/sumo-mobility-helper.h"
 #include "ns3/waveform-generator.h"
 #include "ns3/rng-seed-manager.h"
+#include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <set>
@@ -91,6 +106,9 @@ struct FlowSpec
   double burstIntervalMs;
   std::vector<uint32_t> sizes;
   std::vector<double> sizeProbabilities;
+  bool sizesInTurn = false;   // sizes are sent in turn from a random start, not drawn
+  bool wholeMsExp = false;    // the exponential part of an aperiodic interval is truncated to ms
+  std::string traffic;        // groupcast-adaptation traffic model, empty if none
   uint32_t reservationSize;
   double rriMs;
   bool sps;             // false: dynamic, a new selection for every packet
@@ -102,11 +120,70 @@ struct FlowSpec
   uint32_t l2;
 };
 
+// The traffic models of groupcast-adaptation-ns3, CustomTrafficApplication
+void
+ApplyTrafficModel (FlowSpec &spec)
+{
+  const std::string &t = spec.traffic;
+  spec.expMeanMs = 0;
+  spec.sizesInTurn = false;
+  spec.wholeMsExp = false;
+  if (t == "periodic1")
+    {
+      spec.model = "periodic";
+      spec.periodMs = 100;
+      spec.sizes = {300, 190, 190, 190, 190};
+      spec.sizeProbabilities.assign (5, 0.2);  // not drawn: sent in turn
+      spec.sizesInTurn = true;
+    }
+  else if (t == "periodic2" || t == "periodic4")
+    {
+      spec.model = "periodic";
+      spec.periodMs = t == "periodic2" ? 10 : 20;
+      spec.sizes = {1200, 800};
+      spec.sizeProbabilities = {0.2, 0.8};
+    }
+  else if (t == "periodic5")
+    {
+      spec.model = "periodic";
+      spec.periodMs = 50;
+      spec.sizes = {1200};
+      spec.sizeProbabilities = {1.0};
+    }
+  else if (t == "aperiodic1")
+    {
+      spec.model = "aperiodic";
+      spec.periodMs = 50;
+      spec.expMeanMs = 50;
+      spec.wholeMsExp = true;
+      spec.sizes.clear ();
+      for (uint32_t size = 200; size <= 2000; size += 200)
+        {
+          spec.sizes.push_back (size);
+        }
+      spec.sizeProbabilities.assign (spec.sizes.size (), 1.0 / spec.sizes.size ());
+    }
+  else
+    {
+      NS_ABORT_MSG_IF (t == "periodic3" || t == "aperiodic2",
+                       "flow " << spec.name << ": traffic " << t << " sends packets of 10 to 60 kB, larger than a transport block");
+      NS_FATAL_ERROR ("flow " << spec.name << ": unknown traffic " << t
+                      << ", expected periodic1, periodic2, periodic4, periodic5 or aperiodic1");
+    }
+  uint32_t largest = 0;
+  for (uint32_t size : spec.sizes)
+    {
+      largest = std::max (largest, size);
+    }
+  spec.reservationSize = std::max (spec.reservationSize, largest);
+}
+
 std::vector<FlowSpec>
 ReadFlows (const std::string &path)
 {
   // name,pqi,priority,pdb_ms,per,gbr,roles,share,model,period_ms,exp_mean_ms,event_rate,burst,
   // burst_interval_ms,sizes,size_probs,reservation_size,rri_ms,scheduling,stack_delay_ms,stack_jitter_ms,retx
+  // and optionally traffic
   std::ifstream file (path.c_str ());
   NS_ABORT_MSG_IF (!file.is_open (), "Flows file not found: " << path);
   std::vector<FlowSpec> flows;
@@ -119,7 +196,11 @@ ReadFlows (const std::string &path)
           continue;
         }
       std::vector<std::string> f = Split (line, ',');
-      NS_ABORT_MSG_IF (f.size () != 22, "Expected 22 columns in " << path << ", got " << f.size () << ": " << line);
+      if (f.size () == 23 && f[22].empty ())
+        {
+          f.pop_back ();
+        }
+      NS_ABORT_MSG_IF (f.size () != 22 && f.size () != 23, "Expected 22 or 23 columns in " << path << ", got " << f.size () << ": " << line);
       FlowSpec spec;
       spec.name = f[0];
       spec.pqi = std::stoul (f[1]);
@@ -153,6 +234,11 @@ ReadFlows (const std::string &path)
       spec.stackDelayMs = std::stod (f[19]);
       spec.stackJitterMs = std::stod (f[20]);
       spec.retx = std::stoul (f[21]);
+      if (f.size () == 23)
+        {
+          spec.traffic = f[22];
+          ApplyTrafficModel (spec);
+        }
       NS_ABORT_MSG_IF (spec.retx > 2, "flow " << f[0] << ": at most 2 blind retransmissions");
       NS_ABORT_MSG_IF (spec.priority < 1 || spec.priority > 8, "priority goes from 1 to 8 in flow " << spec.name);
       NS_ABORT_MSG_IF (spec.pdb > spec.rriMs, "flow " << spec.name << ": the PDB must not exceed the RRI");
@@ -222,6 +308,7 @@ private:
   {
     m_uniform = CreateObject<UniformRandomVariable> ();
     m_exponential = CreateObject<ExponentialRandomVariable> ();
+    m_turn = m_uniform->GetInteger (0, m_spec->sizes.size () - 1);
     m_socket = Socket::CreateSocket (GetNode (), UdpSocketFactory::GetTypeId ());
     m_socket->SetAllowBroadcast (true);
     m_socket->Bind ();
@@ -251,6 +338,12 @@ private:
   }
   uint32_t DrawSize (void)
   {
+    if (m_spec->sizesInTurn)
+      {
+        uint32_t size = m_spec->sizes[m_turn];
+        m_turn = (m_turn + 1) % m_spec->sizes.size ();
+        return size;
+      }
     double u = m_uniform->GetValue (0, 1), sum = 0;
     for (std::size_t i = 0; i < m_spec->sizes.size (); ++i)
       {
@@ -310,7 +403,8 @@ private:
       }
     else if (m_spec->model == "aperiodic")
       {
-        next = (m_spec->periodMs + m_exponential->GetValue (m_spec->expMeanMs, 0)) / 1000.0;
+        double exponential = m_exponential->GetValue (m_spec->expMeanMs, 0);
+        next = (m_spec->periodMs + (m_spec->wholeMsExp ? std::floor (exponential) : exponential)) / 1000.0;
       }
     else if (burstLeft > 1)
       {
@@ -336,6 +430,7 @@ private:
   EventId m_event;
   Ptr<UniformRandomVariable> m_uniform;
   Ptr<ExponentialRandomVariable> m_exponential;
+  uint32_t m_turn = 0;  // next size when the sizes are sent in turn
 };
 
 NS_OBJECT_ENSURE_REGISTERED (QosFlowApp);
