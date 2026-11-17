@@ -216,6 +216,8 @@ def main():
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--summary", action="store_true")
     args = parser.parse_args()
+    args.root = os.path.abspath(args.root)  # QOS runs in each run's folder
+    args.binary = os.path.abspath(args.binary)
     queue = grid(args.seeds)
     if args.only:
         queue = [r for r in queue if args.only in r["name"]]
