@@ -39,7 +39,8 @@ import metrics  # noqa: E402
 
 FLOW_HEADER = ["name", "pqi", "priority", "pdb_ms", "per", "gbr", "roles", "share", "model", "period_ms",
                "exp_mean_ms", "event_rate", "burst", "burst_interval_ms", "sizes", "size_probs",
-               "reservation_size", "rri_ms", "scheduling", "stack_delay_ms", "stack_jitter_ms", "retx", "traffic"]
+               "reservation_size", "rri_ms", "scheduling", "stack_delay_ms", "stack_jitter_ms", "retx", "traffic",
+               "start_s", "stop_s"]
 # A class with traffic: <model> takes its arrivals and sizes from that groupcast-adaptation traffic
 # model (scratch/QOS.cc, ApplyTrafficModel) and must not set them itself
 TRAFFIC_FIELDS = ["model", "period_ms", "exp_mean_ms", "event_rate", "burst", "burst_interval_ms", "sizes", "probs"]
@@ -76,7 +77,8 @@ def flow_row(name, spec, overrides):
             spec.get("exp_mean_ms", 0), spec.get("event_rate", 0), spec.get("burst", 1),
             spec.get("burst_interval_ms", 0), "|".join(str(s) for s in sizes), "|".join(str(p) for p in probs),
             spec.get("reservation_size", max(sizes, default=0)), spec["rri_ms"], spec.get("scheduling", "sps"),
-            spec.get("stack_delay_ms", 0), spec.get("stack_jitter_ms", 0), spec.get("retx", 0), traffic]
+            spec.get("stack_delay_ms", 0), spec.get("stack_jitter_ms", 0), spec.get("retx", 0), traffic,
+            spec.get("start_s", 0), spec.get("stop_s", 0)]
 
 
 def expand(config):

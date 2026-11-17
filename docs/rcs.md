@@ -51,6 +51,18 @@ node ~/.claude/skills/archify/bin/archify.mjs finalize architecture \
    (outcome 1), otherwise the packet is dropped (outcome 2). Dropping pulls the PDU out of RLC
    and throws it away (`m_rcsDiscard`).
 
+**Several flows.** A UE plays one contention per frame. With several flows (one MAC process per
+destination, served in priority order) the contention belongs to one packet at a time:
+
+- the first packet with nothing ahead of it registers;
+- a more urgent packet (lower SL priority value) takes the contention over until that frame's
+  contention starts: the other one leaves it (`NrV2XRcsContention::Unregister`, `RcsLog` outcome 4)
+  and contends again later;
+- a packet waiting for the UE's contention is dropped once even the next frame would deliver it
+  after its PDB (outcome 5);
+- a packet replaced in the RLC by a newer one of its flow (`KeepOnlyNewestSdu`) hands its
+  registration to the newer packet.
+
 The numerology only changes the frame geometry. With 20 MHz and 25-RB sub-channels: mu = 0 has
 106 RBs, 4 SCs per slot, 1 contention slot and 9 data slots (K = 36, M = 400); mu = 1 has 51 RBs,
 2 SCs per slot, 2 contention slots and 18 data slots (K = 36, M = 200). `--RcsSubcarriers=0`
@@ -75,7 +87,14 @@ mac->SetAttribute ("RcsChoice", PointerValue (CreateObject<MyPriorityChoice> ())
 
 Every UE draws from its own random stream. `RcsLog.txt` ends with the group the UE chose and the
 SL priority of the packet: time, node, packet, generation time (ms), frame, contention, outcome,
-SC, delay (ms), group, priority.
+SC, delay (ms), group, priority. The group is -1 on a row of a packet that did not contend in that
+frame (outcomes 2 at registration and 5).
+
+`NrV2XRcsSkewedChoice` skews the tones by the priority p of the packet (1 highest .. 8): tone k of
+the group's m sub-carriers has a probability proportional to the skew-normal density at
+x = (k + 0.5) / m, centred on (p - 1) / 7, with `Scale` 0.25 and `Shape` 4 by default. Priority 2
+then draws tones near 0.33 of the group on average and priority 5 near 0.73; the group stays
+uniform.
 
 ## Who hears a tone
 
@@ -119,6 +138,36 @@ Where MoReV2X differs from the paper's simulator:
 `notebooks/07_rcs_reproduction.ipynb` compares the grid with the paper's Figs 2 to 8, claim by
 claim, and shows the highway with each tone setting: seed 1 of every run, and a second seed of the
 runs of Figs 7 and 8. Its figures go to `figures/rcs/`, which git does not track.
+
+## RCS in QOS
+
+`scratch/QOS` takes the same options as HIGHWAY (`--Rcs`, `--RcsGroups`, `--RcsRounds`,
+`--RcsSubcarriers`, `--RcsFrame`, `--RcsContention`, `--RcsTone`, `--RcsToneRange`,
+`--RcsToneThreshold`, `--RcsTonePower`), plus `--RcsChoice=uniform|skewed`, `--RcsSkewScale`,
+`--RcsSkewShape`, `--Ideal` (no shadowing) and `--RxLog=0` (no `ReceivedLog.txt`). Under RCS it
+refuses a flow whose packets do not fit one sub-channel and prints that limit (509 B of payload on
+25 RBs at MCS 13). A flow can be limited to a window of the run (`start_s`, `stop_s` in the flows
+file), and the traffic of every flow draws from fixed random streams, so 3GPP and RCS runs of one
+seed carry exactly the same packets.
+
+## The priority experiment
+
+`tools/rcs/priority_grid.py` runs two flows of different priority on every vehicle:
+periodic1 (PQI 90, SL priority 5, PDB 100 ms, SB-SPS) all the time, and aperiodic1 (PQI 89,
+priority 2, PDB 50 ms, dynamic, sizes capped at 400 B) on 70 % of the vehicles from 10 to 20 s.
+It compares the 3GPP selection (re-evaluation and pre-emption off, re-evaluation, both; each
+also with one blind retransmission of aperiodic1, whose announcement in the SCI is what lets
+pre-emption act) with RCS
+(J = 1 and 36, uniform and skewed tones) in the paper's square and on a 2 km highway, where RCS
+tones are also heard within 600, 300 or 150 m only. `tools/rcs/priority_metrics.py` gives the
+paper's metrics per flow, for both flows and per phase (before, during, after the burst), the
+re-evaluation and pre-emption checks and changes, RCS's contention statistics per flow and the
+CBR every 100 ms.
+
+```bash
+tools/rcs/priority_grid.py --jobs 30 --seeds 1 2      # 192 runs, results/rcs_priority/
+tools/rcs/priority_grid.py --summary                  # summary.csv and the stacked tables
+```
 
 ## Running
 

@@ -151,6 +151,27 @@ NrV2XRcsContention::Register (uint64_t frame, uint32_t nodeId, Ptr<MobilityModel
   m_contenders[frame].push_back (c);
 }
 
+void
+NrV2XRcsContention::Unregister (uint64_t frame, uint32_t nodeId)
+{
+  NS_ASSERT_MSG (m_results.find (frame) == m_results.end (), "RCS: frame " << frame << " already resolved");
+  std::map<uint64_t, std::vector<Contender> >::iterator it = m_contenders.find (frame);
+  NS_ABORT_MSG_IF (it == m_contenders.end (), "RCS: nobody contends in frame " << frame);
+  for (std::vector<Contender>::iterator c = it->second.begin (); c != it->second.end (); ++c)
+    {
+      if (c->nodeId == nodeId)
+        {
+          it->second.erase (c);
+          if (it->second.empty ())
+            {
+              m_contenders.erase (it);
+            }
+          return;
+        }
+    }
+  NS_FATAL_ERROR ("RCS: node " << nodeId << " does not contend in frame " << frame);
+}
+
 bool
 NrV2XRcsContention::Hears (Ptr<MobilityModel> listener, Ptr<MobilityModel> talker) const
 {

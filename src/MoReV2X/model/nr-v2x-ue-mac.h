@@ -667,6 +667,9 @@ private:
   Ptr<NrV2XRcsChoice> m_rcsChoice; ///< draws this UE's group and tones (uniform if not set)
   NrV2XRcsPacket m_rcsPacket;      ///< the packet of the current contention, as the choice sees it
   uint32_t m_rcsGroup;             ///< group chosen for the current contention
+  bool m_rcsHeld;                  ///< a packet holds the UE's contention (one per frame)
+  uint32_t m_rcsDst;               ///< destination (flow) of that packet
+  double m_rcsGenMs;               ///< its generation time (ms)
   static std::ofstream s_rcsLog;
 
   V2XSidelinkGrant m_aperiodicV2XGrant; //aperiodic V2X grant
@@ -752,7 +755,8 @@ private:
   /// RCS: this UE's tone in a round, called by the contention
   uint32_t RcsTone (uint32_t round, uint32_t subcarriers);
   /// RCS: one line of RcsLog.txt
-  void RcsLog (uint64_t packetId, double genTime, uint64_t frame, uint8_t outcome, int32_t sc, double delay);
+  void RcsLog (uint64_t packetId, double genTime, uint64_t frame, uint8_t outcome, int32_t sc, double delay,
+               int32_t group, uint8_t priority);
   static void RcsCloseLog (void);
 
   V2XSidelinkGrant V2XChangeResources (V2XSidelinkGrant OriginalGrant, std::vector<uint16_t> GrantsToChangeIndex, std::vector<uint16_t> OkGrantsIndex, uint32_t frameNo, uint32_t subframeNo, double pdb, uint16_t PacketSize, uint16_t ReservationSize, reselectionTrigger V2Xtrigger);

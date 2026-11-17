@@ -1,5 +1,6 @@
 """End-to-end checks of the QOS scenarios: traces, the QOS program, impairments and metrics.
 Run with tools/gate.sh, or .venv/bin/python -m unittest tests.test_qos -v after sourcing .env."""
+import json
 import os
 import shutil
 import subprocess
@@ -244,6 +245,61 @@ class GroupcastTraffic(QosRun):
         self.assertIn("larger than a transport block", done.stdout)
 
 
+class RcsPriority(QosRun):
+    """The RCS priority experiment (tools/rcs/priority_grid.py) on a small static square."""
+
+    def run_qos(self, square, flows, name, *arguments):
+        out = os.path.join(self.work, name) + "/"
+        command = [QOS, "--trace=" + square, "--flows=" + flows, "--out=" + out, "--simTime=6", "--Numerology=1",
+                   "--ChannelBW=20", "--SubChannel=25", "--mcs=13", "--Ideal=1", "--RxLog=0"] + list(arguments)
+        env = dict(os.environ, DYLD_LIBRARY_PATH=BUILD, LD_LIBRARY_PATH=BUILD)
+        done = subprocess.run(command, cwd=self.work, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              text=True, timeout=900)
+        self.assertEqual(done.returncode, 0, done.stdout[-3000:])
+        return out
+
+    def test_two_flows_same_traffic_and_urgent_first(self):
+        square = os.path.join(self.work, "square")
+        subprocess.run([PYTHON, os.path.join(ROOT, "tools", "rcs", "static_square.py"), "--vehicles", "40",
+                        "--duration", "7", "--out", square], check=True)
+        classes = yaml.safe_load(open(os.path.join(ROOT, "scenarios", "rcs", "priority_classes.yaml")))["classes"]
+        overrides = {"aperiodic1": {"traffic": "aperiodic1:400", "start_s": 2, "stop_s": 4}}
+        flows = os.path.join(self.work, "flows.csv")
+        pd.DataFrame([sweep.flow_row(n, classes[n], overrides) for n in classes],
+                     columns=sweep.FLOW_HEADER).to_csv(flows, index=False)
+        sps = self.run_qos(square, flows, "sps", "--ReEvaluation=1", "--Preemption=1")
+        rcs = self.run_qos(square, flows, "rcs", "--Rcs=1", "--RcsGroups=1", "--RcsChoice=skewed")
+
+        app = {k: pd.read_csv(os.path.join(f, "AppTxLog.txt"), header=None, names=metrics.APP_COLUMNS)
+               for k, f in (("sps", sps), ("rcs", rcs))}
+        columns = ["node", "flow", "genTime", "size"]
+        pd.testing.assert_frame_equal(app["sps"][columns].reset_index(drop=True), app["rcs"][columns].reset_index(drop=True),
+                                      obj="the same traffic under both schedulers")
+        burst = app["rcs"][app["rcs"].flow == 1]
+        self.assertTrue(burst.genTime.between(2, 4).all(), "aperiodic1 only in its window")
+        self.assertEqual(set(burst["size"]), {200, 400})
+        self.assertAlmostEqual(burst.node.nunique() / 40, 0.7, delta=0.2)
+
+        log = pd.read_csv(os.path.join(rcs, "RcsLog.txt"), header=None, names=[
+            "time", "node", "packet", "genMs", "frame", "contention", "outcome", "sc", "delayMs", "group", "priority"])
+        self.assertGreater((log.outcome == 4).sum(), 0, "periodic1 gives the contention to aperiodic1")
+        self.assertEqual(set(log[log.outcome == 4].priority), {5})
+        self.assertTrue((log[log.outcome == 0].delayMs <= 100).all())
+
+        for name, folder in (("sps", sps), ("rcs", rcs)):
+            subprocess.run([PYTHON, os.path.join(ROOT, "tools", "rcs", "priority_metrics.py"), folder, square,
+                            "--model", "square", "--burst", "2", "4", "--warmup", "1"], check=True)
+            paper = pd.read_csv(os.path.join(folder, "metrics", "paper.csv")).set_index(["flow", "phase"])
+            self.assertGreater(paper.at[("periodic1", "all"), "prr"], 0.5, name)
+            self.assertGreater(paper.at[("aperiodic1", "burst"), "prr"], 0.5, name)
+            total = paper[["prr", "pcoll", "pdrop", "pchannel"]].loc[("all", "all")].sum()
+            self.assertAlmostEqual(total, 1.0, places=6)
+            values = json.load(open(os.path.join(folder, "metrics", "metrics.json")))
+            self.assertGreater(values["cbr_mean_burst"], values["cbr_mean_before"], name + ": CBR rises in the burst")
+        reevals = pd.read_csv(os.path.join(sps, "metrics", "reevaluations.csv"))
+        self.assertGreater(reevals[reevals.mechanism == "preemption"].checks.sum(), 0)
+
+
 class SweepRunner(unittest.TestCase):
     def test_expand_and_flows(self):
         config = sweep.load_config(os.path.join(ROOT, "scenarios", "qos", "sweep_full.yaml"))
@@ -259,7 +315,7 @@ class SweepRunner(unittest.TestCase):
         row = sweep.flow_row("p2", {"traffic": "periodic2", "pqi": 0, "priority": 1, "pdb_ms": 10, "per": 0,
                                     "roles": ["car"], "rri_ms": 10}, {})
         self.assertEqual(len(row), len(sweep.FLOW_HEADER))
-        self.assertEqual(row[-1], "periodic2")
+        self.assertEqual(row[sweep.FLOW_HEADER.index("traffic")], "periodic2")
         with self.assertRaises(ValueError):
             sweep.flow_row("p2", {"traffic": "periodic2", "sizes": [800], "pqi": 0, "priority": 1, "pdb_ms": 10,
                                   "per": 0, "roles": ["car"], "rri_ms": 10}, {})

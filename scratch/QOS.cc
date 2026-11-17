@@ -19,8 +19,16 @@
  *   periodic5   every 50 ms, 1200 B
  *   aperiodic1  every 50 ms + Exp(mean 50 ms) truncated to whole ms, uniform 200..2000 B by 200 B
  *
+ * aperiodic1:<max B> caps its sizes at <max> (200 + k 200 B), as Aperiodic1MaxSize does there.
  * periodic3 (30-60 kB) and aperiodic2 (10-30 kB) are refused: one MoReV2X packet travels in one
  * transport block, and those do not fit one.
+ *
+ * Two more optional columns, start_s and stop_s, restrict the flow to that window of the run
+ * (0 for either: the start or the end of the run).
+ *
+ * --Rcs replaces the sensing-based selection with Repeated Contention Scheduling (docs/rcs.md),
+ * with the same options as HIGHWAY; --RcsChoice=skewed makes every UE draw its tones from
+ * NrV2XRcsSkewedChoice, skewed by the priority of the packet. --Ideal removes the shadowing.
  *
  * Logs written next to the MoReV2X ones in results/<run>/:
  *   AppTxLog.txt   packet,node,flow,pqi,priority,genTime,size,pdb   one row per generated packet
@@ -45,6 +53,8 @@
 #include "ns3/nr-v2x-tag.h"
 #include "ns3/nr-v2x-utils.h"
 #include "ns3/nr-v2x-ue-net-device.h"
+#include "ns3/nr-v2x-rcs-contention.h"
+#include "ns3/nr-v2x-rcs-skewed-choice.h"
 #include "ns3/sumo-mobility-helper.h"
 #include "ns3/waveform-generator.h"
 #include "ns3/rng-seed-manager.h"
@@ -109,6 +119,8 @@ struct FlowSpec
   bool sizesInTurn = false;   // sizes are sent in turn from a random start, not drawn
   bool wholeMsExp = false;    // the exponential part of an aperiodic interval is truncated to ms
   std::string traffic;        // groupcast-adaptation traffic model, empty if none
+  double startS = 0;          // the flow runs in [startS, stopS); 0: from the start, to the end
+  double stopS = 0;
   uint32_t reservationSize;
   double rriMs;
   bool sps;             // false: dynamic, a new selection for every packet
@@ -150,14 +162,21 @@ ApplyTrafficModel (FlowSpec &spec)
       spec.sizes = {1200};
       spec.sizeProbabilities = {1.0};
     }
-  else if (t == "aperiodic1")
+  else if (t == "aperiodic1" || t.compare (0, 11, "aperiodic1:") == 0)
     {
+      uint32_t largest = 2000;
+      if (t.size () > 11)
+        {
+          largest = std::stoul (t.substr (11));
+          NS_ABORT_MSG_IF (largest < 200 || largest > 2000 || largest % 200 != 0,
+                           "flow " << spec.name << ": aperiodic1:<max> takes 200 to 2000 B by 200 B, got " << largest);
+        }
       spec.model = "aperiodic";
       spec.periodMs = 50;
       spec.expMeanMs = 50;
       spec.wholeMsExp = true;
       spec.sizes.clear ();
-      for (uint32_t size = 200; size <= 2000; size += 200)
+      for (uint32_t size = 200; size <= largest; size += 200)
         {
           spec.sizes.push_back (size);
         }
@@ -183,7 +202,7 @@ ReadFlows (const std::string &path)
 {
   // name,pqi,priority,pdb_ms,per,gbr,roles,share,model,period_ms,exp_mean_ms,event_rate,burst,
   // burst_interval_ms,sizes,size_probs,reservation_size,rri_ms,scheduling,stack_delay_ms,stack_jitter_ms,retx
-  // and optionally traffic
+  // and optionally traffic, then start_s,stop_s
   std::ifstream file (path.c_str ());
   NS_ABORT_MSG_IF (!file.is_open (), "Flows file not found: " << path);
   std::vector<FlowSpec> flows;
@@ -200,7 +219,8 @@ ReadFlows (const std::string &path)
         {
           f.pop_back ();
         }
-      NS_ABORT_MSG_IF (f.size () != 22 && f.size () != 23, "Expected 22 or 23 columns in " << path << ", got " << f.size () << ": " << line);
+      NS_ABORT_MSG_IF (f.size () != 22 && f.size () != 23 && f.size () != 25,
+                       "Expected 22, 23 or 25 columns in " << path << ", got " << f.size () << ": " << line);
       FlowSpec spec;
       spec.name = f[0];
       spec.pqi = std::stoul (f[1]);
@@ -234,10 +254,16 @@ ReadFlows (const std::string &path)
       spec.stackDelayMs = std::stod (f[19]);
       spec.stackJitterMs = std::stod (f[20]);
       spec.retx = std::stoul (f[21]);
-      if (f.size () == 23)
+      if (f.size () > 22 && !f[22].empty ())
         {
           spec.traffic = f[22];
           ApplyTrafficModel (spec);
+        }
+      if (f.size () == 25)
+        {
+          spec.startS = std::stod (f[23]);
+          spec.stopS = std::stod (f[24]);
+          NS_ABORT_MSG_IF (spec.stopS > 0 && spec.stopS <= spec.startS, "flow " << spec.name << ": stop_s must follow start_s");
         }
       NS_ABORT_MSG_IF (spec.retx > 2, "flow " << f[0] << ": at most 2 blind retransmissions");
       NS_ABORT_MSG_IF (spec.priority < 1 || spec.priority > 8, "priority goes from 1 to 8 in flow " << spec.name);
@@ -302,12 +328,22 @@ public:
     m_flow = flowIndex;
     m_node = nodeIndex;
   }
+  /// Streams of the arrivals and the sizes, fixed so they do not depend on the scheduler
+  void SetStreams (int64_t stream)
+  {
+    m_stream = stream;
+  }
 
 private:
   virtual void StartApplication (void)
   {
     m_uniform = CreateObject<UniformRandomVariable> ();
     m_exponential = CreateObject<ExponentialRandomVariable> ();
+    if (m_stream >= 0)
+      {
+        m_uniform->SetStream (m_stream);
+        m_exponential->SetStream (m_stream + 1);
+      }
     m_turn = m_uniform->GetInteger (0, m_spec->sizes.size () - 1);
     m_socket = Socket::CreateSocket (GetNode (), UdpSocketFactory::GetTypeId ());
     m_socket->SetAllowBroadcast (true);
@@ -431,6 +467,7 @@ private:
   Ptr<UniformRandomVariable> m_uniform;
   Ptr<ExponentialRandomVariable> m_exponential;
   uint32_t m_turn = 0;  // next size when the sizes are sent in turn
+  int64_t m_stream = -1;
 };
 
 NS_OBJECT_ENSURE_REGISTERED (QosFlowApp);
@@ -475,6 +512,13 @@ main (int argc, char *argv[])
   double rxTimeResolution = 1e-5;
   double savingPeriod = 0.5;
   bool progress = false;
+  bool ideal = false, rxLog = true;
+  bool rcs = false;
+  uint32_t rcsGroups = 1, rcsRounds = 3, rcsSubcarriers = 0;
+  double rcsFrame = 10.0, rcsContention = 1.0;
+  std::string rcsTone = "all", rcsChoice = "uniform";
+  double rcsToneRange = 300.0, rcsToneThreshold = -110.0, rcsTonePower = 23.0;
+  double rcsSkewScale = 0.25, rcsSkewShape = 4.0;
 
   CommandLine cmd;
   cmd.AddValue ("trace", "Folder written by tools/qos/make_traces.py", traceDir);
@@ -503,6 +547,21 @@ main (int argc, char *argv[])
   cmd.AddValue ("RxTimeResolution", "Time resolution of ReceivedLog.txt, s", rxTimeResolution);
   cmd.AddValue ("SavingPeriod", "Seconds between two flushes of the logs", savingPeriod);
   cmd.AddValue ("progress", "Print the simulated time every second", progress);
+  cmd.AddValue ("Ideal", "No shadowing, for the RCS paper's static square", ideal);
+  cmd.AddValue ("RxLog", "Write ReceivedLog.txt (one row per reception)", rxLog);
+  cmd.AddValue ("Rcs", "Repeated Contention Scheduling instead of the sensing-based selection", rcs);
+  cmd.AddValue ("RcsGroups", "RCS: contention groups J, a divisor of the SCs per frame", rcsGroups);
+  cmd.AddValue ("RcsRounds", "RCS: contention rounds r", rcsRounds);
+  cmd.AddValue ("RcsSubcarriers", "RCS: tone sub-carriers M, 0: one out of three of the band", rcsSubcarriers);
+  cmd.AddValue ("RcsFrame", "RCS: frame duration (ms)", rcsFrame);
+  cmd.AddValue ("RcsContention", "RCS: contention time at the start of each frame (ms)", rcsContention);
+  cmd.AddValue ("RcsTone", "RCS: who hears a tone, all | range | power", rcsTone);
+  cmd.AddValue ("RcsToneRange", "RCS: tone range (m), RcsTone=range", rcsToneRange);
+  cmd.AddValue ("RcsToneThreshold", "RCS: tone detection threshold (dBm), RcsTone=power", rcsToneThreshold);
+  cmd.AddValue ("RcsTonePower", "RCS: tone transmit power (dBm), RcsTone=power", rcsTonePower);
+  cmd.AddValue ("RcsChoice", "RCS: tone distribution, uniform | skewed (by the packet priority)", rcsChoice);
+  cmd.AddValue ("RcsSkewScale", "RCS skewed: scale of the skew-normal tone density", rcsSkewScale);
+  cmd.AddValue ("RcsSkewShape", "RCS skewed: shape of the skew-normal tone density", rcsSkewShape);
   cmd.Parse (argc, argv);
 
   NS_ABORT_MSG_IF (traceDir.empty () || flowsFile.empty (), "--trace and --flows are required");
@@ -544,6 +603,20 @@ main (int argc, char *argv[])
               }
           }
       }
+    if (rcs)
+      {
+        // An RCS winner sends its packet on one sub-channel
+        uint32_t oneSc = amc->GetSlMaxTbSize (mcs, subchannelSize, subchannelSize);
+        std::cout << "sub-channel payload limit: " << oneSc - 35 << " B (TB of " << oneSc << " B on " << subchannelSize << " RBs)" << std::endl;
+        for (const FlowSpec &f : flows)
+          {
+            for (uint32_t size : f.sizes)
+              {
+                NS_ABORT_MSG_IF (size + 35 > oneSc, "RCS: flow " << f.name << " has " << size << " B packets, one sub-channel carries "
+                                 << oneSc - 35 << " B of payload");
+              }
+          }
+      }
   }
 
   // ---------------------------------------------------------------- MAC
@@ -561,6 +634,43 @@ main (int argc, char *argv[])
   Config::SetDefault ("ns3::NrV2XUeMac::RBsBandwidth", UintegerValue (channelRbs));
   Config::SetDefault ("ns3::NrV2XUeMac::SlotDuration", DoubleValue (slot));
   Config::SetDefault ("ns3::NrV2XUeMac::NumerologyIndex", UintegerValue (numerology));
+  if (rcs)
+    {
+      const uint32_t frameSlots = (uint32_t) std::lround (rcsFrame / slot);
+      const uint32_t contentionSlots = (uint32_t) std::lround (rcsContention / slot);
+      const uint32_t scPerSlot = channelRbs / subchannelSize;
+      const uint32_t scPerFrame = (frameSlots - contentionSlots) * scPerSlot;
+      const uint32_t subcarriers = rcsSubcarriers ? rcsSubcarriers : scPerSlot * subchannelSize * 12 / 3;
+      NS_ABORT_MSG_IF (scPerFrame % rcsGroups != 0, "RCS: J = " << rcsGroups << " does not divide K = " << scPerFrame);
+      NrV2XRcsContention::ToneMode toneMode = NrV2XRcsContention::TONE_ALL;
+      if (rcsTone == "range")
+        {
+          toneMode = NrV2XRcsContention::TONE_RANGE;
+        }
+      else if (rcsTone == "power")
+        {
+          toneMode = NrV2XRcsContention::TONE_POWER;
+        }
+      else
+        {
+          NS_ABORT_MSG_IF (rcsTone != "all", "RcsTone must be all, range or power");
+        }
+      NS_ABORT_MSG_IF (rcsChoice != "uniform" && rcsChoice != "skewed", "RcsChoice must be uniform or skewed");
+      Config::SetDefault ("ns3::NrV2XUeMac::Rcs", BooleanValue (true));
+      Config::SetDefault ("ns3::NrV2XUeMac::RcsFrame", DoubleValue (rcsFrame));
+      Config::SetDefault ("ns3::NrV2XUeMac::RcsContentionTime", DoubleValue (rcsContention));
+      Config::SetDefault ("ns3::NrV2XRcsContention::Groups", UintegerValue (rcsGroups));
+      Config::SetDefault ("ns3::NrV2XRcsContention::Rounds", UintegerValue (rcsRounds));
+      Config::SetDefault ("ns3::NrV2XRcsContention::Subcarriers", UintegerValue (subcarriers));
+      Config::SetDefault ("ns3::NrV2XRcsContention::ScPerFrame", UintegerValue (scPerFrame));
+      Config::SetDefault ("ns3::NrV2XRcsContention::ToneMode", EnumValue (toneMode));
+      Config::SetDefault ("ns3::NrV2XRcsContention::ToneRange", DoubleValue (rcsToneRange));
+      Config::SetDefault ("ns3::NrV2XRcsContention::ToneThreshold", DoubleValue (rcsToneThreshold));
+      Config::SetDefault ("ns3::NrV2XRcsContention::TonePower", DoubleValue (rcsTonePower));
+      Config::SetDefault ("ns3::NrV2XRcsContention::OutputPath", StringValue (outputPath));
+      std::cout << "RCS: K = " << scPerFrame << " SCs per frame, J = " << rcsGroups << ", r = " << rcsRounds << ", M = " << subcarriers
+                << ", tones heard: " << rcsTone << ", tone choice: " << rcsChoice << std::endl;
+    }
 
   // ---------------------------------------------------------------- PHY
   Config::SetDefault ("ns3::NrV2XUePhy::TxPower", DoubleValue (txPower));
@@ -574,7 +684,7 @@ main (int argc, char *argv[])
   Config::SetDefault ("ns3::NrV2XSpectrumPhy::ReferenceSensitivity", DoubleValue (sensitivity));
   Config::SetDefault ("ns3::NrV2XSpectrumPhy::CtrlErrorModelEnabled", BooleanValue (true));
   Config::SetDefault ("ns3::NrV2XSpectrumPhy::CtrlFullDuplexEnabled", BooleanValue (false));
-  Config::SetDefault ("ns3::NrV2XSpectrumPhy::SaveCollisionLossesUnimore", BooleanValue (true));
+  Config::SetDefault ("ns3::NrV2XSpectrumPhy::SaveCollisionLossesUnimore", BooleanValue (rxLog));
   Config::SetDefault ("ns3::NrV2XSpectrumPhy::RxTimeResolution", DoubleValue (rxTimeResolution));
   // SUMO coordinates: log everything except the parking lot
   Config::SetDefault ("ns3::NrV2XSpectrumPhy::MetricsMinX", DoubleValue (-5e4));
@@ -610,8 +720,8 @@ main (int argc, char *argv[])
 
   // ---------------------------------------------------------------- channel
   Config::SetDefault ("ns3::NrV2XPropagationLossModel::Frequency", DoubleValue (5.9));
-  Config::SetDefault ("ns3::NrV2XPropagationLossModel::Sigma", DoubleValue (3.0));
-  Config::SetDefault ("ns3::NrV2XPropagationLossModel::SigmaNLOSv", DoubleValue (4.0));
+  Config::SetDefault ("ns3::NrV2XPropagationLossModel::Sigma", DoubleValue (ideal ? 0.0 : 3.0));
+  Config::SetDefault ("ns3::NrV2XPropagationLossModel::SigmaNLOSv", DoubleValue (ideal ? 0.0 : 4.0));
   // TR 37.885 Table 6.2.1-1: 25 m on the highway, 10 m in the urban grid
   Config::SetDefault ("ns3::NrV2XPropagationLossModel::DecorrDistance", DoubleValue (urban ? 10.0 : 25.0));
   Config::SetDefault ("ns3::NrV2XPropagationLossModel::Urban", BooleanValue (urban));
@@ -636,6 +746,10 @@ main (int argc, char *argv[])
   lteHelper->SetPathlossModelType ("ns3::NrV2XPropagationLossModel");
   Ptr<NrV2XPropagationLossModel> channelModel = CreateObject<NrV2XPropagationLossModel> ();
   Config::SetDefault ("ns3::NrV2XSpectrumPhy::ChannelMatrix", PointerValue (channelModel));
+  if (rcs)
+    {
+      NrV2XRcsContention::Get ()->SetPropagationLossModel (channelModel);  // tones in RcsTone=power
+    }
   lteHelper->SetAttribute ("UseSidelink", BooleanValue (true));
   lteHelper->SetEpcHelper (epcHelper);
   lteHelper->Initialize ();
@@ -695,6 +809,14 @@ main (int argc, char *argv[])
         {
           mac->PushNewRRIValue (rri);
         }
+      if (rcs && rcsChoice == "skewed")
+        {
+          // every UE its own choice, so its own random stream
+          Ptr<NrV2XRcsSkewedChoice> choice = CreateObject<NrV2XRcsSkewedChoice> ();
+          choice->SetAttribute ("Scale", DoubleValue (rcsSkewScale));
+          choice->SetAttribute ("Shape", DoubleValue (rcsSkewShape));
+          mac->SetAttribute ("RcsChoice", PointerValue (choice));
+        }
     }
 
   InternetStackHelper internet;
@@ -736,7 +858,11 @@ main (int argc, char *argv[])
     }
   flowMap.close ();
 
+  // The vehicles of each flow and their traffic draw from fixed streams, far above the ones ns-3
+  // numbers automatically: every scheduler (3GPP, RCS, any tone distribution) sees the same traffic
+  const int64_t trafficStream = 1000000;
   Ptr<UniformRandomVariable> pick = CreateObject<UniformRandomVariable> ();
+  pick->SetStream (trafficStream);
   std::ofstream nodeMap ((outputPath + "NodeMap.txt").c_str ());
   for (uint32_t i = 0; i < ueCount; ++i)
     {
@@ -749,9 +875,10 @@ main (int argc, char *argv[])
             }
           Ptr<QosFlowApp> app = CreateObject<QosFlowApp> ();
           app->Setup (&flows[k], k, i);
+          app->SetStreams (trafficStream + 2 * (1 + i * flows.size () + k));
           ues.Get (i)->AddApplication (app);
-          app->SetStartTime (Seconds (0.01));
-          app->SetStopTime (Seconds (simTime));
+          app->SetStartTime (Seconds (std::max (0.01, flows[k].startS)));
+          app->SetStopTime (Seconds (flows[k].stopS > 0 ? std::min (simTime, flows[k].stopS) : simTime));
           nodeMap << k << " ";
         }
       nodeMap << "\n";
@@ -836,7 +963,15 @@ main (int argc, char *argv[])
          << " MHz (" << channelRbs << " RBs)\nsubchannel=" << subchannelSize << "\nmcs=" << mcs << "\ntxPower=" << txPower
          << "\nrsrp=" << rsrpThreshold << "\nreEvaluation=" << reEvaluation << "\npreemption=" << preemption
          << "\npreemptionPriority=" << preemptionPriority << "\npriorityAware=" << priorityAware << "\nurban=" << urban
-         << "\nbuildings=" << buildings << "\njammer=" << jammer << "\nburstLoss=" << burstLoss << "\n";
+         << "\nbuildings=" << buildings << "\njammer=" << jammer << "\nburstLoss=" << burstLoss
+         << "\nsavingPeriod=" << savingPeriod << "\nideal=" << ideal << "\nrcs=" << rcs;
+  if (rcs)
+    {
+      readme << "\nrcsGroups=" << rcsGroups << "\nrcsRounds=" << rcsRounds << "\nrcsTone=" << rcsTone << "\nrcsToneRange="
+             << rcsToneRange << "\nrcsToneThreshold=" << rcsToneThreshold << "\nrcsChoice=" << rcsChoice
+             << "\nrcsSkewScale=" << rcsSkewScale << "\nrcsSkewShape=" << rcsSkewShape;
+    }
+  readme << "\n";
   readme.close ();
 
   if (progress)

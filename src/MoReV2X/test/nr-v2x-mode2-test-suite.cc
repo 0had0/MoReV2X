@@ -14,6 +14,7 @@
 #include "ns3/nr-v2x-amc.h"
 #include "ns3/nr-v2x-adaptive-reservation.h"
 #include "ns3/nr-v2x-rcs-contention.h"
+#include "ns3/nr-v2x-rcs-skewed-choice.h"
 #include "ns3/nr-v2x-ue-mac.h"
 #include "ns3/nr-v2x-utils.h"
 #include "ns3/test.h"
@@ -485,6 +486,55 @@ private:
   }
 };
 
+class RcsUnregisterTestCase : public TestCase
+{
+public:
+  RcsUnregisterTestCase () : TestCase ("RCS: a UE that leaves before the contention does not play it") {}
+
+private:
+  virtual void DoRun (void)
+  {
+    // J = K: one SC per group; both in group 0, the one that stays wins alone
+    Ptr<NrV2XRcsContention> channel = RcsChannel (36, 36, 400, NrV2XRcsContention::TONE_ALL);
+    Join (channel, 6, 1, At (0), NrV2XRcsPacket (), CreateObject<RcsFixedTone> (0));
+    Join (channel, 6, 2, At (0), NrV2XRcsPacket (), CreateObject<RcsFixedTone> (5));
+    channel->Unregister (6, 1);
+    NS_TEST_ASSERT_MSG_EQ (channel->GetResult (6, 2), 0, "the lower tone left: SC 0 for the other");
+    NrV2XRcsContention::Reset ();
+  }
+};
+
+class RcsSkewedChoiceByPriorityTestCase : public TestCase
+{
+public:
+  RcsSkewedChoiceByPriorityTestCase () : TestCase ("RCS: the skewed tone distribution favours the higher priority") {}
+
+private:
+  virtual void DoRun (void)
+  {
+    Ptr<NrV2XRcsSkewedChoice> choice = CreateObject<NrV2XRcsSkewedChoice> ();
+    NrV2XRcsPacket urgent;
+    urgent.priority = 2;
+    NrV2XRcsPacket background;
+    background.priority = 5;
+    double meanUrgent = 0, meanBackground = 0;
+    const uint32_t m = 200, draws = 20000;
+    for (uint32_t i = 0; i < draws; i++)
+      {
+        meanUrgent += choice->ChooseTone (m, 0, urgent);
+        meanBackground += choice->ChooseTone (m, 0, background);
+      }
+    meanUrgent /= draws * m;
+    meanBackground /= draws * m;
+    NS_TEST_ASSERT_MSG_LT (meanUrgent + 0.2, meanBackground, "priority 2 picks lower tones than priority 5");
+    // relative positions of the skew-normal means: 0.33 and 0.73 with Scale 0.25 and Shape 4
+    NS_TEST_ASSERT_MSG_EQ_TOL (meanUrgent, 0.33, 0.02, "priority 2");
+    NS_TEST_ASSERT_MSG_EQ_TOL (meanBackground, 0.73, 0.02, "priority 5");
+    std::vector<double> d = choice->ToneDistribution (5, 0, urgent);
+    NS_TEST_ASSERT_MSG_GT (d[1], d[4], "low tones more likely for priority 2");
+  }
+};
+
 class RcsToneHearingTestCase : public TestCase
 {
 public:
@@ -631,6 +681,8 @@ public:
     AddTestCase (new RcsDrawTestCase, TestCase::QUICK);
     AddTestCase (new RcsSkewedChoiceTestCase, TestCase::QUICK);
     AddTestCase (new RcsUeToneTestCase, TestCase::QUICK);
+    AddTestCase (new RcsUnregisterTestCase, TestCase::QUICK);
+    AddTestCase (new RcsSkewedChoiceByPriorityTestCase, TestCase::QUICK);
     AddTestCase (new PriorityThresholdTestCase, TestCase::QUICK);
     AddTestCase (new PreemptionTestCase, TestCase::QUICK);
   }

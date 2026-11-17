@@ -1375,8 +1375,6 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
   Config::SetDefault ("ns3::NrV2XUeMac::SlotDuration", DoubleValue (1.0/SCS_factor[OFDM_numerology])); 
   if (Rcs)
   {
-    // NrV2XUeMac keeps one contention per UE: the packet of its single sidelink flow
-    NS_ABORT_MSG_IF (!extraFlowOption.empty (), "RCS serves one flow per UE, it cannot be combined with --ExtraFlow");
     double slotMs = 1.0/SCS_factor[OFDM_numerology];
     uint32_t scPerSlot = channelBW_RBs / subchannelSize;
     uint32_t frameSlots = (uint32_t) std::lround (RcsFrame / slotMs);

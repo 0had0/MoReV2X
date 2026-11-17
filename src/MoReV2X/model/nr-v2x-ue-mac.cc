@@ -666,6 +666,9 @@ NrV2XUeMac::NrV2XUeMac ()
    m_rcsContentions = 0;
    m_rcsDiscard = false;
    m_rcsGroup = 0;
+   m_rcsHeld = false;
+   m_rcsDst = 0;
+   m_rcsGenMs = 0.0;
 }
 
 
@@ -4621,11 +4624,16 @@ NrV2XUeMac::GetDiscTxPool ()
 //
 // Frames of RcsFrame ms; the first RcsContentionTime ms hold the contention and carry no
 // data, the other slots carry K = (slots - contention slots) x sub-channels per slot SCs,
-// numbered slot by slot. A new packet joins the contention of the first frame that starts
-// at or after its arrival. After that contention time the UE reads its result: a winner
-// of SC j sends the packet once on SC j of that frame; a loser joins the next frame if the
-// first data slot of the next frame is still within the PDB, otherwise the packet is
-// dropped. No sensing, no reservation, no re-evaluation.
+// numbered slot by slot. A packet joins the contention of the first frame that starts at or
+// after its arrival. After that contention time the UE reads its result: a winner of SC j
+// sends the packet once on SC j of that frame; a loser joins the next frame if the first data
+// slot of the next frame is still within the PDB, otherwise the packet is dropped. No sensing,
+// no reservation, no re-evaluation.
+//
+// A UE plays one contention per frame. With several flows (one pool per destination, served
+// in priority order) the contention belongs to one packet at a time; a more urgent packet takes
+// it over until that frame's contention starts, and the others wait, or are dropped once no
+// frame can deliver them within their PDB.
 
 void
 NrV2XUeMac::RcsSchedule (std::map <uint32_t, PoolInfo>::iterator poolIt,
@@ -4663,15 +4671,68 @@ NrV2XUeMac::RcsSchedule (std::map <uint32_t, PoolInfo>::iterator poolIt,
   double genMs = itBsr->second.V2XGenTime * 1000.0;
   double pdb = itBsr->second.V2XPdb;
   int64_t packetId = itBsr->second.V2XPacketID;
+  uint8_t priority = itBsr->second.V2XPPPP == 0 ? 9 : itBsr->second.V2XPPPP;  // 0: none, the lowest
+  // Delay of a packet sent in the first data slot of frame f
+  #define RCS_FIRST_DATA_DELAY(f) (((f) * frameSlots + contentionSlots) * m_slotDuration - genMs)
 
-  if (packetId != m_rcsPacketId)
+  if (m_rcsHeld && m_rcsDst != poolIt->first)
     {
-      // New packet: it waits for the first contention time at or after now
+      // The UE plays one contention per frame, held by the packet of another flow. A more urgent
+      // packet takes it over while that frame's contention has not started.
+      uint8_t heldPriority = m_rcsPacket.priority == 0 ? 9 : m_rcsPacket.priority;
+      if (priority < heldPriority && now < m_rcsFrameIndex * frameSlots)
+        {
+          contention->Unregister (m_rcsFrameIndex, m_rnti);
+          RcsLog (m_rcsPacketId, m_rcsGenMs, m_rcsFrameIndex, 4, -1, RCS_FIRST_DATA_DELAY (m_rcsFrameIndex) + genMs - m_rcsGenMs,
+                  m_rcsGroup, m_rcsPacket.priority);
+          m_rcsHeld = false;  // the yielding packet waits and contends again later
+        }
+      else
+        {
+          // Waits; dropped once even the frame after the held one is past its PDB
+          double earliest = RCS_FIRST_DATA_DELAY (m_rcsFrameIndex + 1);
+          if (earliest > pdb)
+            {
+              RcsLog (packetId, genMs, m_rcsFrameIndex + 1, 5, -1, earliest, -1, itBsr->second.V2XPPPP);
+              RcsDrop (itBsr, 5);
+            }
+          return;
+        }
+    }
+
+  if (!m_rcsHeld)
+    {
+      // This packet takes the UE's contention: the first frame whose contention starts at or after now
+      uint64_t frame = (now + frameSlots - 1) / frameSlots;
+      if (RCS_FIRST_DATA_DELAY (frame) > pdb)
+        {
+          RcsLog (packetId, genMs, frame, 2, -1, RCS_FIRST_DATA_DELAY (frame), -1, itBsr->second.V2XPPPP);
+          RcsDrop (itBsr, 2);
+          return;
+        }
+      m_rcsHeld = true;
+      m_rcsDst = poolIt->first;
       m_rcsPacketId = packetId;
-      m_rcsFrameIndex = (now + frameSlots - 1) / frameSlots;
+      m_rcsGenMs = genMs;
+      m_rcsFrameIndex = frame;
       m_rcsContentions = 1;
       RcsRegister (itBsr, frameSlots);
       return;
+    }
+
+  if (packetId != m_rcsPacketId)
+    {
+      // RLC replaced the packet by a newer one of the same flow. Before the contention starts the
+      // newer packet registers in its place; once it has started, the result goes to the newer one.
+      m_rcsPacketId = packetId;
+      m_rcsGenMs = genMs;
+      if (now < m_rcsFrameIndex * frameSlots)
+        {
+          contention->Unregister (m_rcsFrameIndex, m_rnti);
+          m_rcsContentions = 1;
+          RcsRegister (itBsr, frameSlots);
+          return;
+        }
     }
 
   uint64_t dataStart = m_rcsFrameIndex * frameSlots + contentionSlots;
@@ -4682,12 +4743,13 @@ NrV2XUeMac::RcsSchedule (std::map <uint32_t, PoolInfo>::iterator poolIt,
   int32_t sc = contention->GetResult (m_rcsFrameIndex, m_rnti);
   if (sc >= 0)
     {
+      m_rcsHeld = false;  // the next frame's contention is free for any flow
       uint64_t txSlot = dataStart + sc / scPerSlot;
       uint16_t subchannel = sc % scPerSlot;
       double delay = txSlot * m_slotDuration - genMs;
       if (delay > pdb)
         {
-          RcsLog (packetId, genMs, m_rcsFrameIndex, 3, sc, delay);
+          RcsLog (packetId, genMs, m_rcsFrameIndex, 3, sc, delay, m_rcsGroup, m_rcsPacket.priority);
           RcsDrop (itBsr, 3);
           return;
         }
@@ -4722,23 +4784,25 @@ NrV2XUeMac::RcsSchedule (std::map <uint32_t, PoolInfo>::iterator poolIt,
       poolIt->second.m_currentV2XGrant = grant;
       poolIt->second.m_V2X_grant_received = true;
       poolIt->second.m_V2X_grant_fresh = true;
-      RcsLog (packetId, genMs, m_rcsFrameIndex, 0, sc, delay);
+      RcsLog (packetId, genMs, m_rcsFrameIndex, 0, sc, delay, m_rcsGroup, m_rcsPacket.priority);
       return;
     }
 
   // Lost: one more contention if the next frame's first data slot is within the PDB
   uint64_t next = m_rcsFrameIndex + 1;
-  double nextDelay = (next * frameSlots + contentionSlots) * m_slotDuration - genMs;
+  double nextDelay = RCS_FIRST_DATA_DELAY (next);
   if (nextDelay > pdb)
     {
-      RcsLog (packetId, genMs, m_rcsFrameIndex, 2, -1, nextDelay);
+      m_rcsHeld = false;
+      RcsLog (packetId, genMs, m_rcsFrameIndex, 2, -1, nextDelay, m_rcsGroup, m_rcsPacket.priority);
       RcsDrop (itBsr, 2);
       return;
     }
-  RcsLog (packetId, genMs, m_rcsFrameIndex, 1, -1, nextDelay);
+  RcsLog (packetId, genMs, m_rcsFrameIndex, 1, -1, nextDelay, m_rcsGroup, m_rcsPacket.priority);
   m_rcsFrameIndex = next;
   m_rcsContentions++;
   RcsRegister (itBsr, frameSlots);
+  #undef RCS_FIRST_DATA_DELAY
 }
 
 void
@@ -4786,11 +4850,12 @@ NrV2XUeMac::RcsDrop (std::map <SidelinkLcIdentifier, NistLteMacSapProvider::Nist
   m_rcsDiscard = false;
   itBsr->second.txQueueSize = 0;
   itBsr->second.alreadyUESelected = false;
-  NS_LOG_INFO ("RCS: UE " << m_rnti << " dropped packet " << m_rcsPacketId << " (reason " << (int) reason << ")");
+  NS_LOG_INFO ("RCS: UE " << m_rnti << " dropped packet " << itBsr->second.V2XPacketID << " (reason " << (int) reason << ")");
 }
 
 void
-NrV2XUeMac::RcsLog (uint64_t packetId, double genTime, uint64_t frame, uint8_t outcome, int32_t sc, double delay)
+NrV2XUeMac::RcsLog (uint64_t packetId, double genTime, uint64_t frame, uint8_t outcome, int32_t sc, double delay,
+                    int32_t group, uint8_t priority)
 {
   if (!s_rcsLog.is_open ())
     {
@@ -4800,10 +4865,13 @@ NrV2XUeMac::RcsLog (uint64_t packetId, double genTime, uint64_t frame, uint8_t o
   // time, node, packet, generation time (ms), frame, contention, outcome, SC, delay (ms),
   // group chosen, SL priority of the packet
   // outcome 0: won SC, sent at genTime + delay; 1: lost, contends again; 2: lost, no
-  // contention left within the PDB (dropped); 3: won an SC after the PDB (dropped)
+  // contention left within the PDB (dropped); 3: won an SC after the PDB (dropped); 4: gave the
+  // UE's contention of the frame to a more urgent packet of the UE, contends again later;
+  // 5: dropped while another packet of the UE held the contention. The group is -1 when the
+  // packet did not contend in that frame.
   s_rcsLog << Simulator::Now ().GetSeconds () << "," << m_rnti << "," << packetId << "," << genTime << ","
            << frame << "," << m_rcsContentions << "," << (int) outcome << "," << sc << "," << delay << ","
-           << m_rcsGroup << "," << (int) m_rcsPacket.priority << "\n";
+           << group << "," << (int) priority << "\n";
 }
 
 void

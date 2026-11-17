@@ -1,0 +1,38 @@
+# The two flows of the RCS priority experiment (tools/rcs/priority_grid.py).
+#
+#   periodic1   CAM-like, PQI 90: non-GBR, PDB 100 ms, PER 1e-4, SL priority 5 (classes.yaml).
+#               Every vehicle, the whole run, SB-SPS with an RRI of 100 ms.
+#   aperiodic1  warning / emergency, PQI 89: non-GBR, PDB 50 ms, PER 1e-4, SL priority 2.
+#               70 % of the vehicles, picked at random, during a 10 s window; dynamic selection.
+#
+# Traffic: groupcast-adaptation-ns3's periodic1 and aperiodic1 models. aperiodic1 is capped so a
+# packet fits one RCS sub-channel (priority_grid.py sets the cap). No blind retransmission: RCS
+# sends a packet once.
+
+classes:
+  periodic1:
+    traffic: periodic1
+    pqi: 90
+    priority: 5
+    pdb_ms: 100
+    per: 1.0e-4
+    gbr: 0
+    roles: [car, truck, platoon, emergency]
+    rri_ms: 100
+    scheduling: sps
+    retx: 0
+
+  aperiodic1:
+    traffic: aperiodic1
+    pqi: 89
+    priority: 2
+    pdb_ms: 50
+    per: 1.0e-4
+    gbr: 0
+    roles: [car, truck, platoon, emergency]
+    share: 0.7
+    rri_ms: 100
+    scheduling: dynamic
+    retx: 0
+    start_s: 10
+    stop_s: 20

@@ -73,6 +73,9 @@ public:
   void Register (uint64_t frame, uint32_t nodeId, Ptr<MobilityModel> mobility,
                  uint32_t group, ToneCallback tone);
 
+  /// Leave the contention of `frame` before it is played (a UE that contends for another packet)
+  void Unregister (uint64_t frame, uint32_t nodeId);
+
   /// After the contention time of `frame`: the SC index won (0 .. K-1), or -1
   int32_t GetResult (uint64_t frame, uint32_t nodeId);
 
