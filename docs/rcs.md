@@ -83,9 +83,9 @@ Where MoReV2X differs from the paper's simulator:
 
 ## Results
 
-`notebooks/07_rcs_reproduction.ipynb` compares seed 1 of the grid with the paper's Figs 2 to 8,
-claim by claim, and shows the highway with each tone setting. Its figures go to
-`figures/rcs/`, which git does not track.
+`notebooks/07_rcs_reproduction.ipynb` compares the grid with the paper's Figs 2 to 8, claim by
+claim, and shows the highway with each tone setting: seed 1 of every run, and a second seed of the
+runs of Figs 7 and 8. Its figures go to `figures/rcs/`, which git does not track.
 
 ## Running
 
