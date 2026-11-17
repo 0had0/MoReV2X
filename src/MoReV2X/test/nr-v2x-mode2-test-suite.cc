@@ -1,14 +1,19 @@
 /* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 #include <list>
 #include <map>
+#include <set>
 #include <vector>
 
 #include "ns3/boolean.h"
+#include "ns3/constant-position-mobility-model.h"
+#include "ns3/enum.h"
+#include "ns3/propagation-loss-model.h"
 #include "ns3/double.h"
 #include "ns3/nist-sl-pool.h"
 #include "ns3/string.h"
 #include "ns3/nr-v2x-amc.h"
 #include "ns3/nr-v2x-adaptive-reservation.h"
+#include "ns3/nr-v2x-rcs-contention.h"
 #include "ns3/nr-v2x-ue-mac.h"
 #include "ns3/nr-v2x-utils.h"
 #include "ns3/test.h"
@@ -241,6 +246,131 @@ private:
   }
 };
 
+// Repeated Contention Scheduling: a fresh contention channel with J groups, K SCs, M sub-carriers
+static Ptr<NrV2XRcsContention>
+RcsChannel (uint32_t groups, uint32_t scPerFrame, uint32_t subcarriers, NrV2XRcsContention::ToneMode mode)
+{
+  NrV2XRcsContention::Reset ();
+  Ptr<NrV2XRcsContention> channel = NrV2XRcsContention::Get ();
+  channel->SetAttribute ("Groups", UintegerValue (groups));
+  channel->SetAttribute ("ScPerFrame", UintegerValue (scPerFrame));
+  channel->SetAttribute ("Subcarriers", UintegerValue (subcarriers));
+  channel->SetAttribute ("ToneMode", EnumValue (mode));
+  return channel;
+}
+
+static Ptr<MobilityModel>
+At (double x)
+{
+  Ptr<ConstantPositionMobilityModel> mobility = CreateObject<ConstantPositionMobilityModel> ();
+  mobility->SetPosition (Vector (x, 0, 0));
+  return mobility;
+}
+
+class RcsSingleContenderTestCase : public TestCase
+{
+public:
+  RcsSingleContenderTestCase () : TestCase ("RCS: a lone contender wins the first SC of its group") {}
+
+private:
+  virtual void DoRun (void)
+  {
+    Ptr<NrV2XRcsContention> channel = RcsChannel (1, 36, 400, NrV2XRcsContention::TONE_ALL);
+    channel->Register (7, 1, At (0));
+    NS_TEST_ASSERT_MSG_EQ (channel->GetResult (7, 1), 0, "nobody to hear, so k = 0");
+    NS_TEST_ASSERT_MSG_EQ (channel->GetSubcarriersPerGroup (), 400u, "m = M / J");
+    NrV2XRcsContention::Reset ();
+  }
+};
+
+class RcsFewContendersAllWinTestCase : public TestCase
+{
+public:
+  RcsFewContendersAllWinTestCase () : TestCase ("RCS: with J = 1 and fewer contenders than SCs everybody wins") {}
+
+private:
+  virtual void DoRun (void)
+  {
+    // A node leaves only after hearing w = 36 distinct lower sub-carriers
+    Ptr<NrV2XRcsContention> channel = RcsChannel (1, 36, 400, NrV2XRcsContention::TONE_ALL);
+    for (uint32_t node = 1; node <= 20; node++)
+      {
+        channel->Register (3, node, At (0));
+      }
+    std::set<int32_t> scs;
+    for (uint32_t node = 1; node <= 20; node++)
+      {
+        int32_t sc = channel->GetResult (3, node);
+        NS_TEST_ASSERT_MSG_EQ ((sc >= 0 && sc < 20), true, "k counts the lower picks, at most 19");
+        scs.insert (sc);
+      }
+    NS_TEST_ASSERT_MSG_GT (scs.size (), 15u, "only equal picks share an SC");
+    NrV2XRcsContention::Reset ();
+  }
+};
+
+class RcsOneScPerGroupTestCase : public TestCase
+{
+public:
+  RcsOneScPerGroupTestCase () : TestCase ("RCS: with J = K every group fills its single SC") {}
+
+private:
+  virtual void DoRun (void)
+  {
+    Ptr<NrV2XRcsContention> channel = RcsChannel (36, 36, 400, NrV2XRcsContention::TONE_ALL);
+    for (uint32_t node = 1; node <= 360; node++)
+      {
+        channel->Register (9, node, At (0));
+      }
+    std::map<int32_t, uint32_t> winners;
+    for (uint32_t node = 1; node <= 360; node++)
+      {
+        int32_t sc = channel->GetResult (9, node);
+        if (sc >= 0)
+          {
+            winners[sc]++;
+          }
+      }
+    NS_TEST_ASSERT_MSG_EQ (winners.size (), 36u, "ten contenders per group, each group wins its SC");
+    uint32_t total = 0;
+    for (std::map<int32_t, uint32_t>::iterator it = winners.begin (); it != winners.end (); it++)
+      {
+        total += it->second;
+      }
+    NS_TEST_ASSERT_MSG_LT (total, 46u, "three rounds on 11 sub-carriers leave few ties");
+    NrV2XRcsContention::Reset ();
+  }
+};
+
+class RcsToneHearingTestCase : public TestCase
+{
+public:
+  RcsToneHearingTestCase () : TestCase ("RCS: tones are heard by all, within a range, or above a power") {}
+
+private:
+  virtual void DoRun (void)
+  {
+    Ptr<NrV2XRcsContention> channel = RcsChannel (1, 36, 400, NrV2XRcsContention::TONE_ALL);
+    NS_TEST_ASSERT_MSG_EQ (channel->Hears (At (0), At (1e5)), true, "All");
+    channel->SetAttribute ("ToneMode", EnumValue (NrV2XRcsContention::TONE_RANGE));
+    channel->SetAttribute ("ToneRange", DoubleValue (300));
+    NS_TEST_ASSERT_MSG_EQ (channel->Hears (At (0), At (200)), true, "within the range");
+    NS_TEST_ASSERT_MSG_EQ (channel->Hears (At (0), At (400)), false, "beyond the range");
+    channel->SetAttribute ("ToneMode", EnumValue (NrV2XRcsContention::TONE_POWER));
+    channel->SetAttribute ("ToneThreshold", DoubleValue (-110));
+    channel->SetPropagationLossModel (CreateObject<FriisPropagationLossModel> ());
+    NS_TEST_ASSERT_MSG_EQ (channel->Hears (At (0), At (200)), true, "about -70 dBm at 200 m");
+    NS_TEST_ASSERT_MSG_EQ (channel->Hears (At (0), At (1e5)), false, "about -124 dBm at 100 km");
+
+    // Two contenders out of each other's range both count no lower tone: both take SC 0
+    channel->SetAttribute ("ToneMode", EnumValue (NrV2XRcsContention::TONE_RANGE));
+    channel->Register (4, 1, At (0));
+    channel->Register (4, 2, At (1000));
+    NS_TEST_ASSERT_MSG_EQ (channel->GetResult (4, 1), 0, "hears nobody");
+    NS_TEST_ASSERT_MSG_EQ (channel->GetResult (4, 2), 0, "reuses the SC 1 km away");
+    NrV2XRcsContention::Reset ();
+  }
+};
 
 // sl-ThresRSRP-pi-pj and sl-xPercentage, TS 38.214 8.1.4 steps 5 and 6
 class PriorityThresholdTestCase : public TestCase
@@ -351,6 +481,10 @@ public:
     AddTestCase (new AdaptiveReservationTestCase, TestCase::QUICK);
     AddTestCase (new LegacyHackDefaultTestCase, TestCase::QUICK);
     AddTestCase (new MaxTbSizeTestCase, TestCase::QUICK);
+    AddTestCase (new RcsSingleContenderTestCase, TestCase::QUICK);
+    AddTestCase (new RcsFewContendersAllWinTestCase, TestCase::QUICK);
+    AddTestCase (new RcsOneScPerGroupTestCase, TestCase::QUICK);
+    AddTestCase (new RcsToneHearingTestCase, TestCase::QUICK);
     AddTestCase (new PriorityThresholdTestCase, TestCase::QUICK);
     AddTestCase (new PreemptionTestCase, TestCase::QUICK);
   }

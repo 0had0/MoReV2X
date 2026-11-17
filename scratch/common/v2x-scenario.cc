@@ -178,6 +178,8 @@ bool UrbanScenario;
 std::string FilePath;
 
 bool enableUDPfiles;
+bool enableRxFile = true;
+uint32_t UniformPeriod = 0; // ms, 0: the upstream split (20 % of the UEs every 20 ms, the others every 100 ms)
 
 bool externalMobility = false; // Vehicle positions come from SUMO or a replayed trace
 
@@ -728,7 +730,7 @@ void PacketSink::HandleRead (Ptr<Socket> socket)
     currentSequenceNumber+=0;
     Point p = {(int)rxPosX, (int)rxPosY}; 
     insideRX = PositionChecker.isInsidePoly("RX", p);
-    if (insideRX && enableUDPfiles)
+    if (insideRX && enableUDPfiles && enableRxFile)
     {
       filetest.open(FilePath + "RxFile.txt",std::ios_base::app);
       filetest << rxPacketID << "," << tGenSec << "," << Simulator::Now().GetSeconds() << "," << Simulator::Now().GetSeconds() - tGenSec <<"," << nodeId << "," << packet->GetSize () << "," << TxRxDistance << "," << numHops << "," << (int) messageType << "," << (int)rxV2xTag.GetTrafficType () << "," << (int) alreadyReceived << "\r\n" ;
@@ -873,6 +875,19 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
   uint16_t channelBW_RBs;
   uint32_t subchannelSize = 10; //Default
 
+  // Repeated Contention Scheduling (Rolich et al., MAIN 2026) and the paper's ideal channel
+  bool Rcs = false;
+  uint32_t RcsGroups = 1;          // J
+  uint32_t RcsRounds = 3;          // r
+  uint32_t RcsSubcarriers = 0;     // M, 0: one sub-carrier out of three of the data sub-channels
+  double RcsFrame = 10.0;          // Tf (ms)
+  double RcsContention = 1.0;      // contention time (ms)
+  std::string RcsTone = "all";     // all, range or power
+  double RcsToneRange = 300.0;     // m
+  double RcsToneThreshold = -110.0; // dBm
+  double RcsTonePower = 23.0;      // dBm
+  bool RxLog = true;               // write ReceivedLog.txt
+
   bool IBE = true;
 
   std::string outputPath;
@@ -997,6 +1012,19 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
   std::string extraFlowOption = "";
   cmd.AddValue ("ExtraFlow", "Second class on every UE: <period ms>:<PDB ms>:<payload B>:<priority>:<sps|dynamic>", extraFlowOption);
   cmd.AddValue ("LegacyEvenUeOneShot", "Force Cresel=1 on even UEs, as upstream MoReV2X v4.1 did", LegacyEvenUeOneShot);
+  cmd.AddValue ("Rcs", "Repeated Contention Scheduling instead of the sensing-based selection", Rcs);
+  cmd.AddValue ("RcsGroups", "RCS: contention groups J (must divide the SCs per frame)", RcsGroups);
+  cmd.AddValue ("RcsRounds", "RCS: contention rounds r", RcsRounds);
+  cmd.AddValue ("RcsSubcarriers", "RCS: contention sub-carriers M, 0 = one out of three of the data sub-channels", RcsSubcarriers);
+  cmd.AddValue ("RcsFrame", "RCS: frame duration Tf (ms)", RcsFrame);
+  cmd.AddValue ("RcsContention", "RCS: contention time at the start of each frame (ms)", RcsContention);
+  cmd.AddValue ("RcsTone", "RCS: who hears a tone, all | range | power", RcsTone);
+  cmd.AddValue ("RcsToneRange", "RCS: tone range (m), RcsTone=range", RcsToneRange);
+  cmd.AddValue ("RcsToneThreshold", "RCS: tone detection threshold (dBm), RcsTone=power", RcsToneThreshold);
+  cmd.AddValue ("RcsTonePower", "RCS: tone transmit power (dBm), RcsTone=power", RcsTonePower);
+  cmd.AddValue ("UniformPeriod", "Periodic traffic: every UE sends every UniformPeriod ms (0: 20 % of the UEs every 20 ms, the others every 100 ms)", UniformPeriod);
+  cmd.AddValue ("RxFile", "With UdpFiles, also write RxFile.txt (one row per application reception)", enableRxFile);
+  cmd.AddValue ("RxLog", "Write ReceivedLog.txt (one row per reception, large in dense runs)", RxLog);
   scenario.AddOptions (cmd);
 
 
@@ -1315,7 +1343,7 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
   Config::SetDefault ("ns3::NrV2XSpectrumPhy::ReferenceSensitivity", DoubleValue (RefSensitivity));  
   Config::SetDefault ("ns3::NrV2XSpectrumPhy::CtrlErrorModelEnabled", BooleanValue (CtrlErrorModelEnabled));  // Set but not used
   Config::SetDefault ("ns3::NrV2XSpectrumPhy::CtrlFullDuplexEnabled", BooleanValue (!CtrlErrorModelEnabled)); // Set but not used
-  Config::SetDefault ("ns3::NrV2XSpectrumPhy::SaveCollisionLossesUnimore", BooleanValue (true)); //fare var apposta   // Enable the collision and propagation loss event saving
+  Config::SetDefault ("ns3::NrV2XSpectrumPhy::SaveCollisionLossesUnimore", BooleanValue (RxLog)); //fare var apposta   // Enable the collision and propagation loss event saving
 
   // Used for 
   Config::SetDefault ("ns3::NrV2XUeMac::RandomV2VSelection", BooleanValue (randomV2VSelection));
@@ -1345,6 +1373,40 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
   Config::SetDefault ("ns3::NrV2XUeMac::SubchannelSize", UintegerValue (subchannelSize)); 
   Config::SetDefault ("ns3::NrV2XUeMac::RBsBandwidth", UintegerValue (channelBW_RBs)); 
   Config::SetDefault ("ns3::NrV2XUeMac::SlotDuration", DoubleValue (1.0/SCS_factor[OFDM_numerology])); 
+  if (Rcs)
+  {
+    double slotMs = 1.0/SCS_factor[OFDM_numerology];
+    uint32_t scPerSlot = channelBW_RBs / subchannelSize;
+    uint32_t frameSlots = (uint32_t) std::lround (RcsFrame / slotMs);
+    uint32_t contentionSlots = (uint32_t) std::lround (RcsContention / slotMs);
+    uint32_t scPerFrame = (frameSlots - contentionSlots) * scPerSlot;
+    uint32_t subcarriers = RcsSubcarriers ? RcsSubcarriers : scPerSlot * subchannelSize * 12 / 3;
+    NS_ABORT_MSG_IF (scPerFrame % RcsGroups != 0, "RCS: J = " << RcsGroups << " does not divide K = " << scPerFrame);
+    NrV2XRcsContention::ToneMode toneMode = NrV2XRcsContention::TONE_ALL;
+    if (RcsTone == "range")
+      toneMode = NrV2XRcsContention::TONE_RANGE;
+    else if (RcsTone == "power")
+      toneMode = NrV2XRcsContention::TONE_POWER;
+    else
+      NS_ABORT_MSG_IF (RcsTone != "all", "RcsTone must be all, range or power");
+    Config::SetDefault ("ns3::NrV2XUeMac::Rcs", BooleanValue (true));
+    Config::SetDefault ("ns3::NrV2XUeMac::RcsFrame", DoubleValue (RcsFrame));
+    Config::SetDefault ("ns3::NrV2XUeMac::RcsContentionTime", DoubleValue (RcsContention));
+    Config::SetDefault ("ns3::NrV2XRcsContention::Groups", UintegerValue (RcsGroups));
+    Config::SetDefault ("ns3::NrV2XRcsContention::Rounds", UintegerValue (RcsRounds));
+    Config::SetDefault ("ns3::NrV2XRcsContention::Subcarriers", UintegerValue (subcarriers));
+    Config::SetDefault ("ns3::NrV2XRcsContention::ScPerFrame", UintegerValue (scPerFrame));
+    Config::SetDefault ("ns3::NrV2XRcsContention::ToneMode", EnumValue (toneMode));
+    Config::SetDefault ("ns3::NrV2XRcsContention::ToneRange", DoubleValue (RcsToneRange));
+    Config::SetDefault ("ns3::NrV2XRcsContention::ToneThreshold", DoubleValue (RcsToneThreshold));
+    Config::SetDefault ("ns3::NrV2XRcsContention::TonePower", DoubleValue (RcsTonePower));
+    Config::SetDefault ("ns3::NrV2XRcsContention::OutputPath", StringValue (outputPath));
+    std::ofstream rcsReadme ((outputPath + "simREADME.txt").c_str (), std::ios_base::app);
+    rcsReadme << " - RCS: J = " << RcsGroups << ", r = " << RcsRounds << ", M = " << subcarriers << ", K = " << scPerFrame
+              << " (" << frameSlots - contentionSlots << " data slots x " << scPerSlot << " sub-channels), m = "
+              << subcarriers / RcsGroups << ", w = " << scPerFrame / RcsGroups << ", tones heard: " << RcsTone << std::endl;
+    rcsReadme.close ();
+  }
   Config::SetDefault ("ns3::NrV2XUeMac::NumerologyIndex", UintegerValue (OFDM_numerology)); 
 
   Config::SetDefault ("ns3::NrV2XSpectrumPhy::SubchannelSize", UintegerValue (subchannelSize)); 
@@ -1413,6 +1475,10 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
   Ptr<NrV2XPropagationLossModel> Sl3GPPChannelMatrix = CreateObject<NrV2XPropagationLossModel> ();
 
   Config::SetDefault ("ns3::NrV2XSpectrumPhy::ChannelMatrix", PointerValue (Sl3GPPChannelMatrix)); 
+  if (Rcs)
+  {
+    NrV2XRcsContention::Get ()->SetPropagationLossModel (Sl3GPPChannelMatrix);
+  }
 
  
 
@@ -1628,7 +1694,7 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
        Ptr<Node> node = *L;
        ID = node->GetId ();
 //       if (ID % 2 == 0)   
-       if (ID % ModuloSplit <= 1)   
+       if (UniformPeriod == 0 && ID % ModuloSplit <= 1)   
        {
          if (inputPDB != 0)
            PDB_Periodic.push_back(inputPDB);
@@ -1645,7 +1711,7 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
          else
            PDB_Periodic.push_back(100);
 //           PDB_Periodic.push_back(20);
-         Periodic_Tgen.push_back(100);
+         Periodic_Tgen.push_back(UniformPeriod ? UniformPeriod : 100);
 //         Periodic_Tgen.push_back(20);
        }
      } 

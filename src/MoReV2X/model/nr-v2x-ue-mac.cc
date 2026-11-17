@@ -24,6 +24,7 @@
 
 
 #include <ns3/log.h>
+#include <ns3/abort.h>
 #include <ns3/pointer.h>
 #include <ns3/packet.h>
 #include <ns3/packet-burst.h>
@@ -341,6 +342,7 @@ NistUeMemberLteUePhySapUser::StoreTxInfo (SidelinkCommResourcePool::SubframeInfo
 
 
 std::vector<NrV2XUeMac::UeSelectionInfo> NrV2XUeMac::SelectedGrants;
+std::ofstream NrV2XUeMac::s_rcsLog;
 double NrV2XUeMac::prevPrintTime_selection = 0.0;
 
 std::vector<NrV2XUeMac::UeReEvaluationInfo> NrV2XUeMac::ReEvaluationStats;
@@ -492,6 +494,21 @@ NrV2XUeMac::GetTypeId (void)
                                         BooleanValue (false),
                                         MakeBooleanAccessor (&NrV2XUeMac::m_legacyEvenUeOneShot),
                                         MakeBooleanChecker ())
+                .AddAttribute ("Rcs",
+                                        "Repeated Contention Scheduling (Rolich et al. 2026) instead of the sensing-based selection",
+                                        BooleanValue (false),
+                                        MakeBooleanAccessor (&NrV2XUeMac::m_rcs),
+                                        MakeBooleanChecker ())
+                .AddAttribute ("RcsFrame",
+                                        "RCS frame duration Tf (ms)",
+                                        DoubleValue (10.0),
+                                        MakeDoubleAccessor (&NrV2XUeMac::m_rcsFrame),
+                                        MakeDoubleChecker<double> (0.0))
+                .AddAttribute ("RcsContentionTime",
+                                        "RCS contention time at the start of each frame (ms)",
+                                        DoubleValue (1.0),
+                                        MakeDoubleAccessor (&NrV2XUeMac::m_rcsContentionTime),
+                                        MakeDoubleChecker<double> (0.0))
                 .AddAttribute ("PriorityAwareSensing",
                                         "Use the SCI priority in sensing: the RSRP threshold of step 5 depends on the pair "
                                         "(received priority, own priority) and X% of step 6 on the own priority, TS 38.214 8.1.4",
@@ -635,6 +652,13 @@ NrV2XUeMac::NrV2XUeMac ()
    m_resUniformVariable = CreateObject<UniformRandomVariable> ();
    m_evalKeepProb = CreateObject<UniformRandomVariable> (); // Default range is [0,1)
 
+   m_rcs = false;
+   m_rcsFrame = 10.0;
+   m_rcsContentionTime = 1.0;
+   m_rcsPacketId = -1;
+   m_rcsFrameIndex = 0;
+   m_rcsContentions = 0;
+   m_rcsDiscard = false;
 }
 
 
@@ -719,6 +743,11 @@ NrV2XUeMac::DoTransmitPdu (NistLteMacSapProvider::NistTransmitPduParameters para
     //find transmitting pool
     std::map <uint32_t, PoolInfo>::iterator poolIt = m_sidelinkTxPoolsMap.find (params.dstL2Id);
     NS_ASSERT (poolIt!= m_sidelinkTxPoolsMap.end());
+    if (m_rcsDiscard)
+    {
+      NS_LOG_INFO ("RCS: the packet missed its delay budget, PDU discarded");
+      return;
+    }
     NistLteRadioBearerTag tag (params.rnti, params.lcid, params.srcL2Id, params.dstL2Id);
     params.pdu->AddPacketTag (tag);
     // store pdu in HARQ buffer
@@ -2533,7 +2562,11 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
          } //end if (poolIt->second.m_V2X_grant_received) 
        } //end if (itBsr == m_slBsrReceived.end () || (*itBsr).second.txQueueSize == 0) 
 
-       if (poolIt->second.m_pool->GetSchedulingType() == SidelinkCommResourcePool::UE_SELECTED)
+       if (m_rcs)
+       {
+         RcsSchedule (poolIt, itBsr, frameNo, subframeNo);
+       }
+       else if (poolIt->second.m_pool->GetSchedulingType() == SidelinkCommResourcePool::UE_SELECTED)
        {
 	 if (!(itBsr == m_slBsrReceived.end () || (*itBsr).second.txQueueSize == 0) && !(*itBsr).second.alreadyUESelected)
          {
@@ -2613,7 +2646,7 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
 //        NS_LOG_DEBUG("PDB = " << itBsr->second.V2XPdb);
 //        std::cin.get();
 
-         if (( (ReservationDelay > itBsr->second.V2XPdb) || (ReTxReservationDelay > itBsr->second.V2XPdb) ) && poolIt->second.m_currentV2XGrant.m_TxIndex == 1)
+         if (!m_rcs && ( (ReservationDelay > itBsr->second.V2XPdb) || (ReTxReservationDelay > itBsr->second.V2XPdb) ) && poolIt->second.m_currentV2XGrant.m_TxIndex == 1)
          {
            // With adaptive reservation the first packet after an RRI change can miss the old slot
            NS_ASSERT_MSG(aperiodicTraffic || m_adaptiveReservation, "Periodic traffic should not generate latency reselections");
@@ -2653,7 +2686,7 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
            poolIt->second.m_V2X_grant_fresh = true;
            poolIt->second.m_currentV2XGrant = newV2Xgrant;
          }
-         else if (poolIt->second.m_currentV2XGrant.m_grantTransmissions[1].m_rbLenPssch < TBLen_RBs && poolIt->second.m_currentV2XGrant.m_TxIndex == 1)
+         else if (!m_rcs && poolIt->second.m_currentV2XGrant.m_grantTransmissions[1].m_rbLenPssch < TBLen_RBs && poolIt->second.m_currentV2XGrant.m_TxIndex == 1)
          {
          //  NS_ASSERT_MSG(aperiodicTraffic, "Periodic traffic should not generate size reselections");
            NS_LOG_DEBUG("Now: Size Reselection");
@@ -2911,7 +2944,7 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
            NS_LOG_INFO("poolIt->second.m_currentV2XGrant.m_Cresel: " << poolIt->second.m_currentV2XGrant.m_Cresel);
            if ((poolIt->second.m_currentV2XGrant.m_Cresel == 0) && (poolIt->second.m_currentV2XGrant.m_TxIndex == poolIt->second.m_currentV2XGrant.m_grantTransmissions.size() )) //TODO FIXME 
            {  
-             if (m_evalKeepProb->GetValue() > (1-m_keepProbability))
+             if (!m_rcs && m_evalKeepProb->GetValue() > (1-m_keepProbability))
              {
                NS_LOG_UNCOND("Keep the same resources");
                poolIt->second.m_currentV2XGrant.m_Cresel = GetCresel(poolIt->second.m_currentV2XGrant.m_RRI);
@@ -3132,7 +3165,7 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
                    poolIt->second.m_currentV2XGrant = m_tmpV2XGrant;
                    if (poolIt->second.m_currentV2XGrant.m_Cresel == 0 )
                    { 
-                     if (m_evalKeepProb->GetValue() > (1-m_keepProbability))
+                     if (!m_rcs && m_evalKeepProb->GetValue() > (1-m_keepProbability))
                      {
                        NS_LOG_UNCOND("Keep the same resources");
                        std::cin.get();
@@ -4573,5 +4606,169 @@ NrV2XUeMac::GetDiscTxPool ()
 }
 
 
+
+// ---------------------------------------------------------------------------------------
+// Repeated Contention Scheduling (RCS), A. Rolich et al., MAIN 2026, arXiv:2607.06103
+//
+// Frames of RcsFrame ms; the first RcsContentionTime ms hold the contention and carry no
+// data, the other slots carry K = (slots - contention slots) x sub-channels per slot SCs,
+// numbered slot by slot. A new packet joins the contention of the first frame that starts
+// at or after its arrival. After that contention time the UE reads its result: a winner
+// of SC j sends the packet once on SC j of that frame; a loser joins the next frame if the
+// first data slot of the next frame is still within the PDB, otherwise the packet is
+// dropped. No sensing, no reservation, no re-evaluation.
+
+void
+NrV2XUeMac::RcsSchedule (std::map <uint32_t, PoolInfo>::iterator poolIt,
+                         std::map <SidelinkLcIdentifier, NistLteMacSapProvider::NistReportBufferNistStatusParameters>::iterator itBsr,
+                         uint32_t frameNo, uint32_t subframeNo)
+{
+  if (itBsr == m_slBsrReceived.end () || itBsr->second.txQueueSize == 0
+      || itBsr->second.alreadyUESelected || poolIt->second.m_V2X_grant_received)
+    {
+      return;  // nothing to contend for, or a won SC is waiting for its slot
+    }
+  Ptr<NrV2XRcsContention> contention = NrV2XRcsContention::Get ();
+  if (m_rcsMobility == 0)
+    {
+      NodeContainer nodes = NodeContainer::GetGlobal ();
+      for (NodeContainer::Iterator n = nodes.Begin (); n != nodes.End (); ++n)
+        {
+          if ((*n)->GetId () == m_rnti)
+            {
+              m_rcsMobility = (*n)->GetObject<MobilityModel> ();
+              break;
+            }
+        }
+      NS_ABORT_MSG_IF (m_rcsMobility == 0, "RCS: no mobility model for node " << m_rnti);
+    }
+
+  uint32_t frameSlots = (uint32_t) std::lround (m_rcsFrame / m_slotDuration);
+  uint32_t contentionSlots = (uint32_t) std::lround (m_rcsContentionTime / m_slotDuration);
+  uint32_t scPerSlot = m_BW_RBs / m_nsubCHsize;
+  NS_ABORT_MSG_IF ((frameSlots - contentionSlots) * scPerSlot != contention->GetScPerFrame (),
+                   "RCS: " << frameSlots - contentionSlots << " data slots x " << scPerSlot
+                   << " sub-channels differ from ScPerFrame " << contention->GetScPerFrame ());
+
+  uint64_t now = (uint64_t) std::llround (Simulator::Now ().GetSeconds () * 1000.0 / m_slotDuration);
+  double genMs = itBsr->second.V2XGenTime * 1000.0;
+  double pdb = itBsr->second.V2XPdb;
+  int64_t packetId = itBsr->second.V2XPacketID;
+
+  if (packetId != m_rcsPacketId)
+    {
+      // New packet: it waits for the first contention time at or after now
+      m_rcsPacketId = packetId;
+      m_rcsFrameIndex = (now + frameSlots - 1) / frameSlots;
+      m_rcsContentions = 1;
+      contention->Register (m_rcsFrameIndex, m_rnti, m_rcsMobility);
+      return;
+    }
+
+  uint64_t dataStart = m_rcsFrameIndex * frameSlots + contentionSlots;
+  if (now < dataStart)
+    {
+      return;  // its contention is not over yet
+    }
+  int32_t sc = contention->GetResult (m_rcsFrameIndex, m_rnti);
+  if (sc >= 0)
+    {
+      uint64_t txSlot = dataStart + sc / scPerSlot;
+      uint16_t subchannel = sc % scPerSlot;
+      double delay = txSlot * m_slotDuration - genMs;
+      if (delay > pdb)
+        {
+          RcsLog (packetId, genMs, m_rcsFrameIndex, 3, sc, delay);
+          RcsDrop (itBsr, 3);
+          return;
+        }
+      uint16_t TBlen_subCH, TBlen_RBs;
+      m_NRamc->GetSlSubchAndTbSizeFromMcs (itBsr->second.txQueueSize, m_slGrantMcs, m_nsubCHsize, m_BW_RBs, &TBlen_subCH, &TBlen_RBs);
+      // TBlen_subCH holds RBs (alloc_subchannels * subchannelSize) despite its name
+      NS_ABORT_MSG_IF (TBlen_subCH > m_nsubCHsize, "RCS: a packet must fit one sub-channel, " << itBsr->second.txQueueSize << " B need " << TBlen_subCH << " RBs");
+
+      // Slot of the SC in the MAC's frame / subframe numbering (1-based, 1024 frames of 10 slots)
+      uint32_t slotIndex = ((frameNo - 1) * 10 + (subframeNo - 1) + (uint32_t) (txSlot - now)) % 10240;
+      V2XSchedulingInfo tx;
+      tx.m_rbStartPssch = subchannel * m_nsubCHsize;
+      tx.m_rbLenPssch = m_nsubCHsize;
+      tx.m_rbStartPscch = subchannel * m_nsubCHsize;
+      tx.m_rbLenPscch = m_nsubCHsize;
+      tx.m_nextReservedFrame = slotIndex / 10 + 1;
+      tx.m_nextReservedSubframe = slotIndex % 10 + 1;
+      tx.m_ReEvaluationFrame = 0;     // frame 0 never occurs: no re-evaluation with RCS
+      tx.m_ReEvaluationSubframe = 0;
+      tx.m_EnableReEvaluation = true; // i.e. not announced before
+      tx.m_SelectionTrigger = COUNTER;
+      tx.m_announced = false;
+
+      V2XSidelinkGrant grant;
+      grant.m_mcs = m_slGrantMcs;
+      grant.m_tbSize = 0;             // computed when the packet is sent
+      grant.m_TxNumber = 1;
+      grant.m_TxIndex = 1;
+      grant.m_RRI = itBsr->second.V2XPrsvp;
+      grant.m_Cresel = 0;             // one shot: the grant expires after this transmission
+      grant.m_grantTransmissions.insert (std::pair<uint16_t, V2XSchedulingInfo> (1, tx));
+      poolIt->second.m_currentV2XGrant = grant;
+      poolIt->second.m_V2X_grant_received = true;
+      poolIt->second.m_V2X_grant_fresh = true;
+      RcsLog (packetId, genMs, m_rcsFrameIndex, 0, sc, delay);
+      return;
+    }
+
+  // Lost: one more contention if the next frame's first data slot is within the PDB
+  uint64_t next = m_rcsFrameIndex + 1;
+  double nextDelay = (next * frameSlots + contentionSlots) * m_slotDuration - genMs;
+  if (nextDelay > pdb)
+    {
+      RcsLog (packetId, genMs, m_rcsFrameIndex, 2, -1, nextDelay);
+      RcsDrop (itBsr, 2);
+      return;
+    }
+  RcsLog (packetId, genMs, m_rcsFrameIndex, 1, -1, nextDelay);
+  m_rcsFrameIndex = next;
+  m_rcsContentions++;
+  contention->Register (m_rcsFrameIndex, m_rnti, m_rcsMobility);
+}
+
+void
+NrV2XUeMac::RcsDrop (std::map <SidelinkLcIdentifier, NistLteMacSapProvider::NistReportBufferNistStatusParameters>::iterator itBsr,
+                     uint8_t reason)
+{
+  // RLC hands the packet over as for a transmission, and DoTransmitPdu drops it
+  std::map <SidelinkLcIdentifier, NistLcInfo>::iterator it = m_slLcInfoMap.find (itBsr->first);
+  NS_ASSERT_MSG (it != m_slLcInfoMap.end (), "RCS: no logical channel for the dropped packet");
+  m_rcsDiscard = true;
+  (*it).second.macSapUser->NotifyTxOpportunity (itBsr->second.txQueueSize + 10, 0, 0);
+  m_rcsDiscard = false;
+  itBsr->second.txQueueSize = 0;
+  itBsr->second.alreadyUESelected = false;
+  NS_LOG_INFO ("RCS: UE " << m_rnti << " dropped packet " << m_rcsPacketId << " (reason " << (int) reason << ")");
+}
+
+void
+NrV2XUeMac::RcsLog (uint64_t packetId, double genTime, uint64_t frame, uint8_t outcome, int32_t sc, double delay)
+{
+  if (!s_rcsLog.is_open ())
+    {
+      s_rcsLog.open ((m_outputPath + "RcsLog.txt").c_str (), std::ios_base::app);
+      Simulator::ScheduleDestroy (&NrV2XUeMac::RcsCloseLog);
+    }
+  // time, node, packet, generation time (ms), frame, contention, outcome, SC, delay (ms)
+  // outcome 0: won SC, sent at genTime + delay; 1: lost, contends again; 2: lost, no
+  // contention left within the PDB (dropped); 3: won an SC after the PDB (dropped)
+  s_rcsLog << Simulator::Now ().GetSeconds () << "," << m_rnti << "," << packetId << "," << genTime << ","
+           << frame << "," << m_rcsContentions << "," << (int) outcome << "," << sc << "," << delay << "\n";
+}
+
+void
+NrV2XUeMac::RcsCloseLog (void)
+{
+  if (s_rcsLog.is_open ())
+    {
+      s_rcsLog.close ();
+    }
+}
 
 } // namespace ns3

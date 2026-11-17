@@ -28,6 +28,9 @@
 
 
 #include "nr-v2x-adaptive-reservation.h"
+#include "nr-v2x-rcs-contention.h"
+#include <ns3/mobility-model.h>
+#include <fstream>
 #include <map>
 #include <set>
 
@@ -651,6 +654,17 @@ private:
 
   bool m_reEvaluation;
 
+  // Repeated Contention Scheduling (RCS, Rolich et al. 2026), see nr-v2x-rcs-contention.h
+  bool m_rcs;                    ///< RCS replaces the sensing-based selection
+  double m_rcsFrame;             ///< frame duration Tf (ms)
+  double m_rcsContentionTime;    ///< contention time at the start of each frame (ms)
+  int64_t m_rcsPacketId;         ///< packet in contention, -1 if none
+  uint64_t m_rcsFrameIndex;      ///< frame whose contention the packet joined
+  uint32_t m_rcsContentions;     ///< contentions played by the packet so far
+  bool m_rcsDiscard;             ///< the next PDU from RLC is dropped, not sent
+  Ptr<MobilityModel> m_rcsMobility;
+  static std::ofstream s_rcsLog;
+
   V2XSidelinkGrant m_aperiodicV2XGrant; //aperiodic V2X grant
   V2XSidelinkGrant m_tmpV2XGrant; //aperiodic V2X grant
 
@@ -717,6 +731,17 @@ private:
   */
   //V2XSidelinkGrant V2XSelectResources (uint32_t frameNo, uint32_t subframeNo, V2XSidelinkGrant V2XGrant, uint32_t pdb, uint32_t p_rsvp, uint8_t v2xMessageType, uint8_t v2xTrafficType, uint16_t ReselectionCounter, uint16_t PacketSize, uint16_t ReservationSize);
   V2XSidelinkGrant V2XSelectResources (uint32_t frameNo, uint32_t subframeNo, double pdb, double p_rsvp, uint8_t v2xMessageType, uint8_t v2xTrafficType, uint16_t ReselectionCounter, uint16_t PacketSize, uint16_t ReservationSize, reselectionTrigger V2Xtrigger);
+
+  /// RCS: join the contention of the next frame, read its result, build a one-shot grant or drop
+  void RcsSchedule (std::map <uint32_t, PoolInfo>::iterator poolIt,
+                    std::map <SidelinkLcIdentifier, NistLteMacSapProvider::NistReportBufferNistStatusParameters>::iterator itBsr,
+                    uint32_t frameNo, uint32_t subframeNo);
+  /// RCS: the packet missed its delay budget; RLC hands it over and it is discarded
+  void RcsDrop (std::map <SidelinkLcIdentifier, NistLteMacSapProvider::NistReportBufferNistStatusParameters>::iterator itBsr,
+                uint8_t reason);
+  /// RCS: one line of RcsLog.txt
+  void RcsLog (uint64_t packetId, double genTime, uint64_t frame, uint8_t outcome, int32_t sc, double delay);
+  static void RcsCloseLog (void);
 
   V2XSidelinkGrant V2XChangeResources (V2XSidelinkGrant OriginalGrant, std::vector<uint16_t> GrantsToChangeIndex, std::vector<uint16_t> OkGrantsIndex, uint32_t frameNo, uint32_t subframeNo, double pdb, uint16_t PacketSize, uint16_t ReservationSize, reselectionTrigger V2Xtrigger);
 
