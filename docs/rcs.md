@@ -15,6 +15,16 @@ delay budget, in which case the packet is dropped.
 
 ## Where it lives
 
+[`architecture/mode2-qos-schedulers.html`](architecture/mode2-qos-schedulers.html) draws how the QoS
+flows reach SB-SPS, DS and RCS in a UE, each box linked to its source. It is rendered with
+[Archify](https://github.com/tt-a1i/archify) from `architecture/mode2-qos-schedulers.architecture.json`:
+
+```bash
+node ~/.claude/skills/archify/bin/archify.mjs finalize architecture \
+  docs/architecture/mode2-qos-schedulers.architecture.json docs/architecture/mode2-qos-schedulers.html \
+  --repo-root . --quality showcase
+```
+
 | File | What |
 |---|---|
 | `src/MoReV2X/model/nr-v2x-rcs-contention.{h,cc}` | `NrV2XRcsContention`: the air of the contention, which plays every frame for all UEs with the groups and tones they choose. Attributes `Groups` (J), `Rounds` (r), `Subcarriers` (M), `ScPerFrame` (K), `ToneMode`, `ToneRange`, `ToneThreshold`, `TonePower`, `OutputPath`. Writes `RcsContentionLog.txt`. |

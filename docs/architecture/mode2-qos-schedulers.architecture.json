@@ -1,0 +1,643 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "MoReV2X Mode 2: QoS flows through SB-SPS, DS and RCS",
+    "output": "docs/architecture/mode2-qos-schedulers.html",
+    "quality_profile": "showcase",
+    "locale": "en",
+    "repository": {
+      "url": "https://github.com/0had0/MoReV2X",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "6a46cb5697bd37371cc5113a47922ba3921d94a2"
+    }
+  },
+  "components": [
+    {
+      "id": "flows",
+      "type": "frontend",
+      "label": "QoS flows",
+      "sublabel": "UdpClient + V2X tag",
+      "tag": "PPPP, PDB, RRI",
+      "pos": [
+        40,
+        190
+      ],
+      "size": [
+        116,
+        64
+      ],
+      "sources": [
+        {
+          "path": "scratch/HIGHWAY.cc",
+          "line": 271,
+          "end_line": 304,
+          "label": "second flow (--ExtraFlow)"
+        },
+        {
+          "path": "scratch/HIGHWAY.cc",
+          "line": 318,
+          "end_line": 392,
+          "label": "main flow tag"
+        }
+      ]
+    },
+    {
+      "id": "rlc",
+      "type": "messagebus",
+      "label": "RLC UM",
+      "sublabel": "one queue per flow",
+      "pos": [
+        226,
+        190
+      ],
+      "size": [
+        116,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/MoReV2X/model/nr-v2x-rlc-um.cc",
+          "line": 1234,
+          "end_line": 1295,
+          "label": "buffer report with tag"
+        },
+        {
+          "path": "src/MoReV2X/model/nr-v2x-rlc-um.cc",
+          "line": 174,
+          "end_line": 180,
+          "label": "TX opportunity"
+        }
+      ]
+    },
+    {
+      "id": "bsr",
+      "type": "database",
+      "label": "Flow queues",
+      "sublabel": "m_slBsrReceived",
+      "tag": "per LC / dst",
+      "pos": [
+        412,
+        190
+      ],
+      "size": [
+        116,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/MoReV2X/model/nr-v2x-ue-mac.cc",
+          "line": 769,
+          "end_line": 799,
+          "label": "DoReportBufferNistStatus"
+        },
+        {
+          "path": "src/MoReV2X/model/nist-lte-mac-sap.h",
+          "line": 101,
+          "end_line": 113,
+          "label": "V2X fields"
+        }
+      ]
+    },
+    {
+      "id": "order",
+      "type": "backend",
+      "label": "Flow order",
+      "sublabel": "priority first",
+      "pos": [
+        598,
+        190
+      ],
+      "size": [
+        116,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/MoReV2X/model/nr-v2x-ue-mac.cc",
+          "line": 2458,
+          "end_line": 2477,
+          "label": "stable_sort of pools"
+        },
+        {
+          "path": "src/MoReV2X/model/nr-v2x-ue-mac.cc",
+          "line": 3676,
+          "end_line": 3687,
+          "label": "PendingPriority"
+        },
+        {
+          "path": "src/MoReV2X/model/nr-v2x-ue-mac.cc",
+          "line": 2574,
+          "end_line": 2578,
+          "label": "RCS branch"
+        }
+      ]
+    },
+    {
+      "id": "sbsps",
+      "type": "backend",
+      "label": "SB-SPS",
+      "sublabel": "Cresel reservations",
+      "pos": [
+        784,
+        40
+      ],
+      "size": [
+        116,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/MoReV2X/model/nr-v2x-ue-mac.cc",
+          "line": 1500,
+          "end_line": 1505,
+          "label": "Cresel from RRI"
+        },
+        {
+          "path": "src/MoReV2X/model/nr-v2x-ue-mac.cc",
+          "line": 2589,
+          "end_line": 2616,
+          "label": "new grant"
+        }
+      ]
+    },
+    {
+      "id": "ds",
+      "type": "backend",
+      "label": "DS",
+      "sublabel": "one shot per packet",
+      "pos": [
+        784,
+        190
+      ],
+      "size": [
+        116,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/MoReV2X/model/nr-v2x-ue-mac.cc",
+          "line": 1507,
+          "end_line": 1518,
+          "label": "Cresel = 1"
+        },
+        {
+          "path": "scratch/HIGHWAY.cc",
+          "line": 126,
+          "end_line": 129,
+          "label": "per-UE sps / dynamic"
+        }
+      ]
+    },
+    {
+      "id": "rcs",
+      "type": "backend",
+      "label": "RCS MAC",
+      "sublabel": "contends per frame",
+      "pos": [
+        784,
+        340
+      ],
+      "size": [
+        116,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/MoReV2X/model/nr-v2x-ue-mac.cc",
+          "line": 4631,
+          "end_line": 4742,
+          "label": "RcsSchedule"
+        },
+        {
+          "path": "src/MoReV2X/model/nr-v2x-ue-mac.cc",
+          "line": 4745,
+          "end_line": 4776,
+          "label": "RcsRegister, RcsTone"
+        },
+        {
+          "path": "scratch/HIGHWAY.cc",
+          "line": 1208,
+          "end_line": 1232,
+          "label": "--Rcs setup"
+        }
+      ]
+    },
+    {
+      "id": "sensedb",
+      "type": "database",
+      "label": "Sensing history",
+      "sublabel": "SCI + RSRP",
+      "pos": [
+        970,
+        40
+      ],
+      "size": [
+        116,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/MoReV2X/model/nr-v2x-ue-mac.cc",
+          "line": 3808,
+          "end_line": 3884,
+          "label": "DoReportPsschRsrpReservation"
+        }
+      ]
+    },
+    {
+      "id": "sensing",
+      "type": "backend",
+      "label": "Sensing selection",
+      "sublabel": "TS 38.214 8.1.4",
+      "pos": [
+        970,
+        190
+      ],
+      "size": [
+        116,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/MoReV2X/model/nr-v2x-ue-mac.cc",
+          "line": 1449,
+          "end_line": 1610,
+          "label": "V2XSelectResources"
+        },
+        {
+          "path": "src/MoReV2X/model/nr-v2x-ue-mac.cc",
+          "line": 1986,
+          "end_line": 2050,
+          "label": "Mode2Step1"
+        }
+      ]
+    },
+    {
+      "id": "reeval",
+      "type": "security",
+      "label": "Re-eval / pre-empt",
+      "sublabel": "before each TX",
+      "pos": [
+        1156,
+        190
+      ],
+      "size": [
+        116,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/MoReV2X/model/nr-v2x-ue-mac.cc",
+          "line": 2766,
+          "end_line": 2777,
+          "label": "check at T3"
+        },
+        {
+          "path": "src/MoReV2X/model/nr-v2x-ue-mac.cc",
+          "line": 3470,
+          "end_line": 3540,
+          "label": "CheckPreemption"
+        },
+        {
+          "path": "src/MoReV2X/model/nr-v2x-ue-mac.cc",
+          "line": 3920,
+          "end_line": 4030,
+          "label": "ReEvaluateResources"
+        }
+      ]
+    },
+    {
+      "id": "lcp",
+      "type": "backend",
+      "label": "TX opportunity",
+      "sublabel": "grant slot to RLC",
+      "pos": [
+        1342,
+        340
+      ],
+      "size": [
+        116,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/MoReV2X/model/nr-v2x-ue-mac.cc",
+          "line": 3190,
+          "end_line": 3245,
+          "label": "NotifyTxOpportunity"
+        },
+        {
+          "path": "src/MoReV2X/model/nr-v2x-ue-mac.cc",
+          "line": 731,
+          "end_line": 765,
+          "label": "DoTransmitPdu"
+        }
+      ]
+    },
+    {
+      "id": "phy",
+      "type": "cloud",
+      "label": "UE PHY",
+      "sublabel": "PSCCH + PSSCH",
+      "pos": [
+        1528,
+        340
+      ],
+      "size": [
+        116,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/MoReV2X/model/nr-v2x-ue-phy.cc",
+          "line": 1515,
+          "end_line": 1526,
+          "label": "TX in the slot"
+        },
+        {
+          "path": "src/MoReV2X/model/nr-v2x-ue-phy.cc",
+          "line": 1000,
+          "end_line": 1027,
+          "label": "SCI to the MAC"
+        }
+      ]
+    },
+    {
+      "id": "choice",
+      "type": "backend",
+      "label": "NrV2XRcsChoice",
+      "sublabel": "group, tone weights",
+      "tag": "RcsChoice per UE",
+      "pos": [
+        598,
+        490
+      ],
+      "size": [
+        116,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/MoReV2X/model/nr-v2x-rcs-choice.cc",
+          "line": 48,
+          "end_line": 72,
+          "label": "distributions"
+        },
+        {
+          "path": "src/MoReV2X/model/nr-v2x-rcs-choice.cc",
+          "line": 76,
+          "end_line": 112,
+          "label": "Draw"
+        }
+      ]
+    },
+    {
+      "id": "contention",
+      "type": "messagebus",
+      "label": "RCS contention",
+      "sublabel": "J groups, r rounds",
+      "tag": "shared by all UEs",
+      "pos": [
+        784,
+        640
+      ],
+      "size": [
+        116,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/MoReV2X/model/nr-v2x-rcs-contention.cc",
+          "line": 140,
+          "end_line": 168,
+          "label": "Register, Hears"
+        },
+        {
+          "path": "src/MoReV2X/model/nr-v2x-rcs-contention.cc",
+          "line": 190,
+          "end_line": 287,
+          "label": "Resolve"
+        }
+      ]
+    },
+    {
+      "id": "channel",
+      "type": "external",
+      "label": "Radio channel",
+      "sublabel": "loss + shadowing",
+      "pos": [
+        1528,
+        640
+      ],
+      "size": [
+        116,
+        64
+      ],
+      "sources": [
+        {
+          "path": "src/MoReV2X/model/nr-v2x-propagation-loss-model.cc",
+          "line": 110,
+          "end_line": 160,
+          "label": "GetLoss, GetShadowing"
+        },
+        {
+          "path": "scratch/HIGHWAY.cc",
+          "line": 1313,
+          "end_line": 1317,
+          "label": "shared with the tones"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Each UE",
+      "wraps": [
+        "flows",
+        "rlc",
+        "bsr",
+        "order",
+        "sbsps",
+        "ds",
+        "rcs",
+        "sensedb",
+        "sensing",
+        "reeval",
+        "lcp",
+        "phy",
+        "choice"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "NrV2XUeMac",
+      "wraps": [
+        "bsr",
+        "order",
+        "sbsps",
+        "ds",
+        "rcs",
+        "sensedb",
+        "sensing",
+        "reeval",
+        "lcp",
+        "choice"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "flows-rlc",
+      "from": "flows",
+      "to": "rlc",
+      "label": "SDU+tag",
+      "variant": "emphasis"
+    },
+    {
+      "id": "rlc-bsr",
+      "from": "rlc",
+      "to": "bsr",
+      "label": "BSR",
+      "variant": "emphasis"
+    },
+    {
+      "id": "bsr-order",
+      "from": "bsr",
+      "to": "order",
+      "label": "queues",
+      "variant": "emphasis"
+    },
+    {
+      "id": "order-sbsps",
+      "from": "order",
+      "to": "sbsps",
+      "label": "sps"
+    },
+    {
+      "id": "order-ds",
+      "from": "order",
+      "to": "ds",
+      "label": "dynamic",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "route": "straight"
+    },
+    {
+      "id": "order-rcs",
+      "from": "order",
+      "to": "rcs",
+      "label": "Rcs=1"
+    },
+    {
+      "id": "sbsps-sensing",
+      "from": "sbsps",
+      "to": "sensing",
+      "label": "Cresel 5-15"
+    },
+    {
+      "id": "ds-sensing",
+      "from": "ds",
+      "to": "sensing",
+      "label": "1 shot",
+      "variant": "emphasis"
+    },
+    {
+      "id": "sensedb-sensing",
+      "from": "sensedb",
+      "to": "sensing",
+      "label": "exclude"
+    },
+    {
+      "id": "sensing-reeval",
+      "from": "sensing",
+      "to": "reeval",
+      "label": "grant",
+      "variant": "emphasis"
+    },
+    {
+      "id": "reeval-lcp",
+      "from": "reeval",
+      "to": "lcp",
+      "label": "slot due",
+      "variant": "emphasis"
+    },
+    {
+      "id": "rcs-lcp",
+      "from": "rcs",
+      "to": "lcp",
+      "label": "won SC: one-shot grant"
+    },
+    {
+      "id": "rcs-choice",
+      "from": "rcs",
+      "to": "choice",
+      "label": "draw"
+    },
+    {
+      "id": "rcs-contention",
+      "from": "rcs",
+      "to": "contention",
+      "label": "group + tone callback"
+    },
+    {
+      "id": "lcp-phy",
+      "from": "lcp",
+      "to": "phy",
+      "label": "MAC PDU",
+      "variant": "emphasis"
+    },
+    {
+      "id": "phy-channel",
+      "from": "phy",
+      "to": "channel",
+      "label": "PSSCH"
+    },
+    {
+      "id": "phy-sensedb",
+      "from": "phy",
+      "to": "sensedb",
+      "label": "SCI, RSRP, priority",
+      "variant": "dashed"
+    },
+    {
+      "id": "contention-channel",
+      "from": "contention",
+      "to": "channel",
+      "label": "tone loss (ToneMode power)",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "QoS flows",
+      "items": [
+        "Each flow tags its packets with SL priority (PPPP), PDB and RRI; the RLC copies the tag into the buffer report.",
+        "A UE can carry a second flow (--ExtraFlow), with its own destination, so its own MAC process.",
+        "Flows are served in priority order every slot: the most important one transmits first when two want the same slot."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "SB-SPS and DS",
+      "items": [
+        "Same sensing selection; they differ in the reselection counter: Cresel drawn for the RRI (SPS) or 1 (DS).",
+        "Chosen per UE: --Dynamic, or sps / dynamic in --SchedulerMap, with Pkeep, re-evaluation and pre-emption.",
+        "Pre-emption compares the SCI priority of a reservation with the packet's own."
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "RCS",
+      "items": [
+        "Replaces the sensing selection for the whole UE (--Rcs); no reservation, no sensing history used.",
+        "The UE draws its group and tones from its NrV2XRcsChoice, which sees the packet's priority, PDB and age.",
+        "Serves one flow per UE: --Rcs with --ExtraFlow is refused."
+      ]
+    }
+  ]
+}
