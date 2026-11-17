@@ -29,6 +29,7 @@
 
 #include "nr-v2x-adaptive-reservation.h"
 #include "nr-v2x-rcs-contention.h"
+#include "nr-v2x-rcs-choice.h"
 #include <ns3/mobility-model.h>
 #include <fstream>
 #include <map>
@@ -663,6 +664,9 @@ private:
   uint32_t m_rcsContentions;     ///< contentions played by the packet so far
   bool m_rcsDiscard;             ///< the next PDU from RLC is dropped, not sent
   Ptr<MobilityModel> m_rcsMobility;
+  Ptr<NrV2XRcsChoice> m_rcsChoice; ///< draws this UE's group and tones (uniform if not set)
+  NrV2XRcsPacket m_rcsPacket;      ///< the packet of the current contention, as the choice sees it
+  uint32_t m_rcsGroup;             ///< group chosen for the current contention
   static std::ofstream s_rcsLog;
 
   V2XSidelinkGrant m_aperiodicV2XGrant; //aperiodic V2X grant
@@ -742,6 +746,11 @@ private:
   /// RCS: the packet in contention, as the group and tone distributions see it
   NrV2XRcsPacket RcsPacket (std::map <SidelinkLcIdentifier, NistLteMacSapProvider::NistReportBufferNistStatusParameters>::iterator itBsr,
                             uint32_t frameSlots) const;
+  /// RCS: choose a group for the packet and join the contention of frame m_rcsFrameIndex
+  void RcsRegister (std::map <SidelinkLcIdentifier, NistLteMacSapProvider::NistReportBufferNistStatusParameters>::iterator itBsr,
+                    uint32_t frameSlots);
+  /// RCS: this UE's tone in a round, called by the contention
+  uint32_t RcsTone (uint32_t round, uint32_t subcarriers);
   /// RCS: one line of RcsLog.txt
   void RcsLog (uint64_t packetId, double genTime, uint64_t frame, uint8_t outcome, int32_t sc, double delay);
   static void RcsCloseLog (void);

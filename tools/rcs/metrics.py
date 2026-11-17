@@ -30,7 +30,7 @@ TX_COLUMNS = ["node", "packet", "genTime", "txIndex", "txTime", "frame", "subfra
               "psschRbStart", "psschRbLen", "psschRbLenTb", "pscchRbStart", "pscchRbLen"]
 RX_COLUMNS = ["rxTime", "packetID", "distance", "txID", "rxID", "decoded", "lossType", "txIndex",
               "trigger", "announced", "latency"]
-RCS_COLUMNS = ["time", "node", "packet", "genMs", "frame", "contention", "outcome", "sc", "delayMs"]
+RCS_COLUMNS = ["time", "node", "packet", "genMs", "frame", "contention", "outcome", "sc", "delayMs", "group", "priority"]
 CONTENTION_COLUMNS = ["frame", "time", "contenders", "winners", "scsUsed", "scsCollided"]
 AOI_THRESHOLDS_MS = (100, 200, 500)
 DISTANCES_M = (150, 300, 500)

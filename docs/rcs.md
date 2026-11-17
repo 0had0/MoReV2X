@@ -17,9 +17,9 @@ delay budget, in which case the packet is dropped.
 
 | File | What |
 |---|---|
-| `src/MoReV2X/model/nr-v2x-rcs-contention.{h,cc}` | `NrV2XRcsContention`: the contention of every frame for all UEs. Attributes `Groups` (J), `Rounds` (r), `Subcarriers` (M), `ScPerFrame` (K), `ToneMode`, `ToneRange`, `ToneThreshold`, `TonePower`, `OutputPath`. Writes `RcsContentionLog.txt`. |
+| `src/MoReV2X/model/nr-v2x-rcs-contention.{h,cc}` | `NrV2XRcsContention`: the air of the contention, which plays every frame for all UEs with the groups and tones they choose. Attributes `Groups` (J), `Rounds` (r), `Subcarriers` (M), `ScPerFrame` (K), `ToneMode`, `ToneRange`, `ToneThreshold`, `TonePower`, `OutputPath`. Writes `RcsContentionLog.txt`. |
 | `src/MoReV2X/model/nr-v2x-rcs-choice.{h,cc}` | `NrV2XRcsChoice`: the distributions the group and the tones are drawn from, uniform. `NrV2XRcsPacket`: what they see of the packet (priority, PDB, time waited, contention number). |
-| `src/MoReV2X/model/nr-v2x-ue-mac.{h,cc}` | `NrV2XUeMac::RcsSchedule`, called from `DoSubframeIndication` in place of the sensing-based selection when the `Rcs` attribute is set. `RcsFrame`, `RcsContentionTime`. Writes `RcsLog.txt`. |
+| `src/MoReV2X/model/nr-v2x-ue-mac.{h,cc}` | `NrV2XUeMac::RcsSchedule`, called from `DoSubframeIndication` in place of the sensing-based selection when the `Rcs` attribute is set. `RcsFrame`, `RcsContentionTime`, `RcsChoice`. Chooses the UE's group and tones. Writes `RcsLog.txt`. |
 | `scratch/HIGHWAY.cc` | Options `--Rcs`, `--RcsGroups`, `--RcsRounds`, `--RcsSubcarriers`, `--RcsFrame`, `--RcsContention`, `--RcsTone`, `--RcsToneRange`, `--RcsToneThreshold`, `--RcsTonePower`; and for the paper's setup `--Ideal`, `--IdealSide`, `--UniformPeriod`, `--RxFile`, `--RxLog`. |
 | `tools/rcs/grid.py` | The paper's grid and the highway variant, resumable, one `metrics.json` per run. |
 | `tools/rcs/metrics.py` | PRR, Pcoll, Pdrop, E[PIR], E[AoI] and V(Ath) as defined in the paper. |
@@ -28,15 +28,16 @@ delay budget, in which case the packet is dropped.
 
 ## How a packet goes through the MAC
 
-1. A new packet ID in the buffer: the UE registers for frame `ceil(now / frameSlots)`, the first
-   whose contention time starts at or after now.
+1. A new packet ID in the buffer: the UE chooses a group and registers for frame
+   `ceil(now / frameSlots)`, the first whose contention time starts at or after now.
 2. At the first data slot of that frame it reads its result. The contention object resolves the
    whole frame the first time a UE asks, so every contender of the frame plays the same rounds.
+   In each round it asks every UE still in for its tone (`NrV2XUeMac::RcsTone`).
 3. Won SC `sc`: slot `frameStart + contentionSlots + sc / scPerSlot`, sub-channel
    `sc % scPerSlot`. The MAC builds a one-shot grant on it (`Cresel = 0`, no re-evaluation, no
    reservation kept), and the existing transmission path sends it. A won SC whose slot is past the
    PDB drops the packet (`RcsLog` outcome 3).
-4. Lost: registers for the next frame if that frame's first data slot is within the PDB
+4. Lost: chooses a group again and registers for the next frame if that frame's first data slot is within the PDB
    (outcome 1), otherwise the packet is dropped (outcome 2). Dropping pulls the PDU out of RLC
    and throws it away (`m_rcsDiscard`).
 
@@ -47,13 +48,24 @@ takes one sub-carrier out of three of the band, as the paper does.
 
 ## The group and the tones
 
-A contender draws its group from `NrV2XRcsChoice::GroupDistribution (J, packet)` and, in each
-round, its tone from `ToneDistribution (m, round, packet)`. Both return one weight per group or
+The UE makes both choices. Its MAC holds an `NrV2XRcsChoice` (attribute `RcsChoice` of
+`NrV2XUeMac`; empty means uniform) and draws its group from `GroupDistribution (J, packet)` when it
+registers and, in each round, its tone from `ToneDistribution (m, round, packet)` when the
+contention asks for it. The contention only checks that the group and the tone are in range. Both return one weight per group or
 sub-carrier, sub-carrier 0 being the lowest, the one that beats all others. Both are uniform, as
 in the paper. A subclass can skew them with the packet in contention (`NrV2XRcsPacket`): its SL
 priority (the default priority level of its PQI), its PDB, how long it has waited and how many
 contentions it has lost. Skewing the tones towards the low sub-carriers raises the chance to win;
-skewing the groups moves packets to some SCs of the frame.
+skewing the groups moves packets to some SCs of the frame. Each UE can hold its own subclass:
+
+```cpp
+Ptr<NrV2XUeMac> mac = ...;
+mac->SetAttribute ("RcsChoice", PointerValue (CreateObject<MyPriorityChoice> ()));
+```
+
+Every UE draws from its own random stream. `RcsLog.txt` ends with the group the UE chose and the
+SL priority of the packet: time, node, packet, generation time (ms), frame, contention, outcome,
+SC, delay (ms), group, priority.
 
 ## Who hears a tone
 

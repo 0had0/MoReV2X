@@ -12,7 +12,8 @@ _spec = importlib.util.spec_from_file_location("rcs_metrics", os.path.join(ROOT,
 metrics = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(metrics)
 
-RCS_COLUMNS = ["time", "node", "packet", "genMs", "rcsFrame", "contention", "outcome", "sc", "delayMs"]
+RCS_COLUMNS = ["time", "node", "packet", "genMs", "rcsFrame", "contention", "outcome", "sc", "delayMs",
+               "group", "priority"]
 TX_FILE = ["packet", "genTime", "node", "x", "y", "trafficType", "messageType", "size"]
 PAPER = ["--Ideal=1", "--Rcs=1", "--ChannelBW=20", "--SubChannel=25", "--PDB=60", "--Periodic=1",
          "--UniformPeriod=100", "--mcs=13", "--UdpFiles=1", "--RxFile=0", "--RxLog=0", "--simTime=3"]
@@ -27,6 +28,9 @@ class RcsIdeal(ScratchRuns):
         self.assertGreater(len(won), 0)
         self.assertTrue((won.delayMs <= 60).all(), "a won SC is used within the PDB")
         self.assertTrue(log.outcome.isin([0, 1, 2, 3]).all())
+        # The UE's group: one SC per group with J = 36, so a winner's SC is its group
+        self.assertTrue(log.group.between(0, 35).all())
+        self.assertTrue((won.sc == won.group).all(), "the SC lies in the group the UE chose")
         # The PHY sends each won packet once, in the data part of its frame
         sent = tx.merge(won, on="packet")
         self.assertEqual(len(sent), len(tx), "every transmission comes from a won contention")

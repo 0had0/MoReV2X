@@ -71,7 +71,6 @@ NrV2XRcsContention::GetTypeId (void)
 NrV2XRcsContention::NrV2XRcsContention ()
   : m_loss (0)
 {
-  m_choice = CreateObject<NrV2XRcsChoice> ();
 }
 
 NrV2XRcsContention::~NrV2XRcsContention ()
@@ -86,7 +85,6 @@ NrV2XRcsContention::DoDispose (void)
       m_log.close ();
     }
   m_loss = 0;
-  m_choice = 0;
   m_contenders.clear ();
   m_results.clear ();
   Object::DoDispose ();
@@ -116,19 +114,6 @@ NrV2XRcsContention::Reset (void)
 }
 
 void
-NrV2XRcsContention::SetChoice (Ptr<NrV2XRcsChoice> choice)
-{
-  NS_ABORT_MSG_IF (choice == 0, "RCS: no choice");
-  m_choice = choice;
-}
-
-Ptr<NrV2XRcsChoice>
-NrV2XRcsContention::GetChoice (void) const
-{
-  return m_choice;
-}
-
-void
 NrV2XRcsContention::SetPropagationLossModel (Ptr<PropagationLossModel> model)
 {
   m_loss = model;
@@ -153,14 +138,16 @@ NrV2XRcsContention::GetScPerGroup (void) const
 
 void
 NrV2XRcsContention::Register (uint64_t frame, uint32_t nodeId, Ptr<MobilityModel> mobility,
-                              const NrV2XRcsPacket &packet)
+                              uint32_t group, ToneCallback tone)
 {
+  NS_ABORT_MSG_IF (group >= m_groups, "RCS: node " << nodeId << " chose group " << group << " of " << m_groups);
+  NS_ABORT_MSG_IF (tone.IsNull (), "RCS: node " << nodeId << " gives no tone callback");
   NS_ASSERT_MSG (m_results.find (frame) == m_results.end (), "RCS: frame " << frame << " already resolved");
   Contender c;
   c.nodeId = nodeId;
   c.mobility = mobility;
-  c.packet = packet;
-  c.group = m_choice->ChooseGroup (m_groups, packet);
+  c.group = group;
+  c.tone = tone;
   m_contenders[frame].push_back (c);
 }
 
@@ -234,7 +221,8 @@ NrV2XRcsContention::Resolve (uint64_t frame)
         {
           if (alive[i])
             {
-              pick[i] = m_choice->ChooseTone (m, round, contenders[i].packet);
+              pick[i] = contenders[i].tone (round, m);
+              NS_ABORT_MSG_IF (pick[i] >= m, "RCS: node " << contenders[i].nodeId << " sent tone " << pick[i] << " of " << m);
             }
         }
       // Every contender transmits and listens at the same time: decide on this round's picks

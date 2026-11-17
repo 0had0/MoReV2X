@@ -267,6 +267,32 @@ At (double x)
   return mobility;
 }
 
+// A UE of the tests: like NrV2XUeMac, it draws its group and its tones from its own choice
+class RcsTestUe : public Object
+{
+public:
+  RcsTestUe (Ptr<NrV2XRcsChoice> choice, const NrV2XRcsPacket &packet)
+    : m_choice (choice), m_packet (packet), m_tones (0) {}
+  uint32_t Tone (uint32_t round, uint32_t subcarriers)
+  {
+    m_tones++;
+    return m_choice->ChooseTone (subcarriers, round, m_packet);
+  }
+  Ptr<NrV2XRcsChoice> m_choice;
+  NrV2XRcsPacket m_packet;
+  uint32_t m_tones;  ///< tones asked by the contention
+};
+
+static Ptr<RcsTestUe>
+Join (Ptr<NrV2XRcsContention> channel, uint64_t frame, uint32_t node, Ptr<MobilityModel> mobility,
+      const NrV2XRcsPacket &packet = NrV2XRcsPacket (), Ptr<NrV2XRcsChoice> choice = 0)
+{
+  Ptr<RcsTestUe> ue = CreateObject<RcsTestUe> (choice == 0 ? CreateObject<NrV2XRcsChoice> () : choice, packet);
+  channel->Register (frame, node, mobility, ue->m_choice->ChooseGroup (channel->GetGroups (), packet),
+                     MakeCallback (&RcsTestUe::Tone, ue));
+  return ue;
+}
+
 class RcsSingleContenderTestCase : public TestCase
 {
 public:
@@ -276,7 +302,7 @@ private:
   virtual void DoRun (void)
   {
     Ptr<NrV2XRcsContention> channel = RcsChannel (1, 36, 400, NrV2XRcsContention::TONE_ALL);
-    channel->Register (7, 1, At (0));
+    Join (channel, 7, 1, At (0));
     NS_TEST_ASSERT_MSG_EQ (channel->GetResult (7, 1), 0, "nobody to hear, so k = 0");
     NS_TEST_ASSERT_MSG_EQ (channel->GetSubcarriersPerGroup (), 400u, "m = M / J");
     NrV2XRcsContention::Reset ();
@@ -295,7 +321,7 @@ private:
     Ptr<NrV2XRcsContention> channel = RcsChannel (1, 36, 400, NrV2XRcsContention::TONE_ALL);
     for (uint32_t node = 1; node <= 20; node++)
       {
-        channel->Register (3, node, At (0));
+        Join (channel, 3, node, At (0));
       }
     std::set<int32_t> scs;
     for (uint32_t node = 1; node <= 20; node++)
@@ -320,7 +346,7 @@ private:
     Ptr<NrV2XRcsContention> channel = RcsChannel (36, 36, 400, NrV2XRcsContention::TONE_ALL);
     for (uint32_t node = 1; node <= 360; node++)
       {
-        channel->Register (9, node, At (0));
+        Join (channel, 9, node, At (0));
       }
     std::map<int32_t, uint32_t> winners;
     for (uint32_t node = 1; node <= 360; node++)
@@ -397,15 +423,64 @@ private:
   {
     // J = 6: w = 6 SCs and m = 66 sub-carriers per group, group 2 holds SCs 12 to 17
     Ptr<NrV2XRcsContention> channel = RcsChannel (6, 36, 400, NrV2XRcsContention::TONE_ALL);
-    channel->SetChoice (CreateObject<RcsPriorityChoice> ());
+    Ptr<NrV2XRcsChoice> choice = CreateObject<RcsPriorityChoice> ();
     NrV2XRcsPacket urgent;
     urgent.priority = 1;
     NrV2XRcsPacket background;
     background.priority = 8;
-    channel->Register (5, 1, At (0), background);
-    channel->Register (5, 2, At (0), urgent);
+    Join (channel, 5, 1, At (0), background, choice);
+    Join (channel, 5, 2, At (0), urgent, choice);
     NS_TEST_ASSERT_MSG_EQ (channel->GetResult (5, 2), 12, "lowest tone, first SC of group 2");
     NS_TEST_ASSERT_MSG_EQ (channel->GetResult (5, 1), 13, "heard one lower tone, second SC of group 2");
+    NrV2XRcsContention::Reset ();
+  }
+};
+
+// Always group 0, always the same sub-carrier
+class RcsFixedTone : public NrV2XRcsChoice
+{
+public:
+  RcsFixedTone (uint32_t tone) : m_tone (tone) {}
+  virtual std::vector<double> GroupDistribution (uint32_t groups, const NrV2XRcsPacket &packet) const
+  {
+    std::vector<double> weights (groups, 0.0);
+    weights[0] = 1.0;
+    return weights;
+  }
+  virtual std::vector<double> ToneDistribution (uint32_t subcarriers, uint32_t round, const NrV2XRcsPacket &packet) const
+  {
+    std::vector<double> weights (subcarriers, 0.0);
+    weights[m_tone] = 1.0;
+    return weights;
+  }
+  uint32_t m_tone;
+};
+
+class RcsUeToneTestCase : public TestCase
+{
+public:
+  RcsUeToneTestCase () : TestCase ("RCS: the contention asks each UE for its tone while it is still in") {}
+
+private:
+  virtual void DoRun (void)
+  {
+    // J = 1, w = 36: nobody leaves, both UEs play the three rounds
+    Ptr<NrV2XRcsContention> channel = RcsChannel (1, 36, 400, NrV2XRcsContention::TONE_ALL);
+    Ptr<RcsTestUe> low = Join (channel, 2, 1, At (0), NrV2XRcsPacket (), CreateObject<RcsFixedTone> (0));
+    Ptr<RcsTestUe> high = Join (channel, 2, 2, At (0), NrV2XRcsPacket (), CreateObject<RcsFixedTone> (5));
+    NS_TEST_ASSERT_MSG_EQ (channel->GetResult (2, 2), 1, "heard tone 0");
+    NS_TEST_ASSERT_MSG_EQ (channel->GetResult (2, 1), 0, "heard nothing lower");
+    NS_TEST_ASSERT_MSG_EQ (low->m_tones, 3u, "three rounds");
+    NS_TEST_ASSERT_MSG_EQ (high->m_tones, 3u, "three rounds");
+
+    // J = K, w = 1, both in group 0: the higher tone leaves after the first round
+    channel = RcsChannel (36, 36, 400, NrV2XRcsContention::TONE_ALL);
+    low = Join (channel, 2, 1, At (0), NrV2XRcsPacket (), CreateObject<RcsFixedTone> (0));
+    high = Join (channel, 2, 2, At (0), NrV2XRcsPacket (), CreateObject<RcsFixedTone> (5));
+    NS_TEST_ASSERT_MSG_EQ (channel->GetResult (2, 1), 0, "wins the SC of group 0");
+    NS_TEST_ASSERT_MSG_EQ (channel->GetResult (2, 2), -1, "lost");
+    NS_TEST_ASSERT_MSG_EQ (low->m_tones, 3u, "the lowest tone stays three rounds");
+    NS_TEST_ASSERT_MSG_EQ (high->m_tones, 1u, "asked once, then out");
     NrV2XRcsContention::Reset ();
   }
 };
@@ -432,8 +507,8 @@ private:
 
     // Two contenders out of each other's range both count no lower tone: both take SC 0
     channel->SetAttribute ("ToneMode", EnumValue (NrV2XRcsContention::TONE_RANGE));
-    channel->Register (4, 1, At (0));
-    channel->Register (4, 2, At (1000));
+    Join (channel, 4, 1, At (0));
+    Join (channel, 4, 2, At (1000));
     NS_TEST_ASSERT_MSG_EQ (channel->GetResult (4, 1), 0, "hears nobody");
     NS_TEST_ASSERT_MSG_EQ (channel->GetResult (4, 2), 0, "reuses the SC 1 km away");
     NrV2XRcsContention::Reset ();
@@ -555,6 +630,7 @@ public:
     AddTestCase (new RcsToneHearingTestCase, TestCase::QUICK);
     AddTestCase (new RcsDrawTestCase, TestCase::QUICK);
     AddTestCase (new RcsSkewedChoiceTestCase, TestCase::QUICK);
+    AddTestCase (new RcsUeToneTestCase, TestCase::QUICK);
     AddTestCase (new PriorityThresholdTestCase, TestCase::QUICK);
     AddTestCase (new PreemptionTestCase, TestCase::QUICK);
   }

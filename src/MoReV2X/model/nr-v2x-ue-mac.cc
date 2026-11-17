@@ -509,6 +509,12 @@ NrV2XUeMac::GetTypeId (void)
                                         DoubleValue (1.0),
                                         MakeDoubleAccessor (&NrV2XUeMac::m_rcsContentionTime),
                                         MakeDoubleChecker<double> (0.0))
+                .AddAttribute ("RcsChoice",
+                                        "RCS: the distributions this UE draws its group and tones from (NrV2XRcsChoice or a "
+                                        "subclass). Empty: uniform, as in the paper",
+                                        PointerValue (),
+                                        MakePointerAccessor (&NrV2XUeMac::m_rcsChoice),
+                                        MakePointerChecker<NrV2XRcsChoice> ())
                 .AddAttribute ("PriorityAwareSensing",
                                         "Use the SCI priority in sensing: the RSRP threshold of step 5 depends on the pair "
                                         "(received priority, own priority) and X% of step 6 on the own priority, TS 38.214 8.1.4",
@@ -659,6 +665,7 @@ NrV2XUeMac::NrV2XUeMac ()
    m_rcsFrameIndex = 0;
    m_rcsContentions = 0;
    m_rcsDiscard = false;
+   m_rcsGroup = 0;
 }
 
 
@@ -676,6 +683,8 @@ NrV2XUeMac::DoDispose ()
 	delete m_macSapProvider;
 	delete m_cmacSapProvider;
 	delete m_uePhySapUser;
+	m_rcsChoice = 0;
+	m_rcsMobility = 0;
 	Object::DoDispose ();
 }
 
@@ -4661,7 +4670,7 @@ NrV2XUeMac::RcsSchedule (std::map <uint32_t, PoolInfo>::iterator poolIt,
       m_rcsPacketId = packetId;
       m_rcsFrameIndex = (now + frameSlots - 1) / frameSlots;
       m_rcsContentions = 1;
-      contention->Register (m_rcsFrameIndex, m_rnti, m_rcsMobility, RcsPacket (itBsr, frameSlots));
+      RcsRegister (itBsr, frameSlots);
       return;
     }
 
@@ -4729,7 +4738,28 @@ NrV2XUeMac::RcsSchedule (std::map <uint32_t, PoolInfo>::iterator poolIt,
   RcsLog (packetId, genMs, m_rcsFrameIndex, 1, -1, nextDelay);
   m_rcsFrameIndex = next;
   m_rcsContentions++;
-  contention->Register (m_rcsFrameIndex, m_rnti, m_rcsMobility, RcsPacket (itBsr, frameSlots));
+  RcsRegister (itBsr, frameSlots);
+}
+
+void
+NrV2XUeMac::RcsRegister (std::map <SidelinkLcIdentifier, NistLteMacSapProvider::NistReportBufferNistStatusParameters>::iterator itBsr,
+                         uint32_t frameSlots)
+{
+  if (m_rcsChoice == 0)
+    {
+      m_rcsChoice = CreateObject<NrV2XRcsChoice> ();
+    }
+  Ptr<NrV2XRcsContention> contention = NrV2XRcsContention::Get ();
+  m_rcsPacket = RcsPacket (itBsr, frameSlots);
+  m_rcsGroup = m_rcsChoice->ChooseGroup (contention->GetGroups (), m_rcsPacket);
+  contention->Register (m_rcsFrameIndex, m_rnti, m_rcsMobility, m_rcsGroup,
+                        MakeCallback (&NrV2XUeMac::RcsTone, this));
+}
+
+uint32_t
+NrV2XUeMac::RcsTone (uint32_t round, uint32_t subcarriers)
+{
+  return m_rcsChoice->ChooseTone (subcarriers, round, m_rcsPacket);
 }
 
 NrV2XRcsPacket
@@ -4767,11 +4797,13 @@ NrV2XUeMac::RcsLog (uint64_t packetId, double genTime, uint64_t frame, uint8_t o
       s_rcsLog.open ((m_outputPath + "RcsLog.txt").c_str (), std::ios_base::app);
       Simulator::ScheduleDestroy (&NrV2XUeMac::RcsCloseLog);
     }
-  // time, node, packet, generation time (ms), frame, contention, outcome, SC, delay (ms)
+  // time, node, packet, generation time (ms), frame, contention, outcome, SC, delay (ms),
+  // group chosen, SL priority of the packet
   // outcome 0: won SC, sent at genTime + delay; 1: lost, contends again; 2: lost, no
   // contention left within the PDB (dropped); 3: won an SC after the PDB (dropped)
   s_rcsLog << Simulator::Now ().GetSeconds () << "," << m_rnti << "," << packetId << "," << genTime << ","
-           << frame << "," << m_rcsContentions << "," << (int) outcome << "," << sc << "," << delay << "\n";
+           << frame << "," << m_rcsContentions << "," << (int) outcome << "," << sc << "," << delay << ","
+           << m_rcsGroup << "," << (int) m_rcsPacket.priority << "\n";
 }
 
 void
