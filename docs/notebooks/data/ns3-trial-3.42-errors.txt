@@ -23,11 +23,11 @@ src/MoReV2X/helper/nist-lte-helper.cc:805:40: error: no member named 'GetRxAnten
 src/MoReV2X/helper/nist-lte-helper.cc:806:17: error: invalid operands to binary expression ('Ptr<AntennaModel>' and 'int')
 src/MoReV2X/helper/nist-lte-helper.cc:842:28: error: invalid operands to binary expression ('Ptr<PropagationLossModel>' and 'int')
 src/MoReV2X/helper/nist-lte-helper.cc:877:28: error: invalid operands to binary expression ('Ptr<PropagationLossModel>' and 'int')
-/Users/hadih/Documents/groupcast-adaptation-ns3/ns-3-dev/src/core/model/object.h:632:34: error: allocating an object of abstract class type 'ns3::NrV2XSpectrumPhy'
-/Users/hadih/Documents/groupcast-adaptation-ns3/ns-3-dev/src/core/model/ptr.h:683:7: error: cannot initialize a member subobject of type 'ns3::AntennaModel *' with an rvalue of type 'ns3::Object *'
+$NS3_342_DIR/src/core/model/object.h:632:34: error: allocating an object of abstract class type 'ns3::NrV2XSpectrumPhy'
+$NS3_342_DIR/src/core/model/ptr.h:683:7: error: cannot initialize a member subobject of type 'ns3::AntennaModel *' with an rvalue of type 'ns3::Object *'
 src/MoReV2X/helper/nist-point-to-point-epc-helper.cc:164:25: error: invalid operands to binary expression ('Ptr<Ipv4>' and 'int')
 src/MoReV2X/model/nist-epc-sgw-pgw-application.cc:187:3: error: unknown type name 'SocketAddressTag'
-/Users/hadih/Documents/groupcast-adaptation-ns3/ns-3-dev/src/core/model/log.h:491:14: error: invalid operands to binary expression ('std::ostream' (aka 'basic_ostream<char>') and 'const ns3::NistEpcTft::NistPacketFilter')
+$NS3_342_DIR/src/core/model/log.h:491:14: error: invalid operands to binary expression ('std::ostream' (aka 'basic_ostream<char>') and 'const ns3::NistEpcTft::NistPacketFilter')
 src/MoReV2X/model/nist-lte-amc.cc:246:18: error: no matching function for call to 'MakeEnumAccessor'
 src/MoReV2X/model/nist-lte-chunk-processor.cc:62:19: error: invalid operands to binary expression ('Ptr<SpectrumValue>' and 'int')
 src/MoReV2X/model/nist-lte-rrc-protocol-ideal.cc:326:21: error: invalid operands to binary expression ('Ptr<NistLteUeNetDevice>' and 'int')
