@@ -3,13 +3,14 @@
 Used for docs/notebooks/06_ns3_migration.ipynb. Set NS3_TRIAL_DIR to a folder with:
   ns349/    sparse checkout of ns-3.49, the /src/**/*.h files only
   carlos/   git archive of fork-carlosrisma/main, for the "carlos" trial
-3.42 headers are read from the built groupcast tree. Run: ns3_compile_trial.py c342|c349|carlos
+3.42 headers are read from a built ns-3.42 tree: set NS3_342_DIR to its ns-3-dev folder (the
+groupcast-adaptation-ns3 checkout). Run: ns3_compile_trial.py c342|c349|carlos
 """
 import collections, os, re, subprocess, sys, shutil, glob
 from concurrent.futures import ThreadPoolExecutor
 S = os.environ.get('NS3_TRIAL_DIR', os.path.dirname(os.path.abspath(__file__)))
-R = '/Users/hadih/Documents/MoReV2X-hadih'
-G = '/Users/hadih/Documents/groupcast-adaptation-ns3/ns-3-dev'
+R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # this repository
+G = os.environ.get('NS3_342_DIR', '')                              # built ns-3.42 tree, for c342
 
 def hdrs_349(inc):
     src = S + '/ns349/src'
@@ -65,6 +66,8 @@ def trial(name, base, srcdir, scratch, std):
     return perfile
 import json
 which = sys.argv[1]
+if which == 'c342' and not G:
+    sys.exit('c342 reads the ns-3.42 headers: set NS3_342_DIR to a built ns-3-dev folder')
 if which == 'carlos':
     trial('carlos349', '349', S + '/carlos/src/morev2x', S + '/carlos/src/morev2x/examples/HIGHWAY.cc', 'c++23')
 if which == 'c342': trial('ours342', '342', R + '/src/MoReV2X', R + '/scratch/HIGHWAY.cc', 'c++20')

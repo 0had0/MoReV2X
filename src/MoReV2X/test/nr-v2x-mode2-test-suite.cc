@@ -6,6 +6,7 @@
 #include "ns3/boolean.h"
 #include "ns3/double.h"
 #include "ns3/nist-sl-pool.h"
+#include "ns3/nr-v2x-amc.h"
 #include "ns3/nr-v2x-adaptive-reservation.h"
 #include "ns3/nr-v2x-ue-mac.h"
 #include "ns3/nr-v2x-utils.h"
@@ -210,6 +211,35 @@ private:
   }
 };
 
+
+// GetSlMaxTbSize is the largest PDU that GetSlSubchAndTbSizeFromMcs places inside the channel
+class MaxTbSizeTestCase : public TestCase
+{
+public:
+  MaxTbSizeTestCase () : TestCase ("Largest TB of a slot matches the per-PDU TB rule") {}
+private:
+  virtual void DoRun (void)
+  {
+    Ptr<NrV2XAmc> amc = CreateObject<NrV2XAmc> ();
+    const uint16_t channels[][2] = {{12, 24}, {10, 24}, {10, 52}, {10, 11}};
+    for (const auto &c : channels)
+      {
+        for (int mcs : {5, 13, 14, 20})
+          {
+            uint32_t maxTb = amc->GetSlMaxTbSize (mcs, c[0], c[1]);
+            uint16_t rbs = (c[1] / c[0]) * c[0];
+            NS_TEST_ASSERT_MSG_GT (maxTb, 0u, "a whole channel carries something");
+            uint16_t sub, rb;
+            uint32_t tb = amc->GetSlSubchAndTbSizeFromMcs (maxTb, mcs, c[0], c[1], &sub, &rb) / 8;
+            NS_TEST_ASSERT_MSG_GT_OR_EQ (tb, maxTb, "the largest PDU fits its TB");
+            NS_TEST_ASSERT_MSG_EQ ((sub <= rbs && rb <= rbs), true, "and stays inside the subchannels");
+          }
+      }
+    // 20 MHz at 60 kHz, 12 RB subchannels, MCS 14: the configuration of the QoS scenarios
+    NS_TEST_ASSERT_MSG_GT (amc->GetSlMaxTbSize (14, 12, 24), 550u, "a 550 B CPM fits one slot");
+  }
+};
+
 class NrV2XMode2TestSuite : public TestSuite
 {
 public:
@@ -224,6 +254,7 @@ public:
     AddTestCase (new PerInstanceSchedulerTestCase, TestCase::QUICK);
     AddTestCase (new AdaptiveReservationTestCase, TestCase::QUICK);
     AddTestCase (new LegacyHackDefaultTestCase, TestCase::QUICK);
+    AddTestCase (new MaxTbSizeTestCase, TestCase::QUICK);
   }
 };
 
