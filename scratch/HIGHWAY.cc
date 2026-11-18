@@ -23,6 +23,7 @@
 #include <iostream>
 #include "ns3/buildings-helper.h"
 #include "ns3/nr-v2x-propagation-loss-model.h"
+#include <algorithm>
 #include <cmath>
 #include "ns3/rng-seed-manager.h"
 #include "ns3/nr-v2x-tag.h"
@@ -71,6 +72,82 @@ std::vector<bool> EnableTX;
 std::vector<uint8_t> VehicleTrafficType;
 
 std::vector<uint16_t> Pattern_index;
+
+// --Traffic: the traffic models of groupcast-adaptation-ns3 (scratch_overlay/common/traffic,
+// CustomTrafficApplication) for every vehicle, in place of --Periodic / --Aperiodic
+//   periodic1   every 100 ms, 300, 190, 190, 190, 190 B in turn from a random start
+//   periodic2   every 10 ms, 1200 B with probability 0.2, else 800 B
+//   periodic4   every 20 ms, as periodic2
+//   periodic5   every 50 ms, 1200 B
+//   aperiodic1  every 50 ms + Exp(mean 50 ms) truncated to whole ms, uniform 200..2000 B by 200 B;
+//               aperiodic1:<max> caps the sizes at <max> (200 + k 200 B)
+// The periodic models reserve with SPS, RRI = period; aperiodic1 selects for every packet. The PDB
+// is the RRI (100 ms for aperiodic1). periodic3 and aperiodic2 (10 to 60 kB) are refused: a
+// MoReV2X packet travels in one transport block.
+struct TrafficModel
+{
+  std::string name;               // empty: --Periodic / --Aperiodic as before
+  double periodMs = 0;            // period, or the constant part of an aperiodic interval
+  double expMeanMs = 0;           // mean of the exponential part (aperiodic), whole ms
+  std::vector<uint32_t> sizes;    // payloads (B)
+  std::vector<double> probabilities;
+  bool inTurn = false;            // sizes sent in turn, not drawn
+  double rriMs = 0;
+  double pdbMs = 0;
+  bool sps = true;
+};
+TrafficModel Traffic;
+std::vector<uint32_t> TrafficTurn;  // next size of each vehicle when the sizes go in turn
+
+TrafficModel
+ParseTrafficModel (const std::string &option)
+{
+  TrafficModel t;
+  t.name = option;
+  if (option == "periodic1")
+    {
+      t.periodMs = 100;
+      t.sizes = {300, 190, 190, 190, 190};
+      t.inTurn = true;
+    }
+  else if (option == "periodic2" || option == "periodic4")
+    {
+      t.periodMs = option == "periodic2" ? 10 : 20;
+      t.sizes = {1200, 800};
+      t.probabilities = {0.2, 0.8};
+    }
+  else if (option == "periodic5")
+    {
+      t.periodMs = 50;
+      t.sizes = {1200};
+    }
+  else if (option == "aperiodic1" || option.compare (0, 11, "aperiodic1:") == 0)
+    {
+      uint32_t largest = option.size () > 11 ? std::stoul (option.substr (11)) : 2000;
+      NS_ABORT_MSG_IF (largest < 200 || largest > 2000 || largest % 200 != 0,
+                       "--Traffic=aperiodic1:<max> takes 200 to 2000 B by 200 B, got " << largest);
+      t.periodMs = 50;
+      t.expMeanMs = 50;
+      for (uint32_t size = 200; size <= largest; size += 200)
+        {
+          t.sizes.push_back (size);
+        }
+      t.sps = false;
+    }
+  else
+    {
+      NS_ABORT_MSG_IF (option == "periodic3" || option == "aperiodic2",
+                       "--Traffic=" << option << " sends packets of 10 to 60 kB, larger than a transport block");
+      NS_FATAL_ERROR ("--Traffic: unknown model " << option << ", expected periodic1, periodic2, periodic4, periodic5 or aperiodic1");
+    }
+  if (t.probabilities.empty ())
+    {
+      t.probabilities.assign (t.sizes.size (), 1.0 / t.sizes.size ());
+    }
+  t.rriMs = t.sps ? t.periodMs : 100;
+  t.pdbMs = t.rriMs;
+  return t;
+}
 
 bool ETSITraffic, avgRRI;
 
@@ -229,6 +306,84 @@ UdpClient::Send (void)
   bool insideTX;
 
   Ptr<UniformRandomVariable> packetSize_index = CreateObject<UniformRandomVariable>();
+
+  if (!Traffic.name.empty () && EnableTX[nodeId-1])
+  {
+    // --Traffic: one of the groupcast-adaptation models, for every vehicle
+    uint32_t size;
+    if (Traffic.inTurn)
+    {
+      size = Traffic.sizes[TrafficTurn[nodeId-1]];
+      TrafficTurn[nodeId-1] = (TrafficTurn[nodeId-1] + 1) % Traffic.sizes.size ();
+    }
+    else
+    {
+      double u = packetSize_index->GetValue (0, 1), sum = 0;
+      size = Traffic.sizes.back ();
+      for (uint32_t i = 0; i < Traffic.sizes.size (); i++)
+      {
+        sum += Traffic.probabilities[i];
+        if (u < sum)
+        {
+          size = Traffic.sizes[i];
+          break;
+        }
+      }
+    }
+    uint32_t largest = *std::max_element (Traffic.sizes.begin (), Traffic.sizes.end ());
+    double next = Traffic.periodMs;
+    if (Traffic.expMeanMs > 0)
+    {
+      Ptr<ExponentialRandomVariable> exponential = CreateObject<ExponentialRandomVariable> ();
+      next += std::floor (exponential->GetValue (Traffic.expMeanMs, 0));
+    }
+
+    NrV2XTag v2xTag;
+    v2xTag.SetGenTime (Simulator::Now ().GetSeconds ());
+    v2xTag.SetDoubleValue (Simulator::Now ().GetSeconds ());
+    v2xTag.SetMessageType (0x00);
+    v2xTag.SetTrafficType (Traffic.sps ? 0x00 : 0x01);
+    v2xTag.SetPPPP (0x00);
+    v2xTag.SetPrsvp (Traffic.rriMs);
+    v2xTag.SetPdb (Traffic.pdbMs);
+    v2xTag.SetNodeId (nodeId);
+    v2xTag.SetReselectionCounter (Traffic.sps ? 10000 : 1);  // 1: the grant expires after this packet
+    v2xTag.SetPacketSize (size + 35);       // MoReV2X counts 35 B of UDP/IP/PDCP/RLC headers
+    v2xTag.SetReservationSize (largest + 35);
+    packetID = packetID + 1;
+    v2xTag.SetIntValue (packetID);
+    v2xTag.SetPacketId (packetID);
+    Vector position = currentNode->GetObject<MobilityModel> ()->GetPosition ();
+    v2xTag.SetGenPosX (position.x);
+    v2xTag.SetGenPosY (position.y);
+    v2xTag.SetNumHops (0);
+    SeqTsHeader seqTs;
+    seqTs.SetSeq (m_sent);
+    Ptr<Packet> p = Create<Packet> (size - (8 + 4));  // 8 + 4: the SeqTs header
+    p->AddHeader (seqTs);
+    p->AddByteTag (v2xTag);
+    Point point = {(int) position.x, (int) position.y};
+    if (PositionChecker.isInsidePoly ("TX", point) && enableUDPfiles)
+    {
+      std::ofstream txFile ((FilePath + "TxFile.txt").c_str (), std::ios_base::app);
+      txFile << packetID << "," << Simulator::Now ().GetSeconds () << "," << nodeId << "," << position.x << "," << position.y
+             << "," << (int) v2xTag.GetMessageType () << "," << (int) v2xTag.GetTrafficType () << "," << size + 34 << "\r\n";
+    }
+    Ptr<Socket> socket = Socket::CreateSocket (currentNode, TypeId::LookupByName ("ns3::UdpSocketFactory"));
+    socket->SetAllowBroadcast (true);
+    socket->Bind ();
+    socket->Connect (InetSocketAddress (groupAddress, 8000));
+    if (socket->Send (p) >= 0)
+    {
+      ++m_sent;
+    }
+    socket->Close ();
+    if (m_sent < m_count)
+    {
+      m_sendEvent = Simulator::Schedule (MilliSeconds (next), &UdpClient::Send, this);
+    }
+    return;
+  }
 
   if (EnableTX[nodeId-1]) //Not all nodes are enabled to transmit (see SUMO simulation details)
   {
@@ -689,6 +844,7 @@ main (int argc, char *argv[])
   bool AdaptiveRRI = false;
   bool PositionLog = false;
   std::string SchedulerMap = "";
+  std::string trafficOption = "";
 
   SumoMobilityConfig MobilityConfig;
 
@@ -757,6 +913,8 @@ main (int argc, char *argv[])
   cmd.AddValue ("sumoWarmup", "SUMO seconds simulated before ns-3 starts, to reach steady traffic", MobilityConfig.warmup);
   cmd.AddValue ("sumoOptions", "Extra options for the SUMO command line", MobilityConfig.extraOptions);
   cmd.AddValue ("SchedulerMap", "Per-node scheduler, e.g. 1-10:sps;11-20:dynamic+retx+rsrp=-110", SchedulerMap);
+  cmd.AddValue ("Traffic", "groupcast-adaptation traffic model of every vehicle: periodic1, periodic2, periodic4, periodic5, "
+                "aperiodic1[:<max B>]. Replaces the --Periodic / --Aperiodic traffic", trafficOption);
   cmd.AddValue ("UdpFiles", "Write the application layer logs TxFile.txt and RxFile.txt", enableUDPfiles);
   cmd.AddValue ("PosLog", "Write vehicle positions to posFile.txt every 100 ms", PositionLog);
   cmd.AddValue ("AdaptiveRRI", "Adapt the RRI and the keep probability to the sensed load", AdaptiveRRI);
@@ -767,6 +925,14 @@ main (int argc, char *argv[])
  // cmd.AddValue ("Sens", "The reference sensitivity", RefSensitivity); 
 
   cmd.Parse(argc, argv);
+  if (!trafficOption.empty ())
+  {
+    Traffic = ParseTrafficModel (trafficOption);
+    // UdpClient::Send generates the model's packets; the periodic set-up keeps the rest of the
+    // scenario away from the CAM traces and the aperiodic generators
+    PeriodicTraffic = true;
+    AperiodicTraffic = false;
+  }
 
   if (SCS_factor.find(OFDM_numerology) == SCS_factor.end())
     NS_ASSERT_MSG(false, "Non-valid OFDM numerology configuration");
@@ -915,6 +1081,9 @@ main (int argc, char *argv[])
   readme << "----------------------" << std::endl;
   readme << "Simulation:" << std::endl;
   readme << " - simulation time = " << simTime << " s " << std::endl;
+  if (!Traffic.name.empty ())
+    readme << " - traffic model = " << Traffic.name << " (RRI " << Traffic.rriMs << " ms, PDB " << Traffic.pdbMs << " ms, "
+           << (Traffic.sps ? "SPS" : "dynamic") << ")" << std::endl;
   readme << " - seed = " << seed << std::endl; 
   readme << " - run = " << runNumber << std::endl;
   readme << " - UE count = " << ueCount << std::endl;
@@ -1303,6 +1472,8 @@ main (int argc, char *argv[])
 
 //    EnableTX[ID-1] = true; //Enable a UE to transmit
     EnableTX.push_back(true); //Enable a UE to transmit
+    // --Traffic periodic1: each vehicle starts its size cycle at a random place
+    TrafficTurn.push_back (Traffic.inTurn ? CreateObject<UniformRandomVariable> ()->GetInteger (0, Traffic.sizes.size () - 1) : 0);
     
   }
 
@@ -1462,6 +1633,9 @@ main (int argc, char *argv[])
 
     if (FrequencyReuse)
       mac->CopySubchannelsMap(SubchannelIndexMap);
+
+    if (!Traffic.name.empty ())
+      mac->PushNewRRIValue (Traffic.rriMs);
 
     if (PeriodicTraffic)
     {
