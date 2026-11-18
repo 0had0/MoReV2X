@@ -417,7 +417,8 @@ UdpClient::Send (void)
     v2xTag.SetDoubleValue (Simulator::Now ().GetSeconds ());
     v2xTag.SetMessageType (0x00);
     v2xTag.SetTrafficType (Traffic.sps ? 0x00 : 0x01);
-    v2xTag.SetPPPP (0x00);
+    v2xTag.SetPPPP (NodePriority[nodeId-1]);  // 0 unless --SchedulerMap gives a prio=
+    v2xTag.SetTxPerTb (NodeTxPerTb[nodeId-1]); // 0 unless --SchedulerMap gives a tx=
     v2xTag.SetPrsvp (Traffic.rriMs);
     v2xTag.SetPdb (Traffic.pdbMs);
     v2xTag.SetNodeId (nodeId);

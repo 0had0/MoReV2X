@@ -61,6 +61,12 @@ class TrafficModels(ScratchRuns):
         ssps = read(folder, "SSPSlog.txt", SSPS_COLUMNS)
         self.assertTrue((ssps.Cresel <= 1).all(), "one selection per packet")
 
+    def test_scheduler_map_priority(self):
+        folder, _ = self.highway(*BASE, "--Traffic=periodic1", "--SchedulerMap=1-10:prio=2;11-20:prio=6")
+        ssps = read(folder, "SSPSlog.txt", SSPS_COLUMNS)
+        self.assertEqual(set(ssps[ssps.node <= 10].priority), {2})
+        self.assertEqual(set(ssps[ssps.node > 10].priority), {6})
+
     def test_refused_models(self):
         env = dict(os.environ, DYLD_LIBRARY_PATH=BUILD, LD_LIBRARY_PATH=BUILD)
         workdir = tempfile.mkdtemp(prefix="morev2x-test-")
