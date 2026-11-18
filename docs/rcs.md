@@ -169,6 +169,10 @@ tools/rcs/priority_grid.py --jobs 30 --seeds 1 2      # 192 runs, results/rcs_pr
 tools/rcs/priority_grid.py --summary                  # summary.csv and the stacked tables
 ```
 
+`notebooks/17_rcs_priority.ipynb` analyses the 192 runs: CBR over time, the paper's metrics per flow
+and phase, the contribution of re-evaluation and pre-emption, the gain and cost of the skewed tones,
+and the hearing range on the highway.
+
 ## Running
 
 ```bash
