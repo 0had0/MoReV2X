@@ -30,7 +30,7 @@ def hdrs_349(inc):
         p = G + '/build/include/ns3/' + gen
         if os.path.exists(p): shutil.copy(p, inc)
 
-def trial(name, base, srcdir, scratch, std):
+def trial(name, base, srcdir, scratch, std):  # scratch: the scenario sources
     out = f'{S}/{name}'
     shutil.rmtree(out, ignore_errors=True)
     inc = out + '/inc/ns3'; os.makedirs(inc)
@@ -43,7 +43,7 @@ def trial(name, base, srcdir, scratch, std):
     else:
         includes += ['-I', G + '/build/include']
     built = set(re.findall(r"'((?:model|helper)/[^']+\.cc)'", open(srcdir + '/wscript', encoding='latin-1').read()))
-    files = sorted(srcdir + '/' + b for b in built) + [scratch] + sorted(glob.glob(R + '/src/traci/model/*.cc') + glob.glob(R + '/src/traci/helper/*.cc'))
+    files = sorted(srcdir + '/' + b for b in built) + scratch + sorted(glob.glob(R + '/src/traci/model/*.cc') + glob.glob(R + '/src/traci/helper/*.cc'))
     def one(f):
         cmd = ['/usr/bin/clang++', '-std=' + std, '-fsyntax-only', '-w', '-ferror-limit=0', '-DNS3_LOG_ENABLE', '-DNS3_ASSERT_ENABLE',
                '-I', os.path.dirname(f), '-I/opt/local/include'] + includes + [f]
@@ -69,6 +69,7 @@ which = sys.argv[1]
 if which == 'c342' and not G:
     sys.exit('c342 reads the ns-3.42 headers: set NS3_342_DIR to a built ns-3-dev folder')
 if which == 'carlos':
-    trial('carlos349', '349', S + '/carlos/src/morev2x', S + '/carlos/src/morev2x/examples/HIGHWAY.cc', 'c++23')
-if which == 'c342': trial('ours342', '342', R + '/src/MoReV2X', R + '/scratch/HIGHWAY.cc', 'c++20')
-if which == 'c349': trial('ours349', '349', R + '/src/MoReV2X', R + '/scratch/HIGHWAY.cc', 'c++23')
+    trial('carlos349', '349', S + '/carlos/src/morev2x', [S + '/carlos/src/morev2x/examples/HIGHWAY.cc'], 'c++23')
+SCENARIOS = sorted(glob.glob(R + '/scratch/*.cc') + glob.glob(R + '/scratch/common/*.cc'))
+if which == 'c342': trial('ours342', '342', R + '/src/MoReV2X', SCENARIOS, 'c++20')
+if which == 'c349': trial('ours349', '349', R + '/src/MoReV2X', SCENARIOS, 'c++23')

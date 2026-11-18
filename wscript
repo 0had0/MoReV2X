@@ -638,8 +638,14 @@ def add_examples_programs(bld):
 
 def add_scratch_programs(bld):
     all_modules = [mod[len("ns3-"):] for mod in bld.env['NS3_ENABLED_MODULES']]
+    # scratch/common holds code shared by the scenarios, not a program: it is compiled into
+    # every scratch program that includes one of its headers
+    common = ['common/' + name for name in sorted(os.listdir(os.path.join("scratch", "common")))
+              if name.endswith('.cc')] if os.path.isdir(os.path.join("scratch", "common")) else []
+    def uses_common(path):
+        return common and '#include "common/' in open(path).read()
     for filename in os.listdir("scratch"):
-        if filename.startswith('.') or filename == 'CVS':
+        if filename.startswith('.') or filename == 'CVS' or filename == 'common':
 	    continue
         if os.path.isdir(os.path.join("scratch", filename)):
             obj = bld.create_ns3_program(filename, all_modules)
@@ -652,7 +658,7 @@ def add_scratch_programs(bld):
             name = filename[:-len(".cc")]
             obj = bld.create_ns3_program(name, all_modules)
             obj.path = obj.path.find_dir('scratch')
-            obj.source = filename
+            obj.source = [filename] + (common if uses_common(os.path.join("scratch", filename)) else [])
             obj.target = name
             obj.name = obj.target
             obj.install_path = None
