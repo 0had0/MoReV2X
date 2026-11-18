@@ -161,7 +161,7 @@ NistPointToPointEpcHelper::ActivateNistEpsBearer (Ptr<NetDevice> ueDevice, uint6
   // the user simulation program, rather than done by the EPC   
   Ptr<Node> ueNode = ueDevice->GetNode (); 
   Ptr<Ipv4> ueIpv4 = ueNode->GetObject<Ipv4> ();
-  NS_ASSERT_MSG (ueIpv4 != 0, "UEs need to have IPv4 installed before EPS bearers can be activated");
+  NS_ASSERT_MSG (ueIpv4 != nullptr, "UEs need to have IPv4 installed before EPS bearers can be activated");
   int32_t interface =  ueIpv4->GetInterfaceForDevice (ueDevice);
   NS_ASSERT (interface >= 0);
   NS_ASSERT (ueIpv4->GetNAddresses (interface) == 1);

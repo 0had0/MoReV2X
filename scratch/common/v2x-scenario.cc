@@ -1014,7 +1014,7 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
 
   if (!extraFlowOption.empty ())
   {
-    std::vector<std::string> parts = SplitString (extraFlowOption, ':');
+    std::vector<std::string> parts = ::SplitString (extraFlowOption, ':');  // not ns3::SplitString
     NS_ABORT_MSG_IF (parts.size () != 5, "--ExtraFlow=<period ms>:<PDB ms>:<payload B>:<priority>:<sps|dynamic>");
     ExtraFlow.enabled = true;
     ExtraFlow.period = std::stod (parts[0]);
@@ -1323,7 +1323,7 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
   NS_LOG_INFO ("Starting network configuration...");
 
   Config::SetDefault ("ns3::NistLteRlcUm::MaxTxBufferSize", StringValue ("100000"));
-  Config::SetDefault ("ns3::DropTailQueue::MaxPackets", UintegerValue (10000000)); // In order not to run out of packets ;)
+  Config::SetDefault ("ns3::DropTailQueue<Packet>::MaxSize", QueueSizeValue (QueueSize ("10000000p"))); // In order not to run out of packets ;)
  
 
   // Configure the path for storing output files--------------------------------------------------------------------
@@ -1783,7 +1783,6 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
   lteHelper->Attach (ueDevs);
 
   BuildingsHelper::Install (ueResponders);
-  BuildingsHelper::MakeMobilityModelConsistent ();
   
   NS_LOG_INFO ("Installing applications...");
   // UDP application: in our case, this is the application that generates CAMs and DENMs

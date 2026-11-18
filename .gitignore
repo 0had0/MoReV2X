@@ -48,3 +48,8 @@ __pycache__/
 /*.tr
 /docs/figures/qos/
 /docs/notebooks/src/
+/cmake-cache/
+/cmake-cache-debug/
+/build-debug/
+/.lock-ns3_*
+/testpy-output/

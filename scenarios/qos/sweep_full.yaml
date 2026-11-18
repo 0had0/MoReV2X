@@ -9,7 +9,7 @@
 
 name: qos_full
 include: [classes.yaml]
-binary: build/optimized/scratch/QOS
+binary: build/scratch/ns3.42-QOS-optimized
 sim_time: 15            # simulated seconds per run
 warmup: 3               # seconds left out of every metric
 max_distance: 1000      # m, attempts and ReceivedLog rows beyond are ignored

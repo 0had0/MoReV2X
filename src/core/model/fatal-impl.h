@@ -1,4 +1,3 @@
-/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
  * Copyright (c) 2010 NICTA
  *
@@ -26,7 +25,8 @@
 /**
  * \file
  * \ingroup fatalimpl
- * \brief Declaration of RegisterStream(), UnregisterStream(), and FlushStreams().
+ * ns3::FatalImpl::RegisterStream(), ns3::FatalImpl::UnregisterStream(),
+ * and ns3::FatalImpl::FlushStreams() declarations.
  */
 
 /**
@@ -34,13 +34,15 @@
  * \defgroup fatalimpl Fatal Implementation.
  */
 
-namespace ns3 {
+namespace ns3
+{
 
 /**
  * \ingroup fatalimpl
  * \brief Implementation namespace for fatal error handlers.
  */
-namespace FatalImpl {
+namespace FatalImpl
+{
 
 /**
  * \ingroup fatalimpl
@@ -53,9 +55,9 @@ namespace FatalImpl {
  * this function should ensure the stream remains valid until
  * it had been unregistered.
  *
- * \param stream The stream to be flushed on abnormal exit.
+ * \param [in] stream The stream to be flushed on abnormal exit.
  */
-void RegisterStream (std::ostream* stream);
+void RegisterStream(std::ostream* stream);
 
 /**
  * \ingroup fatalimpl
@@ -68,9 +70,9 @@ void RegisterStream (std::ostream* stream);
  *
  * If the stream is not registered, nothing will happen.
  *
- * \param stream The stream to be unregistered.
+ * \param [in] stream The stream to be unregistered.
  */
-void UnregisterStream (std::ostream* stream);
+void UnregisterStream(std::ostream* stream);
 
 /**
  * \ingroup fatalimpl
@@ -90,9 +92,9 @@ void UnregisterStream (std::ostream* stream);
  *
  * DO NOT call this function until the program is ready to crash.
  */
-void FlushStreams (void);
+void FlushStreams();
 
-} //FatalImpl
-} //ns3
+} // namespace FatalImpl
+} // namespace ns3
 
 #endif

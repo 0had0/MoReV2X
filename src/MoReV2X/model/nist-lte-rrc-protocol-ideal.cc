@@ -323,7 +323,7 @@ NistLteEnbRrcProtocolIdeal::DoSendNistSystemInformation (NistLteRrcSap::NistSyst
       for (int j = 0; j < nDevs; ++j)
         {
           Ptr<NistLteUeNetDevice> ueDev = node->GetDevice (j)->GetObject <NistLteUeNetDevice> ();
-          if (ueDev != 0)
+          if (ueDev != nullptr)
             {
               Ptr<NistLteUeRrc> ueRrc = ueDev->GetRrc ();              
               NS_LOG_LOGIC ("considering UE IMSI " << ueDev->GetImsi () << " that has cellId " << ueRrc->GetCellId ());

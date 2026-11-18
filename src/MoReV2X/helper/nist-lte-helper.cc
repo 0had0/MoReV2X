@@ -72,7 +72,7 @@ NistLteHelper::DoInitialize (void)
 
   m_downlinkPathlossModel = m_dlPathlossModelFactory.Create ();
   Ptr<SpectrumPropagationLossModel> dlSplm = m_downlinkPathlossModel->GetObject<SpectrumPropagationLossModel> ();
-  if (dlSplm != 0)
+  if (dlSplm != nullptr)
     {
       NS_LOG_LOGIC (this << " using a SpectrumPropagationLossModel in DL");
       m_downlinkChannel->AddSpectrumPropagationLossModel (dlSplm);
@@ -81,7 +81,7 @@ NistLteHelper::DoInitialize (void)
     {
       NS_LOG_LOGIC (this << " using a PropagationLossModel in DL");
       Ptr<PropagationLossModel> dlPlm = m_downlinkPathlossModel->GetObject<PropagationLossModel> ();
-      NS_ASSERT_MSG (dlPlm != 0, " " << m_downlinkPathlossModel << " is neither PropagationLossModel nor SpectrumPropagationLossModel");
+      NS_ASSERT_MSG (dlPlm != nullptr, " " << m_downlinkPathlossModel << " is neither PropagationLossModel nor SpectrumPropagationLossModel");
       m_downlinkChannel->AddPropagationLossModel (dlPlm);
     }
 
@@ -96,7 +96,7 @@ NistLteHelper::DoInitialize (void)
   }
   //
   Ptr<SpectrumPropagationLossModel> ulSplm = m_uplinkPathlossModel->GetObject<SpectrumPropagationLossModel> ();
-  if (ulSplm != 0)
+  if (ulSplm != nullptr)
     {
       NS_LOG_LOGIC (this << " using a SpectrumPropagationLossModel in UL");
       m_uplinkChannel->AddSpectrumPropagationLossModel (ulSplm);
@@ -105,7 +105,7 @@ NistLteHelper::DoInitialize (void)
     {
       NS_LOG_LOGIC (this << " using a PropagationLossModel in UL");
       Ptr<PropagationLossModel> ulPlm = m_uplinkPathlossModel->GetObject<PropagationLossModel> ();
-      NS_ASSERT_MSG (ulPlm != 0, " " << m_uplinkPathlossModel << " is neither PropagationLossModel nor SpectrumPropagationLossModel");
+      NS_ASSERT_MSG (ulPlm != nullptr, " " << m_uplinkPathlossModel << " is neither PropagationLossModel nor SpectrumPropagationLossModel");
       m_uplinkChannel->AddPropagationLossModel (ulPlm);
     }
   
@@ -423,7 +423,7 @@ NistLteHelper::InstallSingleUeDevice (Ptr<Node> n)
        NS_FATAL_ERROR("Only ideal RRC is available");
     }
   
-  if (m_epcHelper != 0)
+  if (m_epcHelper != nullptr)
     {
       rrc->SetUseRlcSm (false);
     }
@@ -485,7 +485,7 @@ NistLteHelper::InstallSingleUeDevice (Ptr<Node> n)
     slPhy->SetNistLtePhyRxDataStartCallback (MakeCallback (&NrV2XUePhy::MeasurePsschRsrp, phy));
   }
   
-  if (m_epcHelper != 0)
+  if (m_epcHelper != nullptr)
     {
       m_epcHelper->AddUe (dev, dev->GetImsi ());
     }
@@ -511,20 +511,20 @@ NistLteHelper::Attach (Ptr<NetDevice> ueDevice)
 {
   NS_LOG_FUNCTION (this);
 
-  if (m_epcHelper == 0)
+  if (m_epcHelper == nullptr)
     {
       NS_FATAL_ERROR ("This function is not valid without properly configured EPC");
     }
 
   Ptr<NistLteUeNetDevice> ueLteDevice = ueDevice->GetObject<NistLteUeNetDevice> ();
-  if (ueLteDevice == 0)
+  if (ueLteDevice == nullptr)
     {
       NS_FATAL_ERROR ("The passed NetDevice must be an NistLteUeNetDevice");
     }
 
   // initiate cell selection
   Ptr<NistEpcUeNas> ueNas = ueLteDevice->GetNas ();
-  NS_ASSERT (ueNas != 0);
+  NS_ASSERT (ueNas != nullptr);
   uint16_t dlEarfcn = ueLteDevice->GetDlEarfcn ();
   ueNas->StartCellSelection (dlEarfcn);
 
@@ -556,7 +556,7 @@ NistLteHelper::ActivateDedicatedNistEpsBearer (Ptr<NetDevice> ueDevice, NistEpsB
 {
   NS_LOG_FUNCTION (this);
 
-  NS_ASSERT_MSG (m_epcHelper != 0, "dedicated EPS bearers cannot be set up when the EPC is not used");
+  NS_ASSERT_MSG (m_epcHelper != nullptr, "dedicated EPS bearers cannot be set up when the EPC is not used");
 
   uint64_t imsi = ueDevice->GetObject<NistLteUeNetDevice> ()->GetImsi ();
   uint8_t bearerId = m_epcHelper->ActivateNistEpsBearer (ueDevice, imsi, tft, bearer);
@@ -579,7 +579,7 @@ NistLteHelper::ActivateSidelinkBearer (Ptr<NetDevice> ueDevice, Ptr<NistSlTft> t
 {
   NS_LOG_FUNCTION (this);
 
-  NS_ASSERT_MSG (m_epcHelper != 0, "sidelink bearers cannot be set up when the EPC is not used");
+  NS_ASSERT_MSG (m_epcHelper != nullptr, "sidelink bearers cannot be set up when the EPC is not used");
 
   m_epcHelper->ActivateSidelinkBearer (ueDevice, tft);
 }  
@@ -600,7 +600,7 @@ NistLteHelper::DeactivateSidelinkBearer (Ptr<NetDevice> ueDevice, Ptr<NistSlTft>
 {
   NS_LOG_FUNCTION (this);
 
-  NS_ASSERT_MSG (m_epcHelper != 0, "sidelink bearers cannot be set up when the EPC is not used");
+  NS_ASSERT_MSG (m_epcHelper != nullptr, "sidelink bearers cannot be set up when the EPC is not used");
 
   m_epcHelper->DeactivateSidelinkBearer (ueDevice, tft);
 }  
@@ -619,7 +619,7 @@ NistLteHelper::StartDiscovery (Ptr<NetDevice> ueDevice, std::list<uint32_t> apps
 {
   NS_LOG_FUNCTION (this);
 
-  NS_ASSERT_MSG (m_epcHelper != 0, "discovery can't start when the EPC is not used");
+  NS_ASSERT_MSG (m_epcHelper != nullptr, "discovery can't start when the EPC is not used");
 
   m_epcHelper->StartDiscovery (ueDevice, apps, rxtx);
 }  
@@ -639,7 +639,7 @@ NistLteHelper::StopDiscovery (Ptr<NetDevice> ueDevice, std::list<uint32_t> apps,
 {
   NS_LOG_FUNCTION (this);
 
-  NS_ASSERT_MSG (m_epcHelper != 0, "no EPC is used");
+  NS_ASSERT_MSG (m_epcHelper != nullptr, "no EPC is used");
 
   m_epcHelper->StopDiscovery (ueDevice, apps, rxtx);
 }
@@ -695,7 +695,7 @@ void
 NistLteHelper::InstallSidelinkConfiguration (Ptr<NetDevice> ueDevice, Ptr<LteUeRrcSl> slConfiguration)
 {
   Ptr<NistLteUeRrc> rrc = ueDevice->GetObject<NistLteUeNetDevice> ()->GetRrc();
-  NS_ASSERT_MSG (rrc != 0, "RRC layer not found");
+  NS_ASSERT_MSG (rrc != nullptr, "RRC layer not found");
   PointerValue ptr;
   rrc->GetAttribute ("SidelinkConfiguration", ptr);
   Ptr<LteUeRrcSl> ueConfig = ptr.Get<LteUeRrcSl> ();
@@ -722,15 +722,15 @@ NistLteHelper::DoCalcRsrp (Ptr<PropagationLossModel> propagationLoss, Ptr<Spectr
   Ptr<MobilityModel> rxMobility = rxPhy->GetMobility ();
 
   double pathLossDb = 0;
-  if (txPhy->GetRxAntenna() != 0)
+  if (DynamicCast<AntennaModel> (txPhy->GetAntenna ()))
     {
       Angles txAngles (rxMobility->GetPosition (), txMobility->GetPosition ());
-      double txAntennaGain = txPhy->GetRxAntenna()->GetGainDb (txAngles);
+      double txAntennaGain = DynamicCast<AntennaModel> (txPhy->GetAntenna ())->GetGainDb (txAngles);
       NS_LOG_DEBUG ("txAntennaGain = " << txAntennaGain << " dB");
       pathLossDb -= txAntennaGain;
     }
-  Ptr<AntennaModel> rxAntenna = rxPhy->GetRxAntenna ();
-  if (rxAntenna != 0)
+  Ptr<AntennaModel> rxAntenna = DynamicCast<AntennaModel> (rxPhy->GetAntenna ());
+  if (rxAntenna != nullptr)
     {
       Angles rxAngles (txMobility->GetPosition (), rxMobility->GetPosition ());
       double rxAntennaGain = rxAntenna->GetGainDb (rxAngles);
@@ -795,15 +795,15 @@ NistLteHelper::DoCalcRsrp (Ptr<PropagationLossModel> propagationLoss, double txP
   Ptr<MobilityModel> rxMobility = rxPhy->GetMobility ();
 
   double pathLossDb = 0;
-  if (txPhy->GetRxAntenna() != 0)
+  if (DynamicCast<AntennaModel> (txPhy->GetAntenna ()))
     {
       Angles txAngles (rxMobility->GetPosition (), txMobility->GetPosition ());
-      double txAntennaGain = txPhy->GetRxAntenna()->GetGainDb (txAngles);
+      double txAntennaGain = DynamicCast<AntennaModel> (txPhy->GetAntenna ())->GetGainDb (txAngles);
       NS_LOG_DEBUG ("txAntennaGain = " << txAntennaGain << " dB");
       pathLossDb -= txAntennaGain;
     }
-  Ptr<AntennaModel> rxAntenna = rxPhy->GetRxAntenna ();
-  if (rxAntenna != 0)
+  Ptr<AntennaModel> rxAntenna = DynamicCast<AntennaModel> (rxPhy->GetAntenna ());
+  if (rxAntenna != nullptr)
     {
       Angles rxAngles (txMobility->GetPosition (), rxMobility->GetPosition ());
       double rxAntennaGain = rxAntenna->GetGainDb (rxAngles);
@@ -839,7 +839,7 @@ double
 NistLteHelper::CalcSidelinkRsrp (double txPower, double ulEarfcn, double ulBandwidth, Ptr<NetDevice> txDevice, Ptr<NetDevice> rxDevice)
 {
   Ptr<PropagationLossModel> lossModel = m_uplinkPathlossModel->GetObject<PropagationLossModel> ();
-  NS_ASSERT_MSG (lossModel != 0, " " << m_uplinkPathlossModel << " is not a PropagationLossModel");
+  NS_ASSERT_MSG (lossModel != nullptr, " " << m_uplinkPathlossModel << " is not a PropagationLossModel");
 
   /*
     Sidelink Reference Signal Received Power (S-RSRP) is defined as the linear average over the
@@ -874,7 +874,7 @@ double
 NistLteHelper::CalcSidelinkRsrpEval (double txPower, double ulEarfcn, Ptr<NetDevice> txDevice, Ptr<NetDevice> rxDevice)
 {
   Ptr<PropagationLossModel> lossModel = m_uplinkPathlossModel->GetObject<PropagationLossModel> ();
-  NS_ASSERT_MSG (lossModel != 0, " " << m_uplinkPathlossModel << " is not a PropagationLossModel");
+  NS_ASSERT_MSG (lossModel != nullptr, " " << m_uplinkPathlossModel << " is not a PropagationLossModel");
 
   /*
     36.843: RSRP is calculated for transmit power of 23dBm by the transmitter UE and is the received power at the receiver UE calculated after accounting for large scale path loss and shadowing. Additionally note that wrap around is used for path loss calculations except for the case of partial -coverage.

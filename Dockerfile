@@ -1,4 +1,4 @@
-# MoReV2X on ns-3.22 for the QOS sweep: Ubuntu 22.04, gcc 11, Python 2.7 for waf, Python 3 and
+# MoReV2X on ns-3.42 for the QOS sweep: Ubuntu 22.04, gcc 11, CMake and Ninja, Python 3 and
 # SUMO for the traces and the metrics. Built and run by tools/qos/remote/launch.sh:
 #
 #   docker build -t morev2x-qos .
@@ -10,11 +10,10 @@ FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
- && apt-get install -y --no-install-recommends build-essential g++ python2 python3 python3-venv python3-pip \
+ && apt-get install -y --no-install-recommends build-essential g++ cmake ninja-build python3 python3-venv python3-pip \
       libsqlite3-dev libgsl-dev libxml2-dev pkg-config ca-certificates procps \
       libx11-6 libxext6 libxrender1 libgl1 \
- && rm -rf /var/lib/apt/lists/* \
- && ln -sf /usr/bin/python2 /usr/local/bin/python
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/morev2x
 
@@ -30,14 +29,13 @@ COPY . .
 # docker build --build-arg JOBS=4 -t morev2x-qos .
 ARG JOBS=0
 
-# Same flags as .env on the Mac, -O2 and no fused multiply-add so results match across hosts.
-# waf 1.7 runs on Python 2 only, hence python2 ./waf
-ENV CXXFLAGS="-std=gnu++11 -O2 -g0 -ffp-contract=off -w" \
+# No fused multiply-add, as in .env on the Mac, so results match across hosts
+ENV CXXFLAGS="-ffp-contract=off -w" \
     MOREV2X_ROOT=/opt/morev2x \
-    LD_LIBRARY_PATH=/opt/morev2x/build/optimized
-RUN python2 ./waf configure --disable-python --disable-examples --disable-tests --build-profile=optimized \
-      --out=build/optimized --enable-modules=MoReV2X,traci > /tmp/configure.log \
- && (python2 ./waf build -j"$([ "$JOBS" -gt 0 ] && echo "$JOBS" || nproc)" > /tmp/build.log 2>&1 || (tail -60 /tmp/build.log; exit 1))
+    LD_LIBRARY_PATH=/opt/morev2x/build/lib
+RUN ./ns3 configure --build-profile=optimized --disable-examples --disable-tests \
+      --enable-modules='MoReV2X;traci' --disable-werror > /tmp/configure.log \
+ && (./ns3 build -j"$([ "$JOBS" -gt 0 ] && echo "$JOBS" || nproc)" > /tmp/build.log 2>&1 || (tail -60 /tmp/build.log; exit 1))
 
 # SUMO and Python 3 from the venv, see the entrypoint
 ENTRYPOINT ["/opt/morev2x/tools/qos/remote/entrypoint.sh"]

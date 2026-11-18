@@ -1,4 +1,3 @@
-/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -14,7 +13,12 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  * Author: George Riley <riley@ece.gatech.edu>
- *
+ */
+
+/**
+ * \file
+ * \ingroup mpi
+ * Declaration of classes ns3::SentBuffer and ns3::GrantedTimeWindowMpiInterface.
  */
 
 // This object contains static methods that provide an easy interface
@@ -23,21 +27,17 @@
 #ifndef NS3_GRANTED_TIME_WINDOW_MPI_INTERFACE_H
 #define NS3_GRANTED_TIME_WINDOW_MPI_INTERFACE_H
 
-#include <stdint.h>
-#include <list>
-
-#include "ns3/nstime.h"
-#include "ns3/buffer.h"
-
 #include "parallel-communication-interface.h"
 
-#ifdef NS3_MPI
-#include "mpi.h"
-#else
-typedef void* MPI_Request;
-#endif
+#include "ns3/buffer.h"
+#include "ns3/nstime.h"
 
-namespace ns3 {
+#include <list>
+#include <mpi.h>
+#include <stdint.h>
+
+namespace ns3
+{
 
 /**
  * maximum MPI message size for easy
@@ -55,29 +55,30 @@ const uint32_t MAX_MPI_MSG_SIZE = 2000;
  */
 class SentBuffer
 {
-public:
-  SentBuffer ();
-  ~SentBuffer ();
+  public:
+    SentBuffer();
+    ~SentBuffer();
 
-  /**
-   * \return pointer to sent buffer
-   */
-  uint8_t* GetBuffer ();
-  /**
-   * \param buffer pointer to sent buffer
-   */
-  void SetBuffer (uint8_t* buffer);
-  /**
-   * \return MPI request
-   */
-  MPI_Request* GetRequest ();
+    /**
+     * \return pointer to sent buffer
+     */
+    uint8_t* GetBuffer();
+    /**
+     * \param buffer pointer to sent buffer
+     */
+    void SetBuffer(uint8_t* buffer);
+    /**
+     * \return MPI request
+     */
+    MPI_Request* GetRequest();
 
-private:
-  uint8_t* m_buffer;
-  MPI_Request m_request;
+  private:
+    uint8_t* m_buffer;     /**< The buffer. */
+    MPI_Request m_request; /**< The MPI request handle. */
 };
 
 class Packet;
+class DistributedSimulatorImpl;
 
 /**
  * \ingroup mpi
@@ -90,84 +91,84 @@ class Packet;
  */
 class GrantedTimeWindowMpiInterface : public ParallelCommunicationInterface, Object
 {
-public:
-  static TypeId GetTypeId (void);
+  public:
+    /**
+     * Register this type.
+     * \return The object TypeId.
+     */
+    static TypeId GetTypeId();
 
-  /**
-   * Delete all buffers
-   */
-  virtual void Destroy ();
-  /**
-   * \return MPI rank
-   */
-  virtual uint32_t GetSystemId ();
-  /**
-   * \return MPI size (number of systems)
-   */
-  virtual uint32_t GetSize ();
-  /**
-   * \return true if using MPI
-   */
-  virtual bool IsEnabled ();
-  /**
-   * \param pargc number of command line arguments
-   * \param pargv command line arguments
-   *
-   * Sets up MPI interface
-   */
-  virtual void Enable (int* pargc, char*** pargv);
-  /**
-   * Terminates the MPI environment by calling MPI_Finalize
-   * This function must be called after Destroy ()
-   * It also resets m_initialized, m_enabled
-   */
-  virtual void Disable ();
-  /**
-   * \param p packet to send
-   * \param rxTime received time at destination node
-   * \param node destination node
-   * \param dev destination device
-   *
-   * Serialize and send a packet to the specified node and net device
-   */
-  virtual void SendPacket (Ptr<Packet> p, const Time &rxTime, uint32_t node, uint32_t dev);
-  /**
-   * Check for received messages complete
-   */
-  static void ReceiveMessages ();
-  /**
-   * Check for completed sends
-   */
-  static void TestSendComplete ();
-  /**
-   * \return received count in packets
-   */
-  static uint32_t GetRxCount ();
-  /**
-   * \return transmitted count in packets
-   */
-  static uint32_t GetTxCount ();
+    // Inherited
+    void Destroy() override;
+    uint32_t GetSystemId() override;
+    uint32_t GetSize() override;
+    bool IsEnabled() override;
+    void Enable(int* pargc, char*** pargv) override;
+    void Enable(MPI_Comm communicator) override;
+    void Disable() override;
+    void SendPacket(Ptr<Packet> p, const Time& rxTime, uint32_t node, uint32_t dev) override;
+    MPI_Comm GetCommunicator() override;
 
-private:
-  static uint32_t m_sid;
-  static uint32_t m_size;
+  private:
+    /*
+     * The granted time window implementation is a collaboration of several
+     * classes.  Methods that should be invoked only by the
+     * collaborators are private to restrict use.
+     * It is not intended for state to be shared.
+     */
+    friend ns3::DistributedSimulatorImpl;
 
-  // Total packets received
-  static uint32_t m_rxCount;
+    /**
+     * Check for received messages complete
+     */
+    static void ReceiveMessages();
+    /**
+     * Check for completed sends
+     */
+    static void TestSendComplete();
+    /**
+     * \return received count in packets
+     */
+    static uint32_t GetRxCount();
+    /**
+     * \return transmitted count in packets
+     */
+    static uint32_t GetTxCount();
 
-  // Total packets sent
-  static uint32_t m_txCount;
-  static bool     m_initialized;
-  static bool     m_enabled;
+    /** System ID (rank) for this task. */
+    static uint32_t g_sid;
+    /** Size of the MPI COM_WORLD group. */
+    static uint32_t g_size;
 
-  // Pending non-blocking receives
-  static MPI_Request* m_requests;
+    /** Total packets received. */
+    static uint32_t g_rxCount;
 
-  // Data buffers for non-blocking reads
-  static char**   m_pRxBuffers;
+    /** Total packets sent. */
+    static uint32_t g_txCount;
 
-  // List of pending non-blocking sends
-  static std::list<SentBuffer> m_pendingTx;
+    /** Has this interface been enabled. */
+    static bool g_enabled;
+
+    /**
+     * Has MPI Init been called by this interface.
+     * Alternatively user supplies a communicator.
+     */
+    static bool g_mpiInitCalled;
+
+    /** Pending non-blocking receives. */
+    static MPI_Request* g_requests;
+
+    /** Data buffers for non-blocking reads. */
+    static char** g_pRxBuffers;
+
+    /** List of pending non-blocking sends. */
+    static std::list<SentBuffer> g_pendingTx;
+
+    /** MPI communicator being used for ns-3 tasks. */
+    static MPI_Comm g_communicator;
+
+    /** Did ns-3 create the communicator?  Have to free it. */
+    static bool g_freeCommunicator;
 };
 
 } // namespace ns3

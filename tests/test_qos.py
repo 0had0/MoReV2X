@@ -15,8 +15,8 @@ sys.path.insert(0, os.path.join(ROOT, "tools", "qos"))
 import metrics  # noqa: E402
 import sweep  # noqa: E402
 
-BUILD = os.path.join(ROOT, "build", "optimized")
-QOS = os.path.join(BUILD, "scratch", "QOS")
+BUILD = os.path.join(ROOT, "build")
+QOS = os.path.join(BUILD, "scratch", "ns3.42-QOS-optimized")
 PYTHON = sys.executable
 TRACES = {}
 
@@ -56,7 +56,7 @@ class QosRun(unittest.TestCase):
         command = [QOS, "--trace=" + trace_folder, "--flows=" + flows, "--out=" + out, "--simTime=%g" % sim_time,
                    "--Numerology=2", "--ChannelBW=20", "--SubChannel=12", "--mcs=14", "--SavingPeriod=0.5",
                    "--ns3::NrV2XSpectrumPhy::MetricsMaxDistance=1000"] + list(arguments)
-        env = dict(os.environ, DYLD_LIBRARY_PATH=BUILD, LD_LIBRARY_PATH=BUILD)
+        env = dict(os.environ, DYLD_LIBRARY_PATH=os.path.join(BUILD, "lib"), LD_LIBRARY_PATH=os.path.join(BUILD, "lib"))
         done = subprocess.run(command, cwd=self.work, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               text=True, timeout=900)
         if done.returncode != 0:

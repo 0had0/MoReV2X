@@ -1,4 +1,3 @@
-/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
  * Copyright (c) 2008 INRIA
  *
@@ -21,22 +20,22 @@
 #ifndef IPV4_RAW_SOCKET_FACTORY_IMPL_H
 #define IPV4_RAW_SOCKET_FACTORY_IMPL_H
 
-#include "ns3/ipv4-raw-socket-factory.h"
+#include "ipv4-raw-socket-factory.h"
 
-namespace ns3 {
+namespace ns3
+{
 
 /**
  * \ingroup socket
+ * \ingroup ipv4
  *
- * \class Ipv4RawSocketFactoryImpl
  * \brief Implementation of IPv4 raw socket factory.
  */
 class Ipv4RawSocketFactoryImpl : public Ipv4RawSocketFactory
 {
-public:
-  virtual Ptr<Socket> CreateSocket (void);
+  public:
+    Ptr<Socket> CreateSocket() override;
 };
-
 
 } // namespace ns3
 

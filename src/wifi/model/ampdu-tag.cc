@@ -1,4 +1,3 @@
-/* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
  * Copyright (c) 2013
  *
@@ -15,90 +14,90 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * Author: Ghada Badawy <gbadawy@gmail.com>
+ * Authors: Ghada Badawy <gbadawy@gmail.com>
+ *          Sébastien Deronne <sebastien.deronne@gmail.com>
  */
+
 #include "ampdu-tag.h"
-#include "ns3/tag.h"
-#include "ns3/uinteger.h"
 
-namespace ns3 {
+namespace ns3
+{
 
-NS_OBJECT_ENSURE_REGISTERED (AmpduTag);
+NS_OBJECT_ENSURE_REGISTERED(AmpduTag);
 
 TypeId
-AmpduTag::GetTypeId (void)
+AmpduTag::GetTypeId()
 {
-  static TypeId tid = TypeId ("ns3::AmpduTag")
-    .SetParent<Tag> ()
-    .AddConstructor<AmpduTag> ()
-    .AddAttribute ("Ampdu Exists", "The value that indicates that the packet contains an AMPDU",
-                   UintegerValue (false),
-                   MakeUintegerAccessor (&AmpduTag::GetAmpdu),
-                   MakeUintegerChecker<uint8_t> ())
-  ;
-  return tid;
+    static TypeId tid =
+        TypeId("ns3::AmpduTag").SetParent<Tag>().SetGroupName("Wifi").AddConstructor<AmpduTag>();
+    return tid;
 }
 
 TypeId
-AmpduTag::GetInstanceTypeId (void) const
+AmpduTag::GetInstanceTypeId() const
 {
-  return GetTypeId ();
+    return GetTypeId();
 }
 
-AmpduTag::AmpduTag ()
-  : m_ampdu (0)
+AmpduTag::AmpduTag()
+    : m_nbOfMpdus(0),
+      m_duration(Seconds(0))
 {
 }
 
 void
-AmpduTag::SetAmpdu (bool supported)
+AmpduTag::SetRemainingNbOfMpdus(uint8_t nbOfMpdus)
 {
-  m_ampdu = supported;
+    m_nbOfMpdus = nbOfMpdus;
 }
 
 void
-AmpduTag::SetNoOfMpdus (uint8_t noofmpdus)
+AmpduTag::SetRemainingAmpduDuration(Time duration)
 {
-  NS_ASSERT (noofmpdus <= 64);
-  m_noOfMpdus = noofmpdus;
+    NS_ASSERT(m_duration <= MilliSeconds(10));
+    m_duration = duration;
 }
 
 uint32_t
-AmpduTag::GetSerializedSize (void) const
+AmpduTag::GetSerializedSize() const
 {
-  return 2;
+    return (1 + sizeof(Time));
 }
 
 void
-AmpduTag::Serialize (TagBuffer i) const
+AmpduTag::Serialize(TagBuffer i) const
 {
-  i.WriteU8 (m_ampdu);
-  i.WriteU8 (m_noOfMpdus);
+    i.WriteU8(m_nbOfMpdus);
+    int64_t duration = m_duration.GetTimeStep();
+    i.Write((const uint8_t*)&duration, sizeof(int64_t));
 }
 
 void
-AmpduTag::Deserialize (TagBuffer i)
+AmpduTag::Deserialize(TagBuffer i)
 {
-  m_ampdu = i.ReadU8 ();
-  m_noOfMpdus = i.ReadU8 ();
-}
-
-bool
-AmpduTag::GetAmpdu () const
-{
-  return (m_ampdu == 1) ? true : false;
+    m_nbOfMpdus = i.ReadU8();
+    int64_t duration;
+    i.Read((uint8_t*)&duration, sizeof(int64_t));
+    m_duration = Time(duration);
 }
 
 uint8_t
-AmpduTag::GetNoOfMpdus () const
+AmpduTag::GetRemainingNbOfMpdus() const
 {
-  return m_noOfMpdus;
+    return m_nbOfMpdus;
+}
+
+Time
+AmpduTag::GetRemainingAmpduDuration() const
+{
+    return m_duration;
 }
 
 void
-AmpduTag::Print (std::ostream &os) const
+AmpduTag::Print(std::ostream& os) const
 {
-  os << "A-MPDU exists=" << m_ampdu;
+    os << "Remaining number of MPDUs=" << m_nbOfMpdus
+       << " Remaining A-MPDU duration=" << m_duration;
 }
 
 } // namespace ns3

@@ -156,7 +156,7 @@ NistEpcTft::NistEpcTft ()
 uint8_t 
 NistEpcTft::Add (NistPacketFilter f)
 {
-  NS_LOG_FUNCTION (this << f);
+  NS_LOG_FUNCTION (this);
   NS_ABORT_IF (m_numFilters >= 16);
   
   std::list<NistPacketFilter>::iterator it;

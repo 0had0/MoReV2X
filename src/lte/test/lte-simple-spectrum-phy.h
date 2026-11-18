@@ -1,4 +1,3 @@
-/* -*-  Mode: C++; c-file-style: "gnu"; indent-tabs-mode:nil; -*- */
 /*
  * Copyright (c) 2014 Piotr Gawlowicz
  *
@@ -23,14 +22,15 @@
 #define LTE_SIMPLE_SPECTRUM_PHY_H
 
 #include <ns3/event-id.h>
-#include <ns3/spectrum-value.h>
 #include <ns3/mobility-model.h>
 #include <ns3/net-device.h>
-#include <ns3/spectrum-phy.h>
 #include <ns3/spectrum-channel.h>
+#include <ns3/spectrum-phy.h>
+#include <ns3/spectrum-value.h>
 #include <ns3/traced-callback.h>
 
-namespace ns3 {
+namespace ns3
+{
 
 /**
  * \ingroup lte
@@ -46,46 +46,52 @@ namespace ns3 {
 
 class LteSimpleSpectrumPhy : public SpectrumPhy
 {
+  public:
+    LteSimpleSpectrumPhy();
+    ~LteSimpleSpectrumPhy() override;
 
-public:
-  LteSimpleSpectrumPhy ();
-  virtual ~LteSimpleSpectrumPhy ();
+    /**
+     * \brief Get the type ID.
+     * \return the object TypeId
+     */
+    static TypeId GetTypeId();
+    // inherited from Object
+    void DoDispose() override;
 
-  // inherited from Object
-  static TypeId GetTypeId (void);
-  virtual void DoDispose ();
+    // inherited from SpectrumPhy
+    void SetChannel(Ptr<SpectrumChannel> c) override;
+    void SetMobility(Ptr<MobilityModel> m) override;
+    void SetDevice(Ptr<NetDevice> d) override;
+    Ptr<MobilityModel> GetMobility() const override;
+    Ptr<NetDevice> GetDevice() const override;
+    Ptr<const SpectrumModel> GetRxSpectrumModel() const override;
+    Ptr<Object> GetAntenna() const override;
+    void StartRx(Ptr<SpectrumSignalParameters> params) override;
 
-  // inherited from SpectrumPhy
-  void SetChannel (Ptr<SpectrumChannel> c);
-  void SetMobility (Ptr<MobilityModel> m);
-  void SetDevice (Ptr<NetDevice> d);
-  Ptr<MobilityModel> GetMobility ();
-  Ptr<NetDevice> GetDevice ();
-  Ptr<const SpectrumModel> GetRxSpectrumModel () const;
-  Ptr<AntennaModel> GetRxAntenna ();
-  void StartRx (Ptr<SpectrumSignalParameters> params);
+    /**
+     * \brief Set receive spectrum model.
+     * \param model the spectrum model
+     */
+    void SetRxSpectrumModel(Ptr<const SpectrumModel> model);
 
-  void SetRxSpectrumModel (Ptr<const SpectrumModel> model);
+    /**
+     * \brief Set cell ID.
+     * \param cellId the cell ID
+     */
+    void SetCellId(uint16_t cellId);
 
-  void SetCellId (uint16_t cellId);
+  private:
+    Ptr<MobilityModel> m_mobility;              ///< the mobility model
+    Ptr<AntennaModel> m_antenna;                ///< the antenna model
+    Ptr<NetDevice> m_device;                    ///< the device
+    Ptr<SpectrumChannel> m_channel;             ///< the channel
+    Ptr<const SpectrumModel> m_rxSpectrumModel; ///< the spectrum model
 
-private:
-  Ptr<MobilityModel> m_mobility;
-  Ptr<AntennaModel> m_antenna;
-  Ptr<NetDevice> m_device;
-  Ptr<SpectrumChannel> m_channel;
-  Ptr<const SpectrumModel> m_rxSpectrumModel;
+    uint16_t m_cellId; ///< the cell ID
 
-  uint16_t m_cellId;
-
-  TracedCallback< Ptr<const SpectrumValue> > m_rxStart;
+    TracedCallback<Ptr<const SpectrumValue>> m_rxStart; ///< receive start trace callback function
 };
 
-
-
-
-
-
-}
+} // namespace ns3
 
 #endif /* LTE_SIMPLE_SPECTRUM_PHY_H */
