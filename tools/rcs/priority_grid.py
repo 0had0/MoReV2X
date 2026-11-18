@@ -190,7 +190,7 @@ def summary(root):
     frame = pd.DataFrame(rows)
     frame.to_csv(os.path.join(root, "summary.csv"), index=False)
     # the per-phase tables of every run, stacked, for the notebook
-    for table in ("paper", "reevaluations", "rcs", "cbr_time"):
+    for table in ("paper", "reevaluations", "rcs", "cbr_time", "resources", "resources_time"):
         parts = []
         for path in sorted(glob.glob(os.path.join(root, "*", "metrics", table + ".csv"))):
             if os.path.getsize(path) <= 1:
