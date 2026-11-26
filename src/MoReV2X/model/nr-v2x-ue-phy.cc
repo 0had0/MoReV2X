@@ -222,6 +222,7 @@ NrV2XUePhy::NrV2XUePhy (Ptr<NrV2XSpectrumPhy> dlPhy, Ptr<NrV2XSpectrumPhy> ulPhy
   //added for V2X
   m_CBRCheckingPeriod = 0.5;
   m_CBRCheckingInterval = 0.0;
+  m_cbrResourceRatio = 1.0;
 
   DoReset ();
 }
@@ -431,6 +432,11 @@ NrV2XUePhy::GetTypeId (void)
 		   DoubleValue (3500.0),
 		   MakeDoubleAccessor (&NrV2XUePhy::m_cbrMaxX),
 		   MakeDoubleChecker<double> ())
+    .AddAttribute ("CbrResourceRatio",
+                   "Fraction of slots available for sidelink data/control (e.g. excluding RCS contention slots)",
+                   DoubleValue (1.0),
+                   MakeDoubleAccessor (&NrV2XUePhy::m_cbrResourceRatio),
+                   MakeDoubleChecker<double> (0.01, 1.0))
 
 
 
@@ -899,7 +905,8 @@ NrV2XUePhy::UnimoreEvaluateCBR (uint16_t frameNo, uint16_t subframeNo)
   uint16_t N_subCh = std::floor(m_BW_RBs / m_nsubCHsize); // Consider the subchannels according to 3GPP 38.215
  // uint16_t N_totalRBs = m_BW_RBs;
   uint16_t CBR_window_slots = 100/m_slotDuration;
-  uint16_t N_Resources = CBR_window_slots*N_subCh, counter = 0;
+  uint16_t N_Resources = std::max<uint16_t> (1, std::lround (CBR_window_slots * N_subCh * m_cbrResourceRatio));
+  uint16_t counter = 0;
 
 //  double RSSIthresh = -88.0; // in dBm
 //  NS_LOG_UNCOND("Ref sensitivity = " << m_rxSensitivity << ", RSSIthresh = " << m_RSSIthresh);
@@ -964,7 +971,7 @@ NrV2XUePhy::UnimoreEvaluateCBR (uint16_t frameNo, uint16_t subframeNo)
 
   CBRInfo tmp;
   tmp.nodeId = m_rnti;
-  tmp.CBRvalue = (float)counter/N_Resources;
+  tmp.CBRvalue = std::min (1.0f, (float) counter / N_Resources);
   tmp.time = Simulator::Now ().GetSeconds ();
   
   NrV2XUePhy::CBRValues.push_back(tmp);

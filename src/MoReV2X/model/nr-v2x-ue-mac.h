@@ -461,6 +461,21 @@ private:
   
     Ptr<PacketBurst> m_miSlHarqProcessPacket; // Packets under trasmission of the SL HARQ process
 
+    struct RcsFlowState
+    {
+      int64_t packetId = -1;     ///< packet currently tracked by RCS, -1 if none
+      double genMs = 0.0;
+      double pdb = 0.0;
+      uint16_t neededScs = 1;
+      uint16_t contendedScs = 1; ///< neededScs snapshot registered for frameIndex
+      uint8_t priority = 0;
+      uint64_t frameIndex = 0;   ///< frame of active contention or earliest next attempt
+      uint32_t contentions = 0;
+      bool waiting = false;      ///< waiting for free frame or higher-priority contention
+      bool contended = false;    ///< registered in NrV2XRcsContention for frameIndex
+    };
+    RcsFlowState m_rcsState;
+
    //fields for V2X communication
    
   };
@@ -658,9 +673,9 @@ private:
   bool m_rcs;                    ///< RCS replaces the sensing-based selection
   double m_rcsFrame;             ///< frame duration Tf (ms)
   double m_rcsContentionTime;    ///< contention time at the start of each frame (ms)
-  int64_t m_rcsPacketId;         ///< packet in contention, -1 if none
-  uint64_t m_rcsFrameIndex;      ///< frame whose contention the packet joined
-  uint32_t m_rcsContentions;     ///< contentions played by the packet so far
+  bool m_rcsHeld;                ///< one flow on this UE holds a frame registration in NrV2XRcsContention
+  uint64_t m_rcsHeldFrame;       ///< frame held by m_rcsHeldDst
+  uint32_t m_rcsHeldDst;         ///< destination L2 id holding m_rcsHeldFrame
   bool m_rcsDiscard;             ///< the next PDU from RLC is dropped, not sent
   Ptr<MobilityModel> m_rcsMobility;
   static std::ofstream s_rcsLog;
@@ -736,11 +751,16 @@ private:
   void RcsSchedule (std::map <uint32_t, PoolInfo>::iterator poolIt,
                     std::map <SidelinkLcIdentifier, NistLteMacSapProvider::NistReportBufferNistStatusParameters>::iterator itBsr,
                     uint32_t frameNo, uint32_t subframeNo);
-  /// RCS: the packet missed its delay budget; RLC hands it over and it is discarded
-  void RcsDrop (std::map <SidelinkLcIdentifier, NistLteMacSapProvider::NistReportBufferNistStatusParameters>::iterator itBsr,
-                uint8_t reason);
+  /// RCS: the packet missed its delay budget; RLC hands it over and it is discarded (logged to MacDropLog.txt)
+  void RcsDrop (std::map <uint32_t, PoolInfo>::iterator poolIt,
+                std::map <SidelinkLcIdentifier, NistLteMacSapProvider::NistReportBufferNistStatusParameters>::iterator itBsr,
+                uint8_t reason, const std::string &dropReason);
+  /// RCS: register a flow in contention and update UE ownership state
+  void RcsRegisterFlow (Ptr<NrV2XRcsContention> contention, std::map <uint32_t, PoolInfo>::iterator poolIt,
+                        uint64_t frameIndex);
   /// RCS: one line of RcsLog.txt
-  void RcsLog (uint64_t packetId, double genTime, uint64_t frame, uint8_t outcome, int32_t sc, double delay);
+  void RcsLog (uint64_t packetId, double genTime, uint64_t frame, uint32_t contentions,
+               uint8_t outcome, int32_t sc, double delay, int32_t group, uint8_t priority, uint16_t neededScs);
   static void RcsCloseLog (void);
 
   V2XSidelinkGrant V2XChangeResources (V2XSidelinkGrant OriginalGrant, std::vector<uint16_t> GrantsToChangeIndex, std::vector<uint16_t> OkGrantsIndex, uint32_t frameNo, uint32_t subframeNo, double pdb, uint16_t PacketSize, uint16_t ReservationSize, reselectionTrigger V2Xtrigger);

@@ -30,7 +30,8 @@ TX_COLUMNS = ["node", "packet", "genTime", "txIndex", "txTime", "frame", "subfra
               "psschRbStart", "psschRbLen", "psschRbLenTb", "pscchRbStart", "pscchRbLen"]
 RX_COLUMNS = ["rxTime", "packetID", "distance", "txID", "rxID", "decoded", "lossType", "txIndex",
               "trigger", "announced", "latency"]
-RCS_COLUMNS = ["time", "node", "packet", "genMs", "frame", "contention", "outcome", "sc", "delayMs"]
+RCS_COLUMNS = ["time", "node", "packet", "genMs", "frame", "contention", "outcome", "sc", "delayMs",
+               "group", "priority", "neededScs"]
 CONTENTION_COLUMNS = ["frame", "time", "contenders", "winners", "scsUsed", "scsCollided"]
 AOI_THRESHOLDS_MS = (100, 200, 500)
 DISTANCES_M = (150, 300, 500)
@@ -43,28 +44,54 @@ def read(folder, name, columns, **kwargs):
     return pd.read_csv(path, header=None, names=columns, **kwargs)
 
 
-def timeliness(times, flows):
+def timeliness(times, flows, delays=None):
     """E[PIR], E[AoI] and V(Ath) in ms from reception times (s) grouped by flow.
 
     times and flows are aligned arrays; a flow needs two receptions (Omega = 2).
-    E[PIR] pools every interval (eq. 11 averaged over receivers); E[AoI] and V are
-    computed per flow (eqs. 12, 14) and averaged over flows.
+    E[PIR] pools every interval (eq. 11 averaged over receivers); E[AoI] (eq. 12) and
+    V (eq. 14) use only inter-reception times Y. When `delays` (generation-to-reception
+    latency in s, matching times) is provided, also reports delay-aware sawtooth metrics
+    `aoi_full_ms` and `aoi_full_violation_<Ath>` matching tools/qos/metrics.py.
     """
-    frame = pd.DataFrame({"t": np.asarray(times, dtype=float) * 1000.0, "f": flows}).sort_values(["f", "t"])
+    data = {"t": np.asarray(times, dtype=float) * 1000.0, "f": flows}
+    if delays is not None:
+        data["d"] = np.clip(np.asarray(delays, dtype=float) * 1000.0, 0.0, None)
+    frame = pd.DataFrame(data).sort_values(["f", "t"])
     frame["y"] = frame.groupby("f").t.diff()
+    if delays is not None:
+        frame["d_prev"] = frame.groupby("f").d.shift()
     y = frame.dropna(subset=["y"])
     out = {"flows": int(y.f.nunique())}
     if y.empty:
         out.update({"pir_ms": np.nan, "aoi_ms": np.nan})
         out.update({"aoi_violation_%d" % a: np.nan for a in AOI_THRESHOLDS_MS})
+        if delays is not None:
+            out["aoi_full_ms"] = np.nan
+            out.update({"aoi_full_violation_%d" % a: np.nan for a in AOI_THRESHOLDS_MS})
         return out
     out["pir_ms"] = float(y.y.mean())
     sums = y.groupby("f").y.agg(["sum", lambda s: (s * s).sum()])
     sums.columns = ["sum", "sumsq"]
-    out["aoi_ms"] = float((sums.sumsq / (2 * sums["sum"])).mean())
+    positive = sums["sum"] > 0
+    valid_sums = sums[positive]
+    if valid_sums.empty:
+        out.update({"aoi_ms": np.nan})
+        out.update({"aoi_violation_%d" % a: np.nan for a in AOI_THRESHOLDS_MS})
+        if delays is not None:
+            out["aoi_full_ms"] = np.nan
+            out.update({"aoi_full_violation_%d" % a: np.nan for a in AOI_THRESHOLDS_MS})
+        return out
+    out["aoi_ms"] = float((valid_sums.sumsq / (2 * valid_sums["sum"])).mean())
     for a in AOI_THRESHOLDS_MS:
-        excess = (y.y - a).clip(lower=0).groupby(y.f).sum()
-        out["aoi_violation_%d" % a] = float((excess / sums["sum"]).mean())
+        excess = (y.y - a).clip(lower=0).groupby(y.f).sum().reindex(valid_sums.index, fill_value=0.0)
+        out["aoi_violation_%d" % a] = float((excess / valid_sums["sum"]).mean())
+    if delays is not None:
+        area_full = (y.y * y.d_prev + 0.5 * y.y * y.y).groupby(y.f).sum().reindex(valid_sums.index)
+        out["aoi_full_ms"] = float((area_full / valid_sums["sum"]).mean())
+        for a in AOI_THRESHOLDS_MS:
+            excess_full = np.minimum(y.y, (y.d_prev + y.y - a).clip(lower=0)).groupby(y.f).sum().reindex(
+                valid_sums.index, fill_value=0.0)
+            out["aoi_full_violation_%d" % a] = float((excess_full / valid_sums["sum"]).mean())
     return out
 
 
@@ -78,7 +105,9 @@ def packets_in_window(folder, start, pdb_ms):
 
 def ideal(folder, slot_ms, pdb_ms, start, subchannel_rbs):
     gen, tx, end = packets_in_window(folder, start, pdb_ms)
-    tx = tx[tx.packet.isin(gen.packet)].copy()
+    # Check collisions across ALL transmissions before restricting to packets generated inside
+    # [start, end], so packets near the window boundaries still detect interferers from outside.
+    tx = tx.copy()
     tx["slot"] = np.rint(tx.txTime * 1000.0 / slot_ms).astype(np.int64)
     # one row per (transmission, sub-channel it occupies)
     first = tx.psschRbStart // subchannel_rbs
@@ -88,6 +117,7 @@ def ideal(folder, slot_ms, pdb_ms, start, subchannel_rbs):
     users = occupied.groupby(["slot", "sc"]).packet.transform("size")
     shared = occupied[users > 1].index.unique()
     tx["alone"] = ~tx.index.isin(shared)
+    tx = tx[tx.packet.isin(gen.packet)]
     # a packet with several transmissions (blind re-transmissions) needs one alone
     per_packet = tx.groupby("packet").agg(alone=("alone", "max"), sent=("txTime", "min"))
     first_ok = tx[tx.alone].groupby("packet").txTime.min()
@@ -99,8 +129,9 @@ def ideal(folder, slot_ms, pdb_ms, start, subchannel_rbs):
            "pcoll": (sent & ~ok).sum() / n if n else np.nan,
            "pdrop": (~sent).sum() / n if n else np.nan}
     success = gen[ok].merge(first_ok.rename("rxTime"), left_on="packet", right_index=True)
-    out["latency_ms"] = float(((success.rxTime - success.genTime) * 1000).mean()) if len(success) else np.nan
-    out.update(timeliness(success.rxTime.values, success.node.values))
+    delays = (success.rxTime - success.genTime).values if len(success) else np.array([], dtype=float)
+    out["latency_ms"] = float((delays * 1000.0).mean()) if len(success) else np.nan
+    out.update(timeliness(success.rxTime.values, success.node.values, delays=delays))
     return out
 
 
@@ -114,28 +145,30 @@ def highway(folder, pdb_ms, start, bin_m=25, max_m=1000):
     bins = {}
     near = []
     path = os.path.join(folder, "ReceivedLog.txt")
-    usecols = [0, 1, 2, 3, 4, 5]
-    for chunk in pd.read_csv(path, header=None, names=RX_COLUMNS[:6], usecols=usecols, chunksize=5_000_000):
+    usecols = [0, 1, 2, 3, 4, 5, 10]
+    names = RX_COLUMNS[:6] + [RX_COLUMNS[10]]
+    for chunk in pd.read_csv(path, header=None, names=names, usecols=usecols, chunksize=5_000_000):
         chunk = chunk[chunk.packetID.isin(keep) & (chunk.distance < max(max_m, max(DISTANCES_M)))]
-        # one row per (packet, receiver): received if any copy decoded
-        chunk = chunk.sort_values("decoded", ascending=False).drop_duplicates(["packetID", "rxID"])
+        # one row per (packet, receiver): decoded if any copy decoded, earliest decoded copy wins
+        chunk = chunk.sort_values(["decoded", "rxTime"], ascending=[False, True]).drop_duplicates(["packetID", "rxID"])
         b = (chunk.distance // bin_m).astype(int)
         agg = chunk.groupby(b).decoded.agg(["sum", "count"])
         for k, row in agg.iterrows():
             s, c = bins.get(k, (0, 0))
             bins[k] = (s + row["sum"], c + row["count"])
         near.append(chunk[(chunk.decoded == 1) & (chunk.distance <= max(DISTANCES_M))]
-                    [["rxTime", "txID", "rxID", "distance"]])
+                    [["rxTime", "txID", "rxID", "distance", "latency"]])
     # a copy decoded twice (blind re-transmission across chunks) is rare; keep the first
     curve = pd.DataFrame([(k * bin_m + bin_m / 2, s / c, c) for k, (s, c) in sorted(bins.items())],
                          columns=["distance", "prr_sent", "attempts"])
     curve["prr"] = curve.prr_sent * (1 - pdrop)
     out["prr_by_distance"] = curve[curve.distance < max_m].round(6).to_dict(orient="list")
-    near = pd.concat(near) if near else pd.DataFrame(columns=["rxTime", "txID", "rxID", "distance"])
+    near = pd.concat(near) if near else pd.DataFrame(columns=["rxTime", "txID", "rxID", "distance", "latency"])
     for d in DISTANCES_M:
         sub = near[near.distance <= d]
-        flows = sub.txID.astype(np.int64) * 100000 + sub.rxID.astype(np.int64)
-        for key, value in timeliness(sub.rxTime.values, flows.values).items():
+        flows = sub.txID.astype(np.int64) * 1000000 + sub.rxID.astype(np.int64)
+        out["latency_ms_%dm" % d] = float((sub.latency.astype(float) * 1000.0).mean()) if len(sub) else np.nan
+        for key, value in timeliness(sub.rxTime.values, flows.values, delays=sub.latency.values).items():
             out["%s_%dm" % (key, d)] = value
         attempts = curve[curve.distance <= d]
         out["prr_%dm" % d] = float((attempts.prr * attempts.attempts).sum() / attempts.attempts.sum()) if len(attempts) else np.nan
@@ -147,7 +180,7 @@ def rcs_stats(folder, start):
     if log.empty:
         return {}
     log = log[log.genMs >= start * 1000]
-    final = log[log.outcome != 1]
+    final = log[~log.outcome.isin([1, 4])]
     won = final[final.outcome == 0]
     contention = read(folder, "RcsContentionLog.txt", CONTENTION_COLUMNS)
     contention = contention[contention.time >= start]
@@ -155,6 +188,8 @@ def rcs_stats(folder, start):
             "rcs_access_delay_ms": float(won.delayMs.mean()),
             "rcs_drop_no_win": float((final.outcome == 2).mean()),
             "rcs_drop_late_win": float((final.outcome == 3).mean()),
+            "rcs_drop_preempted": float((final.outcome == 5).mean()),
+            "rcs_handoffs_per_packet": float((log.outcome == 4).sum() / len(final)) if len(final) else np.nan,
             "rcs_contenders_per_frame": float(contention.contenders.mean()),
             "rcs_winners_per_frame": float(contention.winners.mean()),
             "rcs_scs_collided_per_frame": float(contention.scsCollided.mean())}

@@ -655,9 +655,9 @@ NrV2XUeMac::NrV2XUeMac ()
    m_rcs = false;
    m_rcsFrame = 10.0;
    m_rcsContentionTime = 1.0;
-   m_rcsPacketId = -1;
-   m_rcsFrameIndex = 0;
-   m_rcsContentions = 0;
+   m_rcsHeld = false;
+   m_rcsHeldFrame = 0;
+   m_rcsHeldDst = 0;
    m_rcsDiscard = false;
 }
 
@@ -2748,7 +2748,7 @@ NrV2XUeMac::DoSubframeIndication (uint32_t frameNo, uint32_t subframeNo)
       //   std::cin.get();
 //         if (m_reEvaluation && SubtractFrames(poolIt->second.m_currentV2XGrant.m_grantTransmissions[poolIt->second.m_currentV2XGrant.m_TxIndex].m_nextReservedFrame, frameNo, 
 //             poolIt->second.m_currentV2XGrant.m_grantTransmissions[poolIt->second.m_currentV2XGrant.m_TxIndex].m_nextReservedSubframe, subframeNo) >= GetTproc1 (m_numerologyIndex))
-         if (true && SubtractFrames(poolIt->second.m_currentV2XGrant.m_grantTransmissions[poolIt->second.m_currentV2XGrant.m_TxIndex].m_nextReservedFrame, frameNo, 
+         if (!m_rcs && SubtractFrames(poolIt->second.m_currentV2XGrant.m_grantTransmissions[poolIt->second.m_currentV2XGrant.m_TxIndex].m_nextReservedFrame, frameNo, 
              poolIt->second.m_currentV2XGrant.m_grantTransmissions[poolIt->second.m_currentV2XGrant.m_TxIndex].m_nextReservedSubframe, subframeNo) >= GetTproc1 (m_numerologyIndex))
          {
            if (poolIt->second.m_currentV2XGrant.m_grantTransmissions[poolIt->second.m_currentV2XGrant.m_TxIndex].m_ReEvaluationFrame == frameNo && poolIt->second.m_currentV2XGrant.m_grantTransmissions[poolIt->second.m_currentV2XGrant.m_TxIndex].m_ReEvaluationSubframe == subframeNo)
@@ -3703,17 +3703,25 @@ NrV2XUeMac::SiblingReservedSlots (uint32_t dstL2Id)
   return slots;
 }
 
+static void
+WriteMacDropLog (const std::string &outputPath, uint16_t rnti,
+                 const NistLteMacSapProvider::NistReportBufferNistStatusParameters &bsr,
+                 const std::string &reason)
+{
+  std::ofstream dropLog;
+  dropLog.open (outputPath + "MacDropLog.txt", std::ios_base::app);
+  dropLog << rnti << "," << Simulator::Now ().GetSeconds () << "," << bsr.V2XPacketID << "," << bsr.V2XGenTime
+          << "," << bsr.V2XPdb << "," << bsr.txQueueSize << "," << reason << "\n";
+  dropLog.close ();
+}
+
 void
 NrV2XUeMac::DiscardQueuedPacket (std::map <SidelinkLcIdentifier, NistLteMacSapProvider::NistReportBufferNistStatusParameters>::iterator itBsr, const std::string &reason)
 {
   NS_LOG_FUNCTION (this << reason);
   std::map <SidelinkLcIdentifier, NistLcInfo>::iterator lcIt = m_slLcInfoMap.find (itBsr->first);
   NS_ASSERT (lcIt != m_slLcInfoMap.end ());
-  std::ofstream dropLog;
-  dropLog.open (m_outputPath + "MacDropLog.txt", std::ios_base::app);
-  dropLog << m_rnti << "," << Simulator::Now ().GetSeconds () << "," << itBsr->second.V2XPacketID << "," << itBsr->second.V2XGenTime
-          << "," << itBsr->second.V2XPdb << "," << itBsr->second.txQueueSize << "," << reason << "\n";
-  dropLog.close ();
+  WriteMacDropLog (m_outputPath, m_rnti, itBsr->second, reason);
   uint32_t bytes = itBsr->second.txQueueSize + 10; // room for the RLC header
   // The RLC hands the PDU to DoTransmitPdu, which throws it away while m_discardPdu is set
   m_discardPdu = true;
@@ -4619,15 +4627,47 @@ NrV2XUeMac::GetDiscTxPool ()
 // dropped. No sensing, no reservation, no re-evaluation.
 
 void
+NrV2XUeMac::RcsRegisterFlow (Ptr<NrV2XRcsContention> contention, std::map <uint32_t, PoolInfo>::iterator poolIt,
+                             uint64_t frameIndex)
+{
+  PoolInfo::RcsFlowState &state = poolIt->second.m_rcsState;
+  contention->Register (frameIndex, m_rnti, m_rcsMobility, state.priority, state.neededScs);
+  state.frameIndex = frameIndex;
+  state.contentions++;
+  state.contended = true;
+  state.waiting = false;
+  state.contendedScs = state.neededScs;
+  m_rcsHeld = true;
+  m_rcsHeldFrame = frameIndex;
+  m_rcsHeldDst = poolIt->first;
+}
+
+void
 NrV2XUeMac::RcsSchedule (std::map <uint32_t, PoolInfo>::iterator poolIt,
                          std::map <SidelinkLcIdentifier, NistLteMacSapProvider::NistReportBufferNistStatusParameters>::iterator itBsr,
                          uint32_t frameNo, uint32_t subframeNo)
 {
-  if (itBsr == m_slBsrReceived.end () || itBsr->second.txQueueSize == 0
-      || itBsr->second.alreadyUESelected || poolIt->second.m_V2X_grant_received)
+  PoolInfo::RcsFlowState &state = poolIt->second.m_rcsState;
+  uint32_t frameSlots = (uint32_t) std::lround (m_rcsFrame / m_slotDuration);
+  uint32_t contentionSlots = (uint32_t) std::lround (m_rcsContentionTime / m_slotDuration);
+  uint32_t scPerSlot = m_BW_RBs / m_nsubCHsize;
+  uint64_t now = (uint64_t) std::llround (Simulator::Now ().GetSeconds () * 1000.0 / m_slotDuration);
+
+  if (itBsr == m_slBsrReceived.end () || itBsr->second.txQueueSize == 0)
     {
-      return;  // nothing to contend for, or a won SC is waiting for its slot
+      if (state.contended && m_rcsHeld && m_rcsHeldDst == poolIt->first && now < m_rcsHeldFrame * frameSlots)
+        {
+          NrV2XRcsContention::Get ()->Unregister (m_rcsHeldFrame, m_rnti);
+          m_rcsHeld = false;
+          state = PoolInfo::RcsFlowState ();
+        }
+      return;
     }
+  if (itBsr->second.alreadyUESelected || poolIt->second.m_V2X_grant_received)
+    {
+      return;  // a won SC is already scheduled on this flow
+    }
+
   Ptr<NrV2XRcsContention> contention = NrV2XRcsContention::Get ();
   if (m_rcsMobility == 0)
     {
@@ -4643,123 +4683,258 @@ NrV2XUeMac::RcsSchedule (std::map <uint32_t, PoolInfo>::iterator poolIt,
       NS_ABORT_MSG_IF (m_rcsMobility == 0, "RCS: no mobility model for node " << m_rnti);
     }
 
-  uint32_t frameSlots = (uint32_t) std::lround (m_rcsFrame / m_slotDuration);
-  uint32_t contentionSlots = (uint32_t) std::lround (m_rcsContentionTime / m_slotDuration);
-  uint32_t scPerSlot = m_BW_RBs / m_nsubCHsize;
-  NS_ABORT_MSG_IF ((frameSlots - contentionSlots) * scPerSlot != contention->GetScPerFrame (),
+  NS_ABORT_MSG_IF (frameSlots <= contentionSlots || scPerSlot == 0
+                   || (frameSlots - contentionSlots) * scPerSlot != contention->GetScPerFrame (),
                    "RCS: " << frameSlots - contentionSlots << " data slots x " << scPerSlot
                    << " sub-channels differ from ScPerFrame " << contention->GetScPerFrame ());
+  if (contention->GetScPerSlot () == 0)
+    {
+      contention->SetScPerSlot (scPerSlot);
+    }
+  NS_ABORT_MSG_IF (contention->GetScPerSlot () != scPerSlot,
+                   "RCS: ScPerSlot " << contention->GetScPerSlot () << " differs from MAC scPerSlot " << scPerSlot);
 
-  uint64_t now = (uint64_t) std::llround (Simulator::Now ().GetSeconds () * 1000.0 / m_slotDuration);
+  int64_t packetId = itBsr->second.V2XPacketID;
   double genMs = itBsr->second.V2XGenTime * 1000.0;
   double pdb = itBsr->second.V2XPdb;
-  int64_t packetId = itBsr->second.V2XPacketID;
 
-  if (packetId != m_rcsPacketId)
+  // 1. If RLC replaced a queued SDU before this frame's contention started, release the old
+  // registration so the replacement packet checks oversize, neededScs, and PDB cleanly.
+  if (state.contended && packetId != state.packetId && now < state.frameIndex * frameSlots)
     {
-      // New packet: it waits for the first contention time at or after now
-      m_rcsPacketId = packetId;
-      m_rcsFrameIndex = (now + frameSlots - 1) / frameSlots;
-      m_rcsContentions = 1;
-      contention->Register (m_rcsFrameIndex, m_rnti, m_rcsMobility);
-      return;
+      contention->Unregister (state.frameIndex, m_rnti);
+      state.contended = false;
+      state.contentions = 0;
+      m_rcsHeld = false;
     }
 
-  uint64_t dataStart = m_rcsFrameIndex * frameSlots + contentionSlots;
-  if (now < dataStart)
+  // If contention is still running or already ended, collect its result at dataStart
+  bool haveResult = false;
+  int32_t wonSc = -1;
+  uint64_t resolvedFrame = state.frameIndex;
+  uint16_t contendedScs = state.contendedScs;
+  uint32_t resolvedContentions = state.contentions;
+  if (state.contended)
     {
-      return;  // its contention is not over yet
-    }
-  int32_t sc = contention->GetResult (m_rcsFrameIndex, m_rnti);
-  if (sc >= 0)
-    {
-      uint64_t txSlot = dataStart + sc / scPerSlot;
-      uint16_t subchannel = sc % scPerSlot;
-      double delay = txSlot * m_slotDuration - genMs;
-      if (delay > pdb)
+      uint64_t dataStart = state.frameIndex * frameSlots + contentionSlots;
+      if (now < dataStart)
         {
-          RcsLog (packetId, genMs, m_rcsFrameIndex, 3, sc, delay);
-          RcsDrop (itBsr, 3);
+          return;  // contention is not over yet
+        }
+      wonSc = contention->GetResult (state.frameIndex, m_rnti);
+      haveResult = true;
+      state.contended = false;
+      m_rcsHeld = false;
+    }
+
+  // 2. Initialize or update tracking when RLC presents a new SDU
+  if (packetId != state.packetId)
+    {
+      uint32_t pduBytes = itBsr->second.txQueueSize + RLC_UM_HEADER_BYTES;
+      if (m_NRamc->GetSlMaxTbSize (m_slGrantMcs, m_nsubCHsize, m_BW_RBs) < pduBytes)
+        {
+          DiscardQueuedPacket (itBsr, "oversize");
+          state = PoolInfo::RcsFlowState ();
           return;
         }
-      uint16_t TBlen_subCH, TBlen_RBs;
-      m_NRamc->GetSlSubchAndTbSizeFromMcs (itBsr->second.txQueueSize, m_slGrantMcs, m_nsubCHsize, m_BW_RBs, &TBlen_subCH, &TBlen_RBs);
-      // TBlen_subCH holds RBs (alloc_subchannels * subchannelSize) despite its name
-      NS_ABORT_MSG_IF (TBlen_subCH > m_nsubCHsize, "RCS: a packet must fit one sub-channel, " << itBsr->second.txQueueSize << " B need " << TBlen_subCH << " RBs");
+      uint16_t TBlen_subCH = 0, TBlen_RBs = 0;
+      m_NRamc->GetSlSubchAndTbSizeFromMcs (pduBytes, m_slGrantMcs, m_nsubCHsize, m_BW_RBs, &TBlen_subCH, &TBlen_RBs);
+      uint16_t neededScs = TBlen_subCH / m_nsubCHsize;
+      NS_ABORT_MSG_IF (neededScs == 0 || neededScs > scPerSlot,
+                       "RCS: packet (" << itBsr->second.txQueueSize << " B + " << RLC_UM_HEADER_BYTES
+                       << " B RLC) needs " << neededScs << " SCs per slot (> " << scPerSlot << ")");
+      NS_ABORT_MSG_IF (neededScs > contention->GetScPerGroup (),
+                       "RCS: packet (" << itBsr->second.txQueueSize << " B + " << RLC_UM_HEADER_BYTES
+                       << " B RLC) needs " << neededScs << " sub-channels per slot, but J = "
+                       << contention->GetGroups () << " leaves only w = " << contention->GetScPerGroup ()
+                       << " SCs per group");
 
-      // Slot of the SC in the MAC's frame / subframe numbering (1-based, 1024 frames of 10 slots)
-      uint32_t slotIndex = ((frameNo - 1) * 10 + (subframeNo - 1) + (uint32_t) (txSlot - now)) % 10240;
-      V2XSchedulingInfo tx;
-      tx.m_rbStartPssch = subchannel * m_nsubCHsize;
-      tx.m_rbLenPssch = m_nsubCHsize;
-      tx.m_rbStartPscch = subchannel * m_nsubCHsize;
-      tx.m_rbLenPscch = m_nsubCHsize;
-      tx.m_nextReservedFrame = slotIndex / 10 + 1;
-      tx.m_nextReservedSubframe = slotIndex % 10 + 1;
-      tx.m_ReEvaluationFrame = 0;     // frame 0 never occurs: no re-evaluation with RCS
-      tx.m_ReEvaluationSubframe = 0;
-      tx.m_EnableReEvaluation = true; // i.e. not announced before
-      tx.m_SelectionTrigger = COUNTER;
-      tx.m_announced = false;
-
-      V2XSidelinkGrant grant;
-      grant.m_mcs = m_slGrantMcs;
-      grant.m_tbSize = 0;             // computed when the packet is sent
-      grant.m_TxNumber = 1;
-      grant.m_TxIndex = 1;
-      grant.m_RRI = itBsr->second.V2XPrsvp;
-      grant.m_Cresel = 0;             // one shot: the grant expires after this transmission
-      grant.m_grantTransmissions.insert (std::pair<uint16_t, V2XSchedulingInfo> (1, tx));
-      poolIt->second.m_currentV2XGrant = grant;
-      poolIt->second.m_V2X_grant_received = true;
-      poolIt->second.m_V2X_grant_fresh = true;
-      RcsLog (packetId, genMs, m_rcsFrameIndex, 0, sc, delay);
-      return;
+      state.packetId = packetId;
+      state.genMs = genMs;
+      state.pdb = pdb;
+      state.neededScs = neededScs;
+      state.priority = itBsr->second.V2XPPPP;
+      if (!haveResult)
+        {
+          state.contentions = 0;
+          state.waiting = true;
+          state.frameIndex = (now + frameSlots - 1) / frameSlots;
+        }
     }
 
-  // Lost: one more contention if the next frame's first data slot is within the PDB
-  uint64_t next = m_rcsFrameIndex + 1;
-  double nextDelay = (next * frameSlots + contentionSlots) * m_slotDuration - genMs;
-  if (nextDelay > pdb)
+  // 3. Process any resolved contention result
+  if (haveResult)
     {
-      RcsLog (packetId, genMs, m_rcsFrameIndex, 2, -1, nextDelay);
-      RcsDrop (itBsr, 2);
+      uint64_t dataStart = resolvedFrame * frameSlots + contentionSlots;
+      if (wonSc >= 0)
+        {
+          if (state.neededScs > contendedScs)
+            {
+              // A larger packet replaced the previous SDU mid-contention: re-contend for neededScs next frame
+              uint64_t next = resolvedFrame + 1;
+              double nextDelay = (next * frameSlots + contentionSlots) * m_slotDuration - state.genMs;
+              if (nextDelay > state.pdb)
+                {
+                  RcsLog (state.packetId, state.genMs, resolvedFrame, resolvedContentions,
+                          2, -1, nextDelay, -1, state.priority, state.neededScs);
+                  RcsDrop (poolIt, itBsr, 2, "rcs-pdb-expired");
+                  return;
+                }
+              RcsLog (state.packetId, state.genMs, resolvedFrame, resolvedContentions,
+                      1, -1, nextDelay, -1, state.priority, state.neededScs);
+              state.waiting = true;
+              state.frameIndex = next;
+            }
+          else
+            {
+              int32_t group = wonSc / (int32_t) contention->GetScPerGroup ();
+              uint64_t txSlot = dataStart + wonSc / scPerSlot;
+              uint16_t subchannel = wonSc % scPerSlot;
+              NS_ASSERT_MSG (subchannel + state.neededScs <= scPerSlot, "RCS: multi-SC grant crossed slot boundary");
+              double delay = txSlot * m_slotDuration - state.genMs;
+              if (delay > state.pdb)
+                {
+                  RcsLog (state.packetId, state.genMs, resolvedFrame, resolvedContentions,
+                          3, wonSc, delay, group, state.priority, state.neededScs);
+                  RcsDrop (poolIt, itBsr, 3, "rcs-late-win");
+                  return;
+                }
+
+              // Slot of the SC in the MAC's frame / subframe numbering (1-based, 1024 frames of 10 slots)
+              uint32_t slotIndex = ((frameNo - 1) * 10 + (subframeNo - 1) + (uint32_t) (txSlot - now)) % 10240;
+              V2XSchedulingInfo tx;
+              tx.m_rbStartPssch = subchannel * m_nsubCHsize;
+              tx.m_rbLenPssch = state.neededScs * m_nsubCHsize;
+              tx.m_rbStartPscch = subchannel * m_nsubCHsize;
+              tx.m_rbLenPscch = m_nsubCHsize;
+              tx.m_nextReservedFrame = slotIndex / 10 + 1;
+              tx.m_nextReservedSubframe = slotIndex % 10 + 1;
+              tx.m_ReEvaluationFrame = 0;     // guard !m_rcs prevents re-evaluation even with --AllSlots
+              tx.m_ReEvaluationSubframe = 0;
+              tx.m_EnableReEvaluation = true; // not announced before; matches MAC fresh-grant assertion
+              tx.m_SelectionTrigger = COUNTER;
+              tx.m_announced = false;
+
+              V2XSidelinkGrant grant;
+              grant.m_mcs = m_slGrantMcs;
+              grant.m_tbSize = 0;             // computed when the packet is sent
+              grant.m_TxNumber = 1;
+              grant.m_TxIndex = 1;
+              grant.m_RRI = itBsr->second.V2XPrsvp;
+              grant.m_Cresel = 0;             // one shot: the grant expires after this transmission
+              grant.m_grantTransmissions.insert (std::pair<uint16_t, V2XSchedulingInfo> (1, tx));
+              poolIt->second.m_currentV2XGrant = grant;
+              poolIt->second.m_V2X_grant_received = true;
+              poolIt->second.m_V2X_grant_fresh = true;
+              state.waiting = false;
+              RcsLog (state.packetId, state.genMs, resolvedFrame, resolvedContentions,
+                      0, wonSc, delay, group, state.priority, state.neededScs);
+              return;
+            }
+        }
+      else
+        {
+          uint64_t next = resolvedFrame + 1;
+          double nextDelay = (next * frameSlots + contentionSlots) * m_slotDuration - state.genMs;
+          if (nextDelay > state.pdb)
+            {
+              RcsLog (state.packetId, state.genMs, resolvedFrame, resolvedContentions,
+                      2, -1, nextDelay, -1, state.priority, state.neededScs);
+              RcsDrop (poolIt, itBsr, 2, "rcs-pdb-expired");
+              return;
+            }
+          RcsLog (state.packetId, state.genMs, resolvedFrame, resolvedContentions,
+                  1, -1, nextDelay, -1, state.priority, state.neededScs);
+          state.waiting = true;
+          state.frameIndex = next;
+        }
+    }
+
+  if (!state.waiting)
+    {
       return;
     }
-  RcsLog (packetId, genMs, m_rcsFrameIndex, 1, -1, nextDelay);
-  m_rcsFrameIndex = next;
-  m_rcsContentions++;
-  contention->Register (m_rcsFrameIndex, m_rnti, m_rcsMobility);
+
+  // 4. Register a waiting packet for its next contention frame, yielding only to higher-priority flows
+  uint64_t targetFrame = std::max (state.frameIndex, (now + frameSlots - 1) / frameSlots);
+  if (m_rcsHeld && m_rcsHeldDst != poolIt->first)
+    {
+      std::map <uint32_t, PoolInfo>::iterator heldIt = m_sidelinkTxPoolsMap.find (m_rcsHeldDst);
+      NS_ASSERT (heldIt != m_sidelinkTxPoolsMap.end ());
+      if (now < m_rcsHeldFrame * frameSlots && PendingPriority (poolIt->first) < PendingPriority (m_rcsHeldDst))
+        {
+          PoolInfo::RcsFlowState &held = heldIt->second.m_rcsState;
+          contention->Unregister (m_rcsHeldFrame, m_rnti);
+          double heldDelay = (m_rcsHeldFrame * frameSlots + contentionSlots) * m_slotDuration - held.genMs;
+          RcsLog (held.packetId, held.genMs, m_rcsHeldFrame, held.contentions,
+                  4, -1, heldDelay, -1, held.priority, held.neededScs);
+          held.contended = false;
+          held.waiting = true;
+          held.frameIndex = m_rcsHeldFrame + 1;
+          m_rcsHeld = false;
+        }
+      else
+        {
+          uint64_t earliestPossible = std::max (targetFrame, m_rcsHeldFrame + 1);
+          double waitDelay = (earliestPossible * frameSlots + contentionSlots) * m_slotDuration - state.genMs;
+          if (waitDelay > state.pdb)
+            {
+              RcsLog (state.packetId, state.genMs, earliestPossible, state.contentions,
+                      5, -1, waitDelay, -1, state.priority, state.neededScs);
+              RcsDrop (poolIt, itBsr, 5, "rcs-preempted-pdb");
+            }
+          return;
+        }
+    }
+
+  double firstDelay = (targetFrame * frameSlots + contentionSlots) * m_slotDuration - state.genMs;
+  if (firstDelay > state.pdb)
+    {
+      RcsLog (state.packetId, state.genMs, targetFrame, state.contentions,
+              2, -1, firstDelay, -1, state.priority, state.neededScs);
+      RcsDrop (poolIt, itBsr, 2, "rcs-pdb-expired");
+      return;
+    }
+
+  RcsRegisterFlow (contention, poolIt, targetFrame);
 }
 
 void
-NrV2XUeMac::RcsDrop (std::map <SidelinkLcIdentifier, NistLteMacSapProvider::NistReportBufferNistStatusParameters>::iterator itBsr,
-                     uint8_t reason)
+NrV2XUeMac::RcsDrop (std::map <uint32_t, PoolInfo>::iterator poolIt,
+                     std::map <SidelinkLcIdentifier, NistLteMacSapProvider::NistReportBufferNistStatusParameters>::iterator itBsr,
+                     uint8_t reason, const std::string &dropReason)
 {
-  // RLC hands the packet over as for a transmission, and DoTransmitPdu drops it
+  // Log unified MAC drop and ask RLC for the PDU so DoTransmitPdu discards it
   std::map <SidelinkLcIdentifier, NistLcInfo>::iterator it = m_slLcInfoMap.find (itBsr->first);
   NS_ASSERT_MSG (it != m_slLcInfoMap.end (), "RCS: no logical channel for the dropped packet");
+  uint64_t droppedId = poolIt->second.m_rcsState.packetId;
+  WriteMacDropLog (m_outputPath, m_rnti, itBsr->second, dropReason);
   m_rcsDiscard = true;
   (*it).second.macSapUser->NotifyTxOpportunity (itBsr->second.txQueueSize + 10, 0, 0);
   m_rcsDiscard = false;
   itBsr->second.txQueueSize = 0;
   itBsr->second.alreadyUESelected = false;
-  NS_LOG_INFO ("RCS: UE " << m_rnti << " dropped packet " << m_rcsPacketId << " (reason " << (int) reason << ")");
+  poolIt->second.m_rcsState = PoolInfo::RcsFlowState ();
+  NS_LOG_INFO ("RCS: UE " << m_rnti << " dropped packet " << droppedId << " (reason " << (int) reason << ")");
 }
 
 void
-NrV2XUeMac::RcsLog (uint64_t packetId, double genTime, uint64_t frame, uint8_t outcome, int32_t sc, double delay)
+NrV2XUeMac::RcsLog (uint64_t packetId, double genTime, uint64_t frame, uint32_t contentions,
+                    uint8_t outcome, int32_t sc, double delay, int32_t group, uint8_t priority, uint16_t neededScs)
 {
   if (!s_rcsLog.is_open ())
     {
       s_rcsLog.open ((m_outputPath + "RcsLog.txt").c_str (), std::ios_base::app);
       Simulator::ScheduleDestroy (&NrV2XUeMac::RcsCloseLog);
     }
-  // time, node, packet, generation time (ms), frame, contention, outcome, SC, delay (ms)
-  // outcome 0: won SC, sent at genTime + delay; 1: lost, contends again; 2: lost, no
-  // contention left within the PDB (dropped); 3: won an SC after the PDB (dropped)
+  // time, node, packet, generation time (ms), frame, contention, outcome, SC, delay (ms),
+  // group, SL priority, sub-channels needed
+  // outcome 0: won SC, sent at genTime + delay; 1: lost, contends again; 2: lost/expired before
+  // contention fits PDB (dropped); 3: won an SC after PDB (dropped); 4: yielded frame contention
+  // to higher-priority flow; 5: dropped while waiting for another flow holding contention
   s_rcsLog << Simulator::Now ().GetSeconds () << "," << m_rnti << "," << packetId << "," << genTime << ","
-           << frame << "," << m_rcsContentions << "," << (int) outcome << "," << sc << "," << delay << "\n";
+           << frame << "," << contentions << "," << (int) outcome << "," << sc << "," << delay << ","
+           << group << "," << (int) priority << "," << neededScs << "\n";
 }
 
 void

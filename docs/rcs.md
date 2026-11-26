@@ -17,27 +17,24 @@ delay budget, in which case the packet is dropped.
 
 | File | What |
 |---|---|
-| `src/MoReV2X/model/nr-v2x-rcs-contention.{h,cc}` | `NrV2XRcsContention`: the contention of every frame for all UEs. Attributes `Groups` (J), `Rounds` (r), `Subcarriers` (M), `ScPerFrame` (K), `ToneMode`, `ToneRange`, `ToneThreshold`, `TonePower`, `OutputPath`. Writes `RcsContentionLog.txt`. |
-| `src/MoReV2X/model/nr-v2x-ue-mac.{h,cc}` | `NrV2XUeMac::RcsSchedule`, called from `DoSubframeIndication` in place of the sensing-based selection when the `Rcs` attribute is set. `RcsFrame`, `RcsContentionTime`. Writes `RcsLog.txt`. |
-| `scratch/HIGHWAY.cc` | Options `--Rcs`, `--RcsGroups`, `--RcsRounds`, `--RcsSubcarriers`, `--RcsFrame`, `--RcsContention`, `--RcsTone`, `--RcsToneRange`, `--RcsToneThreshold`, `--RcsTonePower`; and for the paper's setup `--Ideal`, `--IdealSide`, `--UniformPeriod`, `--RxFile`, `--RxLog`. |
+| `src/MoReV2X/model/nr-v2x-rcs-contention.{h,cc}` | `NrV2XRcsContention`: the contention of every frame for all UEs. Attributes `Groups` (J), `Rounds` (r), `Subcarriers` (M), `ScPerFrame` (K), `ScPerSlot`, `ToneMode`, `ToneRange`, `ToneThreshold`, `TonePower`, `PriorityAware`, `PrioritySigma`, `OutputPath`. Supports priority-weighted subcarrier picks and contiguous intra-slot multi-SC grants. Writes `RcsContentionLog.txt`. |
+| `src/MoReV2X/model/nr-v2x-ue-mac.{h,cc}` | `NrV2XUeMac::RcsSchedule`, called from `DoSubframeIndication` per sidelink flow in priority order when `Rcs` is set. `RcsFrame`, `RcsContentionTime`. Supports multi-flow UE contention sharing (higher-priority preemption before contention starts) and multi-SC TBs. Writes `RcsLog.txt` (and `MacDropLog.txt` on drops). |
+| `scratch/HIGHWAY.cc`, `scratch/QOS.cc` | Options `--Rcs`, `--RcsGroups`, `--RcsRounds`, `--RcsSubcarriers`, `--RcsFrame`, `--RcsContention`, `--RcsTone`, `--RcsToneRange`, `--RcsToneThreshold`, `--RcsTonePower`, `--RcsPriorityAware`, `--RcsPrioritySigma`; and `--Ideal`, `--RxLog`, `--RxTimeResolution` (`1e-5` s default). |
 | `tools/rcs/grid.py` | The paper's grid and the highway variant, resumable, one `metrics.json` per run. |
-| `tools/rcs/metrics.py` | PRR, Pcoll, Pdrop, E[PIR], E[AoI] and V(Ath) as defined in the paper. |
+| `tools/rcs/metrics.py` | PRR, Pcoll, Pdrop, E[PIR], paper E[AoI] / V(Ath) and delay-aware `aoi_full_ms` / `aoi_full_violation_*`. |
 | `tools/rcs/monitor.sh` | Progress and estimated end of a grid. |
-| `src/MoReV2X/test/nr-v2x-mode2-test-suite.cc`, `tests/test_rcs.py` | Unit tests of the contention, and checks on real runs. |
+| `src/MoReV2X/test/nr-v2x-mode2-test-suite.cc`, `tests/test_rcs.py`, `tests/test_qos.py` | Unit tests of contention, priority, multi-SC slot packing, and real HIGHWAY / QOS runs. |
 
 ## How a packet goes through the MAC
 
-1. A new packet ID in the buffer: the UE registers for frame `ceil(now / frameSlots)`, the first
-   whose contention time starts at or after now.
-2. At the first data slot of that frame it reads its result. The contention object resolves the
-   whole frame the first time a UE asks, so every contender of the frame plays the same rounds.
-3. Won SC `sc`: slot `frameStart + contentionSlots + sc / scPerSlot`, sub-channel
-   `sc % scPerSlot`. The MAC builds a one-shot grant on it (`Cresel = 0`, no re-evaluation, no
-   reservation kept), and the existing transmission path sends it. A won SC whose slot is past the
-   PDB drops the packet (`RcsLog` outcome 3).
-4. Lost: registers for the next frame if that frame's first data slot is within the PDB
-   (outcome 1), otherwise the packet is dropped (outcome 2). Dropping pulls the PDU out of RLC
-   and throws it away (`m_rcsDiscard`).
+1. A new packet ID in an LC buffer: the MAC checks single-slot TB fit (`oversize` drops to `MacDropLog.txt`) and `neededScs <= w`. If no higher/equal-priority flow on the UE holds the next frame (`ceil(now / frameSlots)`) and the first data slot is within the PDB, it registers with its SL priority and `neededScs`; if a lower-priority flow on the same UE holds a frame whose contention has not started yet, the higher-priority flow takes it over (`outcome 4`).
+2. At the first data slot of that frame (`dataStart`) it reads its result (`GetResult`). The contention object resolves the whole frame once: when `neededScs > 1`, lower tones account for contiguous intra-slot SC blocks (`ScPerSlot`) and winners never straddle slot boundaries.
+3. Won starting SC `sc`: slot `frameStart + contentionSlots + sc / scPerSlot`, starting sub-channel `sc % scPerSlot`, length `neededScs * subchannelSize` RBs. The MAC builds a one-shot grant (`Cresel = 0`, no re-evaluation even with `--AllSlots`, no reservation kept), and the existing transmission path sends it. A won SC whose slot is past the PDB drops the packet (`RcsLog` outcome `3` and `MacDropLog.txt` `rcs-late-win`).
+4. Lost (`outcome 1`): re-registers for the next frame if its first data slot fits within the PDB, otherwise drops (`outcome 2`, `rcs-pdb-expired`). Packets dropped because no free frame remains within PDB while another flow holds contention log `outcome 5` (`rcs-preempted-pdb`). Dropping pulls the PDU out of RLC and discards it (`m_rcsDiscard`).
+
+Note on CBR (`NrV2XUePhy::CbrResourceRatio`): because RCS contention slots carry no PSSCH/PSCCH energy in ns-3, `CbrResourceRatio = (frameSlots - contentionSlots) / frameSlots` scales the CBR denominator to active data slots.
+
+Note on model scope & physical-layer abstractions vs 3GPP NR-V2X: multi-SC contention assumes a UE can infer whether a lower tone belongs to a multi-SC request (e.g. tone signaling) and keeps half-duplex/channel abstractions described in Rolich et al. (full-duplex tone TX/RX per round, unattenuated single-tone `TonePower`, pairwise `Hears()` without multi-tone aggregation). Under RCS each packet sends once (`m_TxNumber = 1`, no Mode 2 blind HARQ retransmissions).
 
 The numerology only changes the frame geometry. With 20 MHz and 25-RB sub-channels: mu = 0 has
 106 RBs, 4 SCs per slot, 1 contention slot and 9 data slots (K = 36, M = 400); mu = 1 has 51 RBs,
