@@ -61,10 +61,17 @@ public:
   void SetPropagationLossModel (Ptr<PropagationLossModel> model);
 
   /// A backlogged UE joins the contention of frame `frame`
-  void Register (uint64_t frame, uint32_t nodeId, Ptr<MobilityModel> mobility);
+  void Register (uint64_t frame, uint32_t nodeId, Ptr<MobilityModel> mobility,
+                 uint8_t priority = 0, uint16_t neededScs = 1);
+  /// Leave frame `frame` before its contention starts (e.g. preempted by a higher-priority flow)
+  void Unregister (uint64_t frame, uint32_t nodeId);
 
-  /// After the contention time of `frame`: the SC index won (0 .. K-1), or -1
+  /// After the contention time of `frame`: the starting SC index won (0 .. K-1), or -1
   int32_t GetResult (uint64_t frame, uint32_t nodeId);
+
+  /// Sub-channels per data slot (0 disables cross-slot packing checks for multi-SC allocations)
+  void SetScPerSlot (uint32_t scPerSlot);
+  uint32_t GetScPerSlot (void) const;
 
   uint32_t GetGroups (void) const;
   uint32_t GetRounds (void) const;
@@ -87,18 +94,24 @@ private:
     uint32_t nodeId;
     Ptr<MobilityModel> mobility;
     uint32_t group;
+    uint8_t priority;
+    uint16_t neededScs;
   };
 
+  uint32_t PickSubcarrier (uint32_t subcarriersPerGroup, uint8_t priority) const;
   void Resolve (uint64_t frame);
 
   uint32_t m_groups;           ///< J
   uint32_t m_rounds;           ///< r
   uint32_t m_subcarriers;      ///< M
   uint32_t m_scPerFrame;       ///< K
+  uint32_t m_scPerSlot;        ///< sub-channels in a slot, 0 = unconstrained
   ToneMode m_toneMode;
   double m_toneRange;          ///< m
   double m_toneThreshold;      ///< dBm
   double m_tonePower;          ///< dBm
+  bool m_priorityAware;        ///< bias subcarrier selection towards lower indices for higher SL priorities
+  double m_prioritySigma;      ///< normalized Gaussian width around target subcarrier rank
   std::string m_outputPath;
   Ptr<PropagationLossModel> m_loss;
   Ptr<UniformRandomVariable> m_rng;

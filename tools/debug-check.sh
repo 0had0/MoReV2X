@@ -60,6 +60,11 @@ run two_flows --Periodic '--SchedulerMap=1-15:prio=5+preempt' --ReEvaluation --E
 run two_flows_dyn --Periodic --ExtraFlow=50:50:150:3:dynamic
 run three_tx --Periodic --ReEvaluation '--SchedulerMap=1-8:tx=3+prio=2+preempt;9-15:tx=2+prio=6+preempt'
 run three_tx_mu2 --Periodic --Numerology=2 --ChannelBW=20 --SubChannel=12 --mcs=14 --ReEvaluation '--SchedulerMap=1-15:tx=3'
+run rcs_ideal --Periodic --Ideal --Rcs --RcsGroups=9
+run rcs_power --Periodic --Rcs --RcsGroups=9 --RcsTone=power --RcsToneThreshold=-95
+run rcs_allslots_attr --Periodic --Rcs --RcsGroups=9 --ns3::NrV2XUeMac::AllSlotsReEvaluation=true
+run rcs_multiflow --Periodic --Rcs --RcsPriorityAware --SchedulerMap=1-15:prio=5 --ExtraFlow=20:20:150:2:sps
+run rcs_multisc --Periodic --Numerology=2 --ChannelBW=20 --SubChannel=12 --mcs=14 --Rcs --RcsGroups=1 --ExtraFlow=20:20:300:2:sps
 
 rm -rf "$workdir"
 echo "$failures mode(s) failed"

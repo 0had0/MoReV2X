@@ -194,6 +194,29 @@ std::vector<std::string> SplitString (const std::string &text, char separator)
   return tokens;
 }
 
+void ValidateRcsSchedulerMap (const std::string &schedulerMap)
+{
+  std::vector<std::string> rules = SplitString (schedulerMap, ';');
+  for (std::vector<std::string>::const_iterator rule = rules.begin (); rule != rules.end (); ++rule)
+  {
+    std::vector<std::string> parts = SplitString (*rule, ':');
+    NS_ABORT_MSG_IF (parts.size () != 2, "Expected <first>-<last>:<options> in --SchedulerMap, got " << *rule);
+    std::vector<std::string> options = SplitString (parts[1], '+');
+    for (std::vector<std::string>::const_iterator option = options.begin (); option != options.end (); ++option)
+    {
+      if (option->compare (0, 5, "prio=") == 0 || option->compare (0, 4, "mcs=") == 0)
+        continue;
+      if (option->compare (0, 3, "tx=") == 0)
+      {
+        const unsigned long count = std::stoul (option->substr (3));
+        NS_ABORT_MSG_IF (count != 1, "RCS sends one transmission per TB, got --SchedulerMap option '" << *option << "'");
+        continue;
+      }
+      NS_ABORT_MSG ("--SchedulerMap option '" << *option << "' is for Mode 2 sensing/SPS and cannot be combined with --Rcs");
+    }
+  }
+}
+
 // One UE: the scheduler it runs. Unset fields keep the value from Config::SetDefault.
 void ApplySchedulerOption (Ptr<NrV2XUeMac> mac, const std::string &option)
 {
@@ -886,6 +909,9 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
   double RcsToneRange = 300.0;     // m
   double RcsToneThreshold = -110.0; // dBm
   double RcsTonePower = 23.0;      // dBm
+  bool RcsPriorityAware = false;   // bias contention towards lower subcarriers for higher SL priorities
+  double RcsPrioritySigma = 0.18;  // normalized spread around target subcarrier rank
+  double RxTimeResolution = 1e-5;  // ReceivedLog.txt timestamp quantization (s)
   bool RxLog = true;               // write ReceivedLog.txt
 
   bool IBE = true;
@@ -1022,8 +1048,11 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
   cmd.AddValue ("RcsToneRange", "RCS: tone range (m), RcsTone=range", RcsToneRange);
   cmd.AddValue ("RcsToneThreshold", "RCS: tone detection threshold (dBm), RcsTone=power", RcsToneThreshold);
   cmd.AddValue ("RcsTonePower", "RCS: tone transmit power (dBm), RcsTone=power", RcsTonePower);
+  cmd.AddValue ("RcsPriorityAware", "RCS: bias contention towards lower subcarriers for higher SL priorities", RcsPriorityAware);
+  cmd.AddValue ("RcsPrioritySigma", "RCS: normalized spread for priority-aware subcarrier picks", RcsPrioritySigma);
   cmd.AddValue ("UniformPeriod", "Periodic traffic: every UE sends every UniformPeriod ms (0: 20 % of the UEs every 20 ms, the others every 100 ms)", UniformPeriod);
   cmd.AddValue ("RxFile", "With UdpFiles, also write RxFile.txt (one row per application reception)", enableRxFile);
+  cmd.AddValue ("RxTimeResolution", "Time resolution of ReceivedLog.txt, s", RxTimeResolution);
   cmd.AddValue ("RxLog", "Write ReceivedLog.txt (one row per reception, large in dense runs)", RxLog);
   scenario.AddOptions (cmd);
 
@@ -1166,6 +1195,43 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
   if (RxCresel)
     NS_ASSERT_MSG(false, "Rx Cresel is not available");
 
+  uint32_t rcsScPerSlot = 0, rcsFrameSlots = 0, rcsContentionSlots = 0, rcsScPerFrame = 0, rcsSubcarriersResolved = 0;
+  NrV2XRcsContention::ToneMode rcsToneMode = NrV2XRcsContention::TONE_ALL;
+  if (Rcs)
+  {
+    NS_ABORT_MSG_IF (DynamicSchedulingMode2 || AdaptiveSchedulingMode2 || FrequencyReuse
+                     || ReTranmissions || ReEvaluation || AllSlots_ReEvaluation || UMH_ReEvaluation
+                     || AdaptiveRRI || Pkeep != 0.0 || RxCresel || randomV2VSelection,
+                     "RCS cannot be combined with Mode 2 sensing/SPS flags (--Dynamic, --Adaptive, "
+                     "--FreqReuse, --ReTx, --ReEvaluation, --AllSlots, --UMH, --AdaptiveRRI, --pkeep, "
+                     "--useRxCresel, --randomV2VSelection)");
+    if (!SchedulerMap.empty ())
+      ValidateRcsSchedulerMap (SchedulerMap);
+    NS_ABORT_MSG_IF (RcsRounds == 0, "RCS: require RcsRounds >= 1");
+    NS_ABORT_MSG_IF (RcsPrioritySigma <= 0.0, "RCS: require RcsPrioritySigma > 0");
+    NS_ABORT_MSG_IF (RcsFrame <= 0.0 || RcsContention <= 0.0 || RcsContention >= RcsFrame,
+                     "RCS: require 0 < RcsContention (" << RcsContention << " ms) < RcsFrame (" << RcsFrame << " ms)");
+    double slotMs = 1.0 / SCS_factor[OFDM_numerology];
+    rcsScPerSlot = channelBW_RBs / subchannelSize;
+    rcsFrameSlots = (uint32_t) std::lround (RcsFrame / slotMs);
+    rcsContentionSlots = (uint32_t) std::lround (RcsContention / slotMs);
+    NS_ABORT_MSG_IF (std::abs (rcsFrameSlots * slotMs - RcsFrame) > 1e-6
+                     || std::abs (rcsContentionSlots * slotMs - RcsContention) > 1e-6,
+                     "RCS: RcsFrame and RcsContention must be multiples of slot duration (" << slotMs << " ms)");
+    NS_ABORT_MSG_IF (rcsContentionSlots == 0 || rcsFrameSlots <= rcsContentionSlots,
+                     "RCS: require at least 1 contention slot and 1 data slot per frame");
+    rcsScPerFrame = (rcsFrameSlots - rcsContentionSlots) * rcsScPerSlot;
+    rcsSubcarriersResolved = RcsSubcarriers ? RcsSubcarriers : rcsScPerSlot * subchannelSize * 12 / 3;
+    NS_ABORT_MSG_IF (RcsGroups == 0 || rcsScPerFrame % RcsGroups != 0,
+                     "RCS: J = " << RcsGroups << " does not divide K = " << rcsScPerFrame);
+    if (RcsTone == "range")
+      rcsToneMode = NrV2XRcsContention::TONE_RANGE;
+    else if (RcsTone == "power")
+      rcsToneMode = NrV2XRcsContention::TONE_POWER;
+    else
+      NS_ABORT_MSG_IF (RcsTone != "all", "RcsTone must be all, range or power");
+  }
+
 
   //------------------- Configure the output path ---------------------------------------------------------
   
@@ -1214,10 +1280,13 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
   readme << " - IBE = " << IBE << std::endl;
   readme << " - SubChannel size = " << subchannelSize << " RBs" << std::endl;
   readme << " - Channel BW = " << channelBW << " MHz. Channel BW = " << channelBW_RBs << " RBs" << std::endl;
-  readme << " - Re-evaluation = " << ReEvaluation << std::endl;
-  readme << " --- UMH variant = " << UMH_ReEvaluation << std::endl;
-  readme << " --- All slots variant = " << AllSlots_ReEvaluation << std::endl;
-  readme << " - Re-tranmissions = " << ReTranmissions << std::endl;
+  readme << " - Re-evaluation = " << (Rcs ? 0 : (int) ReEvaluation) << std::endl;
+  if (!Rcs)
+  {
+    readme << " --- UMH variant = " << UMH_ReEvaluation << std::endl;
+    readme << " --- All slots variant = " << AllSlots_ReEvaluation << std::endl;
+  }
+  readme << " - Re-tranmissions = " << (Rcs ? 0 : (int) ReTranmissions) << std::endl;
   readme << " - Periodic traffic = " << PeriodicTraffic << std::endl;
   readme << " - Aperiodic traffic = " << AperiodicTraffic << std::endl;
   readme << " - Mixed traffic = " << MixedTraffic << std::endl;
@@ -1235,17 +1304,23 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
     readme << " --- Custom PDB set to " << inputPDB << " ms" << std::endl;
   
   readme << " - MAC layer:" << std::endl;
-  readme << " --- Dynamic scheduling " << DynamicSchedulingMode2 << std::endl;
+  if (Rcs)
+  {
+    readme << " --- Scheduler = RCS (priorityAware=" << RcsPriorityAware << ")" << std::endl;
+  }
+  else
+  {
+    readme << " --- Dynamic scheduling " << DynamicSchedulingMode2 << std::endl;
 
-  if (avgRRI)
-    readme << " --- Average RRI " << std::endl;
-  else 
-    readme << " --- Minimum RRI " << std::endl;   
+    if (avgRRI)
+      readme << " --- Average RRI " << std::endl;
+    else 
+      readme << " --- Minimum RRI " << std::endl;   
 
-
-  readme << " - RSRP threshold = " << MAC_RSRPthreshold << " dBm" << std::endl;
-  readme << " - Pkeep = " << Pkeep << std::endl;
-  readme << " - Adaptive RRI = " << AdaptiveRRI << std::endl;
+    readme << " - RSRP threshold = " << MAC_RSRPthreshold << " dBm" << std::endl;
+    readme << " - Pkeep = " << Pkeep << std::endl;
+    readme << " - Adaptive RRI = " << AdaptiveRRI << std::endl;
+  }
   readme << " - RSSI threshold = " << CBR_RSSIthreshold << " dBm" << std::endl;
   readme << " - PHY sensitivity = " << RefSensitivity << " dBm" << std::endl;
 
@@ -1343,6 +1418,7 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
   Config::SetDefault ("ns3::NrV2XSpectrumPhy::ReferenceSensitivity", DoubleValue (RefSensitivity));  
   Config::SetDefault ("ns3::NrV2XSpectrumPhy::CtrlErrorModelEnabled", BooleanValue (CtrlErrorModelEnabled));  // Set but not used
   Config::SetDefault ("ns3::NrV2XSpectrumPhy::CtrlFullDuplexEnabled", BooleanValue (!CtrlErrorModelEnabled)); // Set but not used
+  Config::SetDefault ("ns3::NrV2XSpectrumPhy::RxTimeResolution", DoubleValue (RxTimeResolution));
   Config::SetDefault ("ns3::NrV2XSpectrumPhy::SaveCollisionLossesUnimore", BooleanValue (RxLog)); //fare var apposta   // Enable the collision and propagation loss event saving
 
   // Used for 
@@ -1351,6 +1427,8 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
   NS_LOG_INFO ("Starting network configuration...");
 
   Config::SetDefault ("ns3::NistLteRlcUm::MaxTxBufferSize", StringValue ("100000"));
+  if (Rcs)
+    Config::SetDefault ("ns3::NistLteRlcUm::KeepOnlyNewestSdu", BooleanValue (true));
   Config::SetDefault ("ns3::DropTailQueue::MaxPackets", UintegerValue (10000000)); // In order not to run out of packets ;)
  
 
@@ -1375,38 +1453,29 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
   Config::SetDefault ("ns3::NrV2XUeMac::SlotDuration", DoubleValue (1.0/SCS_factor[OFDM_numerology])); 
   if (Rcs)
   {
-    // NrV2XUeMac keeps one contention per UE: the packet of its single sidelink flow
-    NS_ABORT_MSG_IF (!extraFlowOption.empty (), "RCS serves one flow per UE, it cannot be combined with --ExtraFlow");
-    double slotMs = 1.0/SCS_factor[OFDM_numerology];
-    uint32_t scPerSlot = channelBW_RBs / subchannelSize;
-    uint32_t frameSlots = (uint32_t) std::lround (RcsFrame / slotMs);
-    uint32_t contentionSlots = (uint32_t) std::lround (RcsContention / slotMs);
-    uint32_t scPerFrame = (frameSlots - contentionSlots) * scPerSlot;
-    uint32_t subcarriers = RcsSubcarriers ? RcsSubcarriers : scPerSlot * subchannelSize * 12 / 3;
-    NS_ABORT_MSG_IF (scPerFrame % RcsGroups != 0, "RCS: J = " << RcsGroups << " does not divide K = " << scPerFrame);
-    NrV2XRcsContention::ToneMode toneMode = NrV2XRcsContention::TONE_ALL;
-    if (RcsTone == "range")
-      toneMode = NrV2XRcsContention::TONE_RANGE;
-    else if (RcsTone == "power")
-      toneMode = NrV2XRcsContention::TONE_POWER;
-    else
-      NS_ABORT_MSG_IF (RcsTone != "all", "RcsTone must be all, range or power");
     Config::SetDefault ("ns3::NrV2XUeMac::Rcs", BooleanValue (true));
     Config::SetDefault ("ns3::NrV2XUeMac::RcsFrame", DoubleValue (RcsFrame));
     Config::SetDefault ("ns3::NrV2XUeMac::RcsContentionTime", DoubleValue (RcsContention));
     Config::SetDefault ("ns3::NrV2XRcsContention::Groups", UintegerValue (RcsGroups));
     Config::SetDefault ("ns3::NrV2XRcsContention::Rounds", UintegerValue (RcsRounds));
-    Config::SetDefault ("ns3::NrV2XRcsContention::Subcarriers", UintegerValue (subcarriers));
-    Config::SetDefault ("ns3::NrV2XRcsContention::ScPerFrame", UintegerValue (scPerFrame));
-    Config::SetDefault ("ns3::NrV2XRcsContention::ToneMode", EnumValue (toneMode));
+    Config::SetDefault ("ns3::NrV2XRcsContention::Subcarriers", UintegerValue (rcsSubcarriersResolved));
+    Config::SetDefault ("ns3::NrV2XRcsContention::ScPerFrame", UintegerValue (rcsScPerFrame));
+    Config::SetDefault ("ns3::NrV2XRcsContention::ScPerSlot", UintegerValue (rcsScPerSlot));
+    Config::SetDefault ("ns3::NrV2XRcsContention::ToneMode", EnumValue (rcsToneMode));
     Config::SetDefault ("ns3::NrV2XRcsContention::ToneRange", DoubleValue (RcsToneRange));
     Config::SetDefault ("ns3::NrV2XRcsContention::ToneThreshold", DoubleValue (RcsToneThreshold));
     Config::SetDefault ("ns3::NrV2XRcsContention::TonePower", DoubleValue (RcsTonePower));
+    Config::SetDefault ("ns3::NrV2XRcsContention::PriorityAware", BooleanValue (RcsPriorityAware));
+    Config::SetDefault ("ns3::NrV2XRcsContention::PrioritySigma", DoubleValue (RcsPrioritySigma));
     Config::SetDefault ("ns3::NrV2XRcsContention::OutputPath", StringValue (outputPath));
+    Config::SetDefault ("ns3::NrV2XUePhy::CbrResourceRatio",
+                        DoubleValue ((double) (rcsFrameSlots - rcsContentionSlots) / rcsFrameSlots));
     std::ofstream rcsReadme ((outputPath + "simREADME.txt").c_str (), std::ios_base::app);
-    rcsReadme << " - RCS: J = " << RcsGroups << ", r = " << RcsRounds << ", M = " << subcarriers << ", K = " << scPerFrame
-              << " (" << frameSlots - contentionSlots << " data slots x " << scPerSlot << " sub-channels), m = "
-              << subcarriers / RcsGroups << ", w = " << scPerFrame / RcsGroups << ", tones heard: " << RcsTone << std::endl;
+    rcsReadme << " - RCS: J = " << RcsGroups << ", r = " << RcsRounds << ", M = " << rcsSubcarriersResolved
+              << ", K = " << rcsScPerFrame << " (" << rcsFrameSlots - rcsContentionSlots << " data slots x "
+              << rcsScPerSlot << " sub-channels), m = " << rcsSubcarriersResolved / RcsGroups
+              << ", w = " << rcsScPerFrame / RcsGroups << ", tones heard: " << RcsTone
+              << ", priorityAware: " << RcsPriorityAware << std::endl;
     rcsReadme.close ();
   }
   Config::SetDefault ("ns3::NrV2XUeMac::NumerologyIndex", UintegerValue (OFDM_numerology)); 
@@ -1759,6 +1828,10 @@ ns3::RunV2xScenario (int argc, char *argv[], V2xScenario &scenario)
     Ptr<NetDevice> dev = node->GetDevice(0);
     Ptr<NistLteUeNetDevice> netDev = dev->GetObject<NistLteUeNetDevice>();
     Ptr<NrV2XUeMac> mac = netDev->GetMac();
+    BooleanValue macRcs;
+    mac->GetAttribute ("Rcs", macRcs);
+    NS_ABORT_MSG_IF (macRcs.Get () && !Rcs,
+                     "Set --Rcs=1 instead of --ns3::NrV2XUeMac::Rcs=true so RCS geometry, channel model, and validation run");
 
     if (FrequencyReuse)
       mac->CopySubchannelsMap(SubchannelIndexMap);

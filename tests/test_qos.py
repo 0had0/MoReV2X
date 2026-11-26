@@ -171,6 +171,36 @@ class QosScenario(QosRun):
         self.assertLess(urban.set_index("name").pdr["cam"], open_air.set_index("name").pdr["cam"])
 
 
+class QosRcs(QosRun):
+    CLASSES = ["platooning", "cam", "cooperative_perception", "crash_mitigation"]
+
+    def test_multi_class_qos_runs_over_rcs(self):
+        folder = trace("highway_platoon", length=1000, platoons=2, platoon_size=4, density="low")
+        out = self.qos(folder, self.CLASSES, "--Rcs=1", "--PriorityAware=1", "--RcsGroups=1",
+                       overrides={"crash_mitigation": {"event_rate": 2.0}}, sim_time=3)
+        rcs_log = pd.read_csv(os.path.join(out, "RcsLog.txt"), header=None)
+        contention_log = pd.read_csv(os.path.join(out, "RcsContentionLog.txt"), header=None)
+        self.assertGreater(len(rcs_log), 0)
+        self.assertGreater(len(contention_log), 0)
+        tx = pd.read_csv(os.path.join(out, "phyDebugShort.txt"), header=None)
+        self.assertEqual(tx.groupby([0, 4]).size().max(), 1, "one PSSCH per slot across QoS flows")
+        self.assertEqual(set(tx[10]), {12, 24}, "multi-SC QoS classes allocate both 12-RB and 24-RB blocks")
+        summary = self.summary(out, folder).set_index("name")
+        for name in ["platooning", "cam", "cooperative_perception"]:
+            self.assertGreater(summary.at[name, "attempts"], 0, name)
+            self.assertGreater(summary.at[name, "pdr"], 0.3, name)
+        causes = summary[[c for c in summary.columns if c.startswith("cause_")]].sum(axis=1)
+        self.assertTrue((causes == summary.attempts).all())
+
+    def test_rcs_refuses_reevaluation_and_too_many_groups(self):
+        folder = trace("highway_platoon", length=1000, platoons=2, platoon_size=4, density="low")
+        with self.assertRaises(AssertionError):
+            self.qos(folder, ["platooning"], "--Rcs=1", "--ReEvaluation=1", sim_time=2)
+        with self.assertRaises(AssertionError):
+            # platooning (300 B + 35 B) requires 2 SCs at mu=2/12 RB, while J=72 leaves only w=1 SC per group
+            self.qos(folder, ["platooning"], "--Rcs=1", "--RcsGroups=72", sim_time=2)
+
+
 class SweepRunner(unittest.TestCase):
     def test_expand_and_flows(self):
         config = sweep.load_config(os.path.join(ROOT, "scenarios", "qos", "sweep_full.yaml"))

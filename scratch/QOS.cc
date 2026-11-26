@@ -32,6 +32,7 @@
 #include "ns3/nr-v2x-tag.h"
 #include "ns3/nr-v2x-utils.h"
 #include "ns3/nr-v2x-ue-net-device.h"
+#include "ns3/nr-v2x-rcs-contention.h"
 #include "ns3/sumo-mobility-helper.h"
 #include "ns3/waveform-generator.h"
 #include "ns3/rng-seed-manager.h"
@@ -377,9 +378,23 @@ main (int argc, char *argv[])
   double sizeThreshold = 0.2;
   std::string jammer = "";       // x,y,power dBm,duty cycle,period ms,start s,stop s
   std::string burstLoss = "";    // roles|...;mean good s;mean bad s
+  bool rxTimeLog = true;
   double rxTimeResolution = 1e-5;
   double savingPeriod = 0.5;
   bool progress = false;
+  bool rcs = false;
+  uint32_t rcsGroups = 1;
+  uint32_t rcsRounds = 3;
+  uint32_t rcsSubcarriers = 0;
+  double rcsFrame = 10.0;
+  double rcsContention = 1.0;
+  std::string rcsTone = "all";
+  double rcsToneRange = 300.0;
+  double rcsToneThreshold = -110.0;
+  double rcsTonePower = 23.0;
+  bool rcsPriorityAware = false;
+  double rcsPrioritySigma = 0.18;
+  bool ideal = false;
 
   CommandLine cmd;
   cmd.AddValue ("trace", "Folder written by tools/qos/make_traces.py", traceDir);
@@ -399,12 +414,26 @@ main (int argc, char *argv[])
   cmd.AddValue ("ReEvaluation", "Re-evaluate resources not yet announced", reEvaluation);
   cmd.AddValue ("Preemption", "Pre-emption check of announced resources", preemption);
   cmd.AddValue ("PreemptionPriority", "0: any higher priority pre-empts, p: only priorities below p", preemptionPriority);
-  cmd.AddValue ("PriorityAware", "Priority pair RSRP thresholds and X% per priority", priorityAware);
+  cmd.AddValue ("PriorityAware", "Priority pair RSRP thresholds and X% per priority (or priority-aware RCS)", priorityAware);
   cmd.AddValue ("SizeThreshold", "X of step 6 when PriorityAware is off", sizeThreshold);
   cmd.AddValue ("Urban", "TR 37.885 urban channel, buildings from <trace>/buildings.csv", urban);
   cmd.AddValue ("Buildings", "Buildings CSV, default <trace>/buildings.csv when --Urban", buildings);
   cmd.AddValue ("Jammer", "Wideband jammer: x,y,powerDbm,dutyCycle,periodMs,startS,stopS", jammer);
   cmd.AddValue ("BurstLoss", "Gilbert-Elliott receiver bursts: roles|...;meanGoodS;meanBadS", burstLoss);
+  cmd.AddValue ("RxLog", "Write ReceivedLog.txt", rxTimeLog);
+  cmd.AddValue ("Ideal", "Disable shadowing (TR 37.885 sigma = 0)", ideal);
+  cmd.AddValue ("Rcs", "Repeated Contention Scheduling instead of Mode 2 sensing", rcs);
+  cmd.AddValue ("RcsGroups", "RCS: contention groups J (must divide SCs per frame K)", rcsGroups);
+  cmd.AddValue ("RcsRounds", "RCS: contention rounds r", rcsRounds);
+  cmd.AddValue ("RcsSubcarriers", "RCS: contention sub-carriers M, 0 = one third of data SCs", rcsSubcarriers);
+  cmd.AddValue ("RcsFrame", "RCS: frame duration Tf (ms)", rcsFrame);
+  cmd.AddValue ("RcsContention", "RCS: contention time at start of each frame (ms)", rcsContention);
+  cmd.AddValue ("RcsTone", "RCS: who hears a tone, all | range | power", rcsTone);
+  cmd.AddValue ("RcsToneRange", "RCS: tone range (m), RcsTone=range", rcsToneRange);
+  cmd.AddValue ("RcsToneThreshold", "RCS: tone detection threshold (dBm), RcsTone=power", rcsToneThreshold);
+  cmd.AddValue ("RcsTonePower", "RCS: tone transmit power (dBm), RcsTone=power", rcsTonePower);
+  cmd.AddValue ("RcsPriorityAware", "RCS: bias contention towards lower subcarriers for higher SL priorities", rcsPriorityAware);
+  cmd.AddValue ("RcsPrioritySigma", "RCS: normalized spread for priority-aware subcarrier picks", rcsPrioritySigma);
   cmd.AddValue ("RxTimeResolution", "Time resolution of ReceivedLog.txt, s", rxTimeResolution);
   cmd.AddValue ("SavingPeriod", "Seconds between two flushes of the logs", savingPeriod);
   cmd.AddValue ("progress", "Print the simulated time every second", progress);
@@ -417,7 +446,6 @@ main (int argc, char *argv[])
       outputPath += "/";
     }
   g_outputPath = outputPath;
-  system (("rm -rf " + outputPath + " && mkdir -p " + outputPath).c_str ());
 
   std::vector<FlowSpec> flows = ReadFlows (flowsFile);
   std::vector<NodeRole> roles = ReadRoles (traceDir + "/roles.csv");
@@ -432,6 +460,37 @@ main (int argc, char *argv[])
   const double slot = 1.0 / scsFactor;
   NS_ABORT_MSG_IF (channelRbs < subchannelSize, "The channel is smaller than one subchannel");
 
+  uint32_t rcsScPerSlot = 0, rcsFrameSlots = 0, rcsContentionSlots = 0, rcsScPerFrame = 0, rcsSubcarriersResolved = 0;
+  NrV2XRcsContention::ToneMode rcsToneMode = NrV2XRcsContention::TONE_ALL;
+  const bool effectiveRcsPriority = rcsPriorityAware || priorityAware;
+  if (rcs)
+    {
+      NS_ABORT_MSG_IF (reEvaluation || preemption,
+                       "RCS cannot be combined with Mode 2 --ReEvaluation or --Preemption");
+      NS_ABORT_MSG_IF (rcsRounds == 0, "RCS: require RcsRounds >= 1");
+      NS_ABORT_MSG_IF (rcsPrioritySigma <= 0.0, "RCS: require RcsPrioritySigma > 0");
+      NS_ABORT_MSG_IF (rcsFrame <= 0.0 || rcsContention <= 0.0 || rcsContention >= rcsFrame,
+                       "RCS: require 0 < RcsContention (" << rcsContention << " ms) < RcsFrame (" << rcsFrame << " ms)");
+      rcsScPerSlot = channelRbs / subchannelSize;
+      rcsFrameSlots = (uint32_t) std::lround (rcsFrame / slot);
+      rcsContentionSlots = (uint32_t) std::lround (rcsContention / slot);
+      NS_ABORT_MSG_IF (std::abs (rcsFrameSlots * slot - rcsFrame) > 1e-6
+                       || std::abs (rcsContentionSlots * slot - rcsContention) > 1e-6,
+                       "RCS: RcsFrame and RcsContention must be multiples of slot duration (" << slot << " ms)");
+      NS_ABORT_MSG_IF (rcsContentionSlots == 0 || rcsFrameSlots <= rcsContentionSlots,
+                       "RCS: require at least 1 contention slot and 1 data slot per frame");
+      rcsScPerFrame = (rcsFrameSlots - rcsContentionSlots) * rcsScPerSlot;
+      rcsSubcarriersResolved = rcsSubcarriers ? rcsSubcarriers : rcsScPerSlot * subchannelSize * 12 / 3;
+      NS_ABORT_MSG_IF (rcsGroups == 0 || rcsScPerFrame % rcsGroups != 0,
+                       "RCS: J = " << rcsGroups << " does not divide K = " << rcsScPerFrame);
+      if (rcsTone == "range")
+        rcsToneMode = NrV2XRcsContention::TONE_RANGE;
+      else if (rcsTone == "power")
+        rcsToneMode = NrV2XRcsContention::TONE_POWER;
+      else
+        NS_ABORT_MSG_IF (rcsTone != "all", "RcsTone must be all, range or power");
+    }
+
   // Every packet must fit one slot, the MAC drops the others as "oversize"
   {
     Ptr<NrV2XAmc> amc = CreateObject<NrV2XAmc> ();
@@ -440,6 +499,11 @@ main (int argc, char *argv[])
               << channelRbs << " RBs, minus 35 B of headers)" << std::endl;
     for (const FlowSpec &f : flows)
       {
+        if (rcs && f.retx > 0)
+          {
+            std::cerr << "note: RCS uses one transmission per packet; ignoring retx=" << f.retx << " on flow "
+                      << f.name << std::endl;
+          }
         for (uint32_t size : f.sizes)
           {
             if (size + 35 > largest)
@@ -447,9 +511,22 @@ main (int argc, char *argv[])
                 std::cerr << "warning: flow " << f.name << " has " << size << " B packets, one slot carries "
                           << largest - 35 << " B of payload. They will be dropped as oversize." << std::endl;
               }
+            else if (rcs)
+              {
+                uint16_t tbSubch = 0, tbRbs = 0;
+                amc->GetSlSubchAndTbSizeFromMcs (size + 35, mcs, subchannelSize, channelRbs, &tbSubch, &tbRbs);
+                uint32_t neededScs = tbSubch / subchannelSize;
+                uint32_t scPerGroup = rcsScPerFrame / rcsGroups;
+                NS_ABORT_MSG_IF (neededScs > scPerGroup,
+                                 "RCS: flow " << f.name << " packet size " << size << " B needs " << neededScs
+                                 << " sub-channels per slot, but J = " << rcsGroups << " leaves only w = "
+                                 << scPerGroup << " SCs per group");
+              }
           }
       }
   }
+
+  system (("rm -rf " + outputPath + " && mkdir -p " + outputPath).c_str ());
 
   // ---------------------------------------------------------------- MAC
   Config::SetDefault ("ns3::NrV2XUeMac::SlGrantMcs", UintegerValue (mcs));
@@ -466,6 +543,26 @@ main (int argc, char *argv[])
   Config::SetDefault ("ns3::NrV2XUeMac::RBsBandwidth", UintegerValue (channelRbs));
   Config::SetDefault ("ns3::NrV2XUeMac::SlotDuration", DoubleValue (slot));
   Config::SetDefault ("ns3::NrV2XUeMac::NumerologyIndex", UintegerValue (numerology));
+  if (rcs)
+    {
+      Config::SetDefault ("ns3::NrV2XUeMac::Rcs", BooleanValue (true));
+      Config::SetDefault ("ns3::NrV2XUeMac::RcsFrame", DoubleValue (rcsFrame));
+      Config::SetDefault ("ns3::NrV2XUeMac::RcsContentionTime", DoubleValue (rcsContention));
+      Config::SetDefault ("ns3::NrV2XRcsContention::Groups", UintegerValue (rcsGroups));
+      Config::SetDefault ("ns3::NrV2XRcsContention::Rounds", UintegerValue (rcsRounds));
+      Config::SetDefault ("ns3::NrV2XRcsContention::Subcarriers", UintegerValue (rcsSubcarriersResolved));
+      Config::SetDefault ("ns3::NrV2XRcsContention::ScPerFrame", UintegerValue (rcsScPerFrame));
+      Config::SetDefault ("ns3::NrV2XRcsContention::ScPerSlot", UintegerValue (rcsScPerSlot));
+      Config::SetDefault ("ns3::NrV2XRcsContention::ToneMode", EnumValue (rcsToneMode));
+      Config::SetDefault ("ns3::NrV2XRcsContention::ToneRange", DoubleValue (rcsToneRange));
+      Config::SetDefault ("ns3::NrV2XRcsContention::ToneThreshold", DoubleValue (rcsToneThreshold));
+      Config::SetDefault ("ns3::NrV2XRcsContention::TonePower", DoubleValue (rcsTonePower));
+      Config::SetDefault ("ns3::NrV2XRcsContention::PriorityAware", BooleanValue (effectiveRcsPriority));
+      Config::SetDefault ("ns3::NrV2XRcsContention::PrioritySigma", DoubleValue (rcsPrioritySigma));
+      Config::SetDefault ("ns3::NrV2XRcsContention::OutputPath", StringValue (outputPath));
+      Config::SetDefault ("ns3::NrV2XUePhy::CbrResourceRatio",
+                          DoubleValue ((double) (rcsFrameSlots - rcsContentionSlots) / rcsFrameSlots));
+    }
 
   // ---------------------------------------------------------------- PHY
   Config::SetDefault ("ns3::NrV2XUePhy::TxPower", DoubleValue (txPower));
@@ -479,7 +576,7 @@ main (int argc, char *argv[])
   Config::SetDefault ("ns3::NrV2XSpectrumPhy::ReferenceSensitivity", DoubleValue (sensitivity));
   Config::SetDefault ("ns3::NrV2XSpectrumPhy::CtrlErrorModelEnabled", BooleanValue (true));
   Config::SetDefault ("ns3::NrV2XSpectrumPhy::CtrlFullDuplexEnabled", BooleanValue (false));
-  Config::SetDefault ("ns3::NrV2XSpectrumPhy::SaveCollisionLossesUnimore", BooleanValue (true));
+  Config::SetDefault ("ns3::NrV2XSpectrumPhy::SaveCollisionLossesUnimore", BooleanValue (rxTimeLog));
   Config::SetDefault ("ns3::NrV2XSpectrumPhy::RxTimeResolution", DoubleValue (rxTimeResolution));
   // SUMO coordinates: log everything except the parking lot
   Config::SetDefault ("ns3::NrV2XSpectrumPhy::MetricsMinX", DoubleValue (-5e4));
@@ -515,8 +612,8 @@ main (int argc, char *argv[])
 
   // ---------------------------------------------------------------- channel
   Config::SetDefault ("ns3::NrV2XPropagationLossModel::Frequency", DoubleValue (5.9));
-  Config::SetDefault ("ns3::NrV2XPropagationLossModel::Sigma", DoubleValue (3.0));
-  Config::SetDefault ("ns3::NrV2XPropagationLossModel::SigmaNLOSv", DoubleValue (4.0));
+  Config::SetDefault ("ns3::NrV2XPropagationLossModel::Sigma", DoubleValue (ideal ? 0.0 : 3.0));
+  Config::SetDefault ("ns3::NrV2XPropagationLossModel::SigmaNLOSv", DoubleValue (ideal ? 0.0 : 4.0));
   // TR 37.885 Table 6.2.1-1: 25 m on the highway, 10 m in the urban grid
   Config::SetDefault ("ns3::NrV2XPropagationLossModel::DecorrDistance", DoubleValue (urban ? 10.0 : 25.0));
   Config::SetDefault ("ns3::NrV2XPropagationLossModel::Urban", BooleanValue (urban));
@@ -541,6 +638,10 @@ main (int argc, char *argv[])
   lteHelper->SetPathlossModelType ("ns3::NrV2XPropagationLossModel");
   Ptr<NrV2XPropagationLossModel> channelModel = CreateObject<NrV2XPropagationLossModel> ();
   Config::SetDefault ("ns3::NrV2XSpectrumPhy::ChannelMatrix", PointerValue (channelModel));
+  if (rcs)
+    {
+      NrV2XRcsContention::Get ()->SetPropagationLossModel (channelModel);
+    }
   lteHelper->SetAttribute ("UseSidelink", BooleanValue (true));
   lteHelper->SetEpcHelper (epcHelper);
   lteHelper->Initialize ();
@@ -596,6 +697,10 @@ main (int argc, char *argv[])
   for (uint32_t i = 0; i < ues.GetN (); ++i)
     {
       Ptr<NrV2XUeMac> mac = ues.Get (i)->GetDevice (0)->GetObject<NistLteUeNetDevice> ()->GetMac ();
+      BooleanValue macRcs;
+      mac->GetAttribute ("Rcs", macRcs);
+      NS_ABORT_MSG_IF (macRcs.Get () && !rcs,
+                       "Set --Rcs=1 instead of --ns3::NrV2XUeMac::Rcs=true so RCS geometry, channel model, and validation run");
       for (double rri : rris)
         {
           mac->PushNewRRIValue (rri);
@@ -740,7 +845,10 @@ main (int argc, char *argv[])
          << "\nrun=" << runNumber << "\nnodes=" << ueCount << "\nnumerology=" << numerology << "\nbandwidth=" << channelBW
          << " MHz (" << channelRbs << " RBs)\nsubchannel=" << subchannelSize << "\nmcs=" << mcs << "\ntxPower=" << txPower
          << "\nrsrp=" << rsrpThreshold << "\nreEvaluation=" << reEvaluation << "\npreemption=" << preemption
-         << "\npreemptionPriority=" << preemptionPriority << "\npriorityAware=" << priorityAware << "\nurban=" << urban
+         << "\npreemptionPriority=" << preemptionPriority << "\npriorityAware=" << priorityAware
+         << "\nrcs=" << rcs << "\nrcsGroups=" << rcsGroups << "\nrcsRounds=" << rcsRounds
+         << "\nrcsTone=" << rcsTone << "\nrcsPriorityAware=" << effectiveRcsPriority
+         << "\nideal=" << ideal << "\nrxLog=" << rxTimeLog << "\nurban=" << urban
          << "\nbuildings=" << buildings << "\njammer=" << jammer << "\nburstLoss=" << burstLoss << "\n";
   readme.close ();
 

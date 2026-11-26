@@ -733,6 +733,7 @@ private:
   double m_savingPeriod;
   double m_cbrMinX;
   double m_cbrMaxX;
+  double m_cbrResourceRatio; ///< fraction of pool slots carrying PSSCH/PSCCH (e.g. 0.9 with RCS contention overhead)
 
   /**
    * Summary results of measuring a specific SyncRef. Used for layer-1 filtering.

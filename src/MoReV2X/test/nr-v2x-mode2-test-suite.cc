@@ -372,6 +372,103 @@ private:
   }
 };
 
+class RcsUnregisterBeforeResolveTestCase : public TestCase
+{
+public:
+  RcsUnregisterBeforeResolveTestCase ()
+    : TestCase ("RCS: Unregister withdraws a node before resolution without breaking remaining contenders") {}
+
+private:
+  virtual void DoRun (void)
+  {
+    Ptr<NrV2XRcsContention> channel = RcsChannel (1, 36, 400, NrV2XRcsContention::TONE_ALL);
+    channel->Register (5, 1, At (0), 5, 1);
+    channel->Register (5, 2, At (0), 5, 1);
+    channel->Unregister (5, 1);
+    channel->Register (5, 3, At (0), 2, 1);
+    int32_t sc2 = channel->GetResult (5, 2);
+    int32_t sc3 = channel->GetResult (5, 3);
+    NS_TEST_ASSERT_MSG_EQ ((sc2 >= 0 && sc3 >= 0), true, "only the 2 active contenders participate and win");
+    NS_TEST_ASSERT_MSG_EQ ((sc2 != sc3), true, "with 400 subcarriers, both take distinct SCs 0 and 1");
+    NrV2XRcsContention::Reset ();
+  }
+};
+
+class RcsMultiScSlotAlignmentTestCase : public TestCase
+{
+public:
+  RcsMultiScSlotAlignmentTestCase ()
+    : TestCase ("RCS: multi-SC allocations stay inside a single slot and avoid overlaps") {}
+
+private:
+  virtual void DoRun (void)
+  {
+    Ptr<NrV2XRcsContention> channel = RcsChannel (1, 8, 400, NrV2XRcsContention::TONE_ALL);
+    channel->SetAttribute ("ScPerSlot", UintegerValue (4));
+    uint16_t needs[5] = {0, 1, 2, 2, 1};
+    for (uint32_t node = 1; node <= 4; ++node)
+      {
+        channel->Register (6, node, At (0), 4, needs[node]);
+      }
+    std::set<int32_t> occupied;
+    for (uint32_t node = 1; node <= 4; ++node)
+      {
+        int32_t sc = channel->GetResult (6, node);
+        NS_TEST_ASSERT_MSG_GT_OR_EQ (sc, 0, "total 6 SCs with aligned packing fit in 8 SCs");
+        NS_TEST_ASSERT_MSG_LT_OR_EQ ((sc % 4) + needs[node], 4, "allocation never crosses a slot boundary");
+        for (uint16_t k = 0; k < needs[node]; ++k)
+          {
+            NS_TEST_ASSERT_MSG_EQ (occupied.count (sc + k), 0u, "multi-SC allocations stay disjoint");
+            occupied.insert (sc + k);
+          }
+      }
+    NrV2XRcsContention::Reset ();
+  }
+};
+
+class RcsPriorityContentionTestCase : public TestCase
+{
+public:
+  RcsPriorityContentionTestCase ()
+    : TestCase ("RCS: PriorityAware contention favours lower SL priority values") {}
+
+private:
+  virtual void DoRun (void)
+  {
+    Ptr<NrV2XRcsContention> channel = RcsChannel (1, 2, 400, NrV2XRcsContention::TONE_ALL);
+    channel->SetAttribute ("PriorityAware", BooleanValue (true));
+    uint32_t highWins = 0;
+    uint32_t lowWins = 0;
+    for (uint32_t frame = 1; frame <= 30; ++frame)
+      {
+        for (uint32_t node = 1; node <= 4; ++node)
+          {
+            channel->Register (frame, node, At (0), 1, 1);
+          }
+        for (uint32_t node = 5; node <= 8; ++node)
+          {
+            channel->Register (frame, node, At (0), 7, 1);
+          }
+        for (uint32_t node = 1; node <= 4; ++node)
+          {
+            if (channel->GetResult (frame, node) >= 0)
+              {
+                highWins++;
+              }
+          }
+        for (uint32_t node = 5; node <= 8; ++node)
+          {
+            if (channel->GetResult (frame, node) >= 0)
+              {
+                lowWins++;
+              }
+          }
+      }
+    NS_TEST_ASSERT_MSG_GT (highWins, lowWins * 3, "priority 1 should win the congested contention far more often than priority 7");
+    NrV2XRcsContention::Reset ();
+  }
+};
+
 // sl-ThresRSRP-pi-pj and sl-xPercentage, TS 38.214 8.1.4 steps 5 and 6
 class PriorityThresholdTestCase : public TestCase
 {
@@ -485,6 +582,9 @@ public:
     AddTestCase (new RcsFewContendersAllWinTestCase, TestCase::QUICK);
     AddTestCase (new RcsOneScPerGroupTestCase, TestCase::QUICK);
     AddTestCase (new RcsToneHearingTestCase, TestCase::QUICK);
+    AddTestCase (new RcsUnregisterBeforeResolveTestCase, TestCase::QUICK);
+    AddTestCase (new RcsMultiScSlotAlignmentTestCase, TestCase::QUICK);
+    AddTestCase (new RcsPriorityContentionTestCase, TestCase::QUICK);
     AddTestCase (new PriorityThresholdTestCase, TestCase::QUICK);
     AddTestCase (new PreemptionTestCase, TestCase::QUICK);
   }
